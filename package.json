@@ -1,9 +1,12 @@
 {
   "name": "mongo-pulsar",
-  "module": "index.ts",
+  "module": "./src/app.ts",
   "type": "module",
+  "scripts": {
+    "local": "bun ./src/app.ts"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "1.1.9"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
