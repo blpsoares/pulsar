@@ -13,7 +13,6 @@ export const populateDB = async (options) => {
   });
 
   const { simpleCollections, complexCollections } = options;
-  console.log(simpleCollections, complexCollections);
 
   if (simpleCollections) {
     simpleCollectionsPromises = simpleCollections.map(async (collectionName) => {

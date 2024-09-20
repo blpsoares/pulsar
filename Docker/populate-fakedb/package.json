@@ -7,14 +7,17 @@
     "populate": "bun src/app.js",
     "up:db": "docker-compose  up -d",
     "down:db": "docker-compose down",
-    "clean": "docker rm -f $(docker ps -a -q) && docker rmi -f populate-fakedb_mongo"
+    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f populate-fakedb_mongo"
   },
   "dependencies": {
-    "mongodb": "6.9.0",
     "chance": "^1.1.8",
-    "cli-progress": "^3.10.1"
+    "cli-progress": "^3.10.1",
+    "mongodb": "6.9.0"
   },
   "devDependencies": {
     "@types/bun": "1.1.9"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
   }
 }
