@@ -1,0 +1,88 @@
+module.exports = {
+  root: true,
+  ignorePatterns: [
+    '/.vscode/**/*',
+    '/build/**/*',
+    '/dist/**/*',
+    '/**/*.test.js',
+    '/node_modules/**/*',
+    '.eslintrc.js',
+  ],
+  env: {
+    es6: true,
+    es2017: true,
+    es2020: true,
+    es2021: true,
+    node: true,
+  },
+  plugins: ['import', '@typescript-eslint', 'eslint-comments'],
+  extends: [
+    'airbnb-base',
+    'airbnb-typescript/base',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:@typescript-eslint/recommended-requiring-type-checking',
+    'plugin:eslint-comments/recommended',
+  ],
+  parser: '@typescript-eslint/parser',
+  parserOptions: {
+    ecmaVersion: 2022,
+    project: './tsconfig.json',
+  },
+  globals: {
+    console: process.env.NODE_ENV === 'development' ? 'readonly' : 'off',
+  },
+  rules: {
+    '@typescript-eslint/no-unsafe-member-access': 'off',
+    '@typescript-eslint/no-unsafe-assignment': 'off',
+    '@typescript-eslint/no-unsafe-call': 'off',
+    '@typescript-eslint/unbound-method': 'off',
+    '@typescript-eslint/no-unused-vars': 'off',
+    strict: 'off',
+    'prefer-destructuring': 'off',
+    'class-methods-use-this': 'off',
+    camelcase: 'error',
+    'no-new': 'error',
+    'max-len': ['error', { code: 100 }],
+    'import/no-dynamic-require': 0,
+    'padded-blocks': ['error', 'never'],
+    'no-unused-expressions': 'error',
+    // allow optionalDependencies
+    'import/no-extraneous-dependencies': [
+      'error',
+      {
+        optionalDependencies: ['test/unit/index.js'],
+      },
+    ],
+    'import/no-import-module-exports': [
+      'error',
+      {
+        exceptions: ['**/*/*.ts'],
+      },
+    ],
+    // disallow reassignment of function parameters
+    // disallow parameter object manipulation except for specific exclusions
+    'no-param-reassign': [
+      'error',
+      {
+        ignorePropertyModificationsFor: [
+          'acc', // for reduce accumulators
+          'e', // for e.returnvalue
+          'config',
+        ],
+      },
+    ],
+    'no-plusplus': 'off',
+    'comma-dangle': ['error', 'always-multiline'],
+    semi: ['error', 'always'],
+    'no-eval': 1,
+    'no-confusing-arrow': 'off',
+    'arrow-parens': 'off',
+    'consistent-return': 'off',
+    'no-alert': 'off',
+    'no-underscore-dangle': 'off',
+    'import/prefer-default-export': 'off',
+    'no-debugger': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
+    'no-console': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
+    radix: 'off',
+  },
+};
