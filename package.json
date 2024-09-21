@@ -3,7 +3,11 @@
   "module": "./src/app.ts",
   "type": "module",
   "scripts": {
-    "local": "bun ./src/app.ts"
+    "local": "bun ./src/app.ts",
+    "up:db": "docker-compose up --build -d",
+    "down:db": "docker-compose down",
+    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_mongo",
+    "populate:db":"bun Docker/populate-fakedb/src/app.js"
   },
   "devDependencies": {
     "@types/bun": "1.1.9"
