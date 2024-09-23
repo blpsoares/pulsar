@@ -15,14 +15,14 @@ export const populateDB = async (options) => {
   const { simpleCollections, complexCollections } = options;
 
   if (simpleCollections) {
-    simpleCollectionsPromises = simpleCollections.map(async (collectionName) => {
-      await insertDocuments(collectionName, generateSimpleDocument, options, multiBar);
+    simpleCollectionsPromises = simpleCollections.map((collectionName) => {
+      return insertDocuments(collectionName, generateSimpleDocument, options, multiBar);
     });
   }
 
   if (complexCollections) {
-    complexCollectionsPromises = complexCollections.map(async (collectionName) => {
-      await insertDocuments(collectionName, generateComplexDocument, options, multiBar);
+    complexCollectionsPromises = complexCollections.map((collectionName) => {
+      return insertDocuments(collectionName, generateComplexDocument, options, multiBar);
     });
   }
 
