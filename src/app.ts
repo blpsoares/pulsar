@@ -1,5 +1,5 @@
-const main = async () => {
-  console.log('🌌INÍCIO DO PULSAR🌌');
-};
+import { conn } from './db/conn';
+import { showTitle } from './utils/show-cli-title';
 
-await main();
+await showTitle();
+const client = await conn();
