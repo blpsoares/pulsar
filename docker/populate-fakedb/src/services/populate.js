@@ -1,6 +1,6 @@
 import cliProgress from 'cli-progress';
 import { generateSimpleDocument, generateComplexDocument } from './generate-documents.js';
-import { insertDocuments } from '../services/insert-documents.js';
+import { insertDocuments } from './insert-documents.js';
 
 export const populateDB = async (options) => {
   let simpleCollectionsPromises,
