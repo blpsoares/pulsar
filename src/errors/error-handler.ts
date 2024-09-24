@@ -1,18 +1,21 @@
 import { MongoParseError, MongoError } from 'mongodb';
-import { customLog } from '../utils/responses.chalk';
+import { YmlToJsonError } from '../types/errors-class';
+import { CustomError } from '../types/errors-class';
 
-export const errorHandler = (err: unknown, breadcrumb: string | object = ''): Promise<never> => {
+export const errorHandler = (err: unknown, breadcrumb: string = 'NO:BREADCRUMB') => {
+  let errorMessage = '';
+
   if (err instanceof MongoParseError) {
-    customLog('error', `MongoParseError: ${breadcrumb} - ${err.message}`);
-  }
-  if (err instanceof MongoError) {
-    customLog('error', `MongoError:${breadcrumb} - ${err.message}`);
-  }
-  if (err instanceof Error) {
-    customLog('error', `${breadcrumb} - ${err.message}`);
+    errorMessage = `Mongo Parse Error: ${err.message}`;
+  } else if (err instanceof MongoError) {
+    errorMessage = `Mongo Error: ${err.message}`;
+  } else if (err instanceof YmlToJsonError) {
+    errorMessage = `Yml To Json Error: ${err.message}`;
+  } else if (err instanceof Error) {
+    errorMessage = `Error: ${err.message}`;
   } else {
-    customLog('error', `Unknown error: ${err}`);
+    errorMessage = `Unknown Error: ${String(err)}`;
   }
 
-  process.exit(1);
+  throw new CustomError(errorMessage, breadcrumb).logError();
 };

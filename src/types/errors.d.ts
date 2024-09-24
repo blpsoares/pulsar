@@ -1,7 +1,4 @@
 class EnvironmentVariablesError extends Error {
-  code?: string;
-  readonly cause: string;
-
   constructor(message: string, code?: string) {
     super(message);
     this.name = 'EnvironmentVariablesError';
@@ -9,3 +6,9 @@ class EnvironmentVariablesError extends Error {
     this.code = code;
   }
 }
+
+type ErrorObject = {
+  message: string;
+  breadcrumb: string | object;
+  errorInstance: string;
+};
