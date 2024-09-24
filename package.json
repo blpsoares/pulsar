@@ -2,6 +2,9 @@
   "name": "mongo-pulsar",
   "module": "./src/app.ts",
   "type": "module",
+  "bin": {
+    "pulsar": "./src/app.ts"
+  },
   "scripts": {
     "dev": "bun ./src/app.ts",
     "up:db": "docker-compose up --build -d",
@@ -15,6 +18,7 @@
     "@types/cli-progress": "^3.11.6",
     "@types/commander": "^2.12.2",
     "@types/figlet": "^1.5.8",
+    "@types/js-yaml": "^4.0.9",
     "@types/mongodb": "^4.0.7"
   },
   "peerDependencies": {
@@ -26,6 +30,7 @@
     "cli-progress": "^3.12.0",
     "commander": "^12.1.0",
     "figlet": "^1.7.0",
+    "js-yaml": "^4.1.0",
     "mongodb": "^6.9.0"
   }
 }
