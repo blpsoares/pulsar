@@ -1,0 +1,10 @@
+command:
+  dump:
+    source:
+      uri: "mongodb://localhost:27017"
+      db: "aurora"
+    destination:
+      uri: "mongodb://localhost:27017"
+      db: "aurora"
+    collections: [a,b,c,d,e,f,g,h]
+    output: ./temp-export
