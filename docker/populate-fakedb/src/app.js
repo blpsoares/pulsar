@@ -61,7 +61,7 @@ const main = async () => {
   const options = {
     simpleCollections: simpleCollections,
     complexCollections: complexCollections,
-    collectionSize: 1e6,
+    collectionSize: 5e5,
     batchSize: 2500,
     db,
     concurrence: 2,
