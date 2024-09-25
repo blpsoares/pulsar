@@ -10,7 +10,6 @@ type DumpYmlOptions = {
         db: string;
       };
       collections: string[];
-      output: string;
     };
   };
 };
