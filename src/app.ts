@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { showTitle } from './utils/show-cli-title';
 import { Command } from 'commander';
 import dumpDbFn from './cli/dump';
