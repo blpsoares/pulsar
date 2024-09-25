@@ -1,16 +1,16 @@
 {
-  "name": "mongo-pulsar",
+  "name": "pulsar",
+  "version": "1.0.0",
   "module": "./src/app.ts",
   "type": "module",
   "bin": {
     "pulsar": "./src/app.ts"
   },
   "scripts": {
-    "dev": "bun ./src/app.ts",
-    "up:db": "docker-compose up --build -d",
-    "down:db": "docker-compose down",
-    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_mongo",
-    "populate:db": "bun docker/populate-fakedb/src/app.js"
+    "pulsar:dump": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
+    "populate:db": "bun docker/populate-fakedb/src/app.js",
+    "up-build:images": "docker-compose up --build -d",
+    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_localdb mongo-pulsar_pulsar-app "
   },
   "devDependencies": {
     "@types/bun": "1.1.10",
