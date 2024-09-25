@@ -1,47 +1,57 @@
 import { errorHandler } from '../errors/error-handler';
 import parseYml from '../utils/parse-yml';
+import fs from 'fs';
+import path from 'path';
+import Bottleneck from 'bottleneck';
+import { createSingleBar } from '../utils/create-progress-bar';
+import type { SingleBar } from 'cli-progress';
+import { customLog } from '../utils/responses.chalk';
+const limiter = new Bottleneck({
+  maxConcurrent: 2,
+});
 
-// const exportCollections = (col) => {
-//   const outputExport = path.resolve('src', 'output', 'saidaExport', `${col}.json`);
-//   return new Promise((resolve, reject) => {
-//     const child = spawn('mongoexport', [
-//       `--uri=${uriMongoDev}`,
-//       `--collection=${col}`,
-//       `--out=${outputExport}`,
-//       '--type=json',
-//       '-vvv',
-//     ]);
+// const { dump } = dumpProps.command;
+// if (!dump) errorHandler(new Error('Missing dump key on dumpProps object'), 'CHILD-PROC:EXPORT');
+const createChildProcessToExport = async (
+  uri: string,
+  db: string,
+  col: string,
+  // progressBar: SingleBar,
+) => {
+  const outputExport = path.resolve(__dirname, '..', '..', 'temp-export');
+  if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
+  return new Promise(async (resolve, reject) => {
+    const child = Bun.spawn([
+      'mongoexport',
+      `--db=${db}`,
+      `--uri=${uri}`,
+      `--collection=${col}`,
+      `--out=${outputExport}/$${col}.json`,
+      '--type=json',
+      '--quiet',
+    ]);
+    if (child.killed && child.exitCode === 0) {
+      console.log(`terminou a col ${col}`);
+      // resolve(col);
+      // progressBar.increment();
+    }
+  });
+};
 
-//     child.on('close', (code) => {
-//       if (code === 0) {
-//         progressBar.increment();
-//         resolve();
-//       } else {
-//         reject(new Error(`Processo ${child.pid} falhou com o código ${code}`));
-//       }
-//     });
-
-//     child.on('error', (err) => {
-//       reject(err);
-//     });
-
-//     child.on('exit', (code) => {
-//       fs.appendFile(
-//         path.resolve('src', 'output', 'logs', '.log'),
-//         `Collection: ${col} exportada!\n`,
-//       );
-//       arr.push({
-//         'Collection name': col,
-//         'Código de conclusao': code,
-//         'ProcessID(PID)': child.pid,
-//       });
-//     });
-//   });
-// };
-
-const dumpDbFn = (ymlpath: string) => {
+const dumpDbFn = async (ymlpath: string) => {
   const options = parseYml<DumpYmlOptions>(ymlpath);
-  console.log(options.command.dump);
+  const { dump } = options.command;
+  customLog('info', 'Init collections export...');
+  // const progressBar = createSingleBar(dump.collections.length);
+  const promises = dump.collections.map((col) =>
+    limiter.schedule(
+      () => createChildProcessToExport(dump.source.uri, dump.source.db, col),
+      // createChildProcessToExport(dump.source.uri, dump.source.db, col, progressBar),
+    ),
+  );
+  const results = await Promise.all(promises);
+  customLog('success', `Exported collections: ${results}`);
+  // progressBar.stop();
 };
 
 export default dumpDbFn;
