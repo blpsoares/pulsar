@@ -1,0 +1,1 @@
+type OptionsCli = { parallel?: number };
