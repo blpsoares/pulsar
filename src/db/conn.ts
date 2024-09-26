@@ -1,5 +1,5 @@
 import { MongoClient, MongoParseError } from 'mongodb';
-import { customLog } from '../utils/responses.chalk';
+import { customLog } from '../utils/custom-log';
 import { errorHandler } from '../errors/error-handler';
 export const conn = async (): Promise<MongoClient | void> => {
   const { MONGO_URI } = process.env;
