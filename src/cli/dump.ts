@@ -5,22 +5,21 @@ import path from 'path';
 import Bottleneck from 'bottleneck';
 import { createSingleBar } from '../utils/create-progress-bar';
 import type { SingleBar } from 'cli-progress';
-import { customLog } from '../utils/responses.chalk';
+import logger, { customLog } from '../utils/custom-log';
+
 const limiter = new Bottleneck({
   maxConcurrent: 2,
 });
 
-// const { dump } = dumpProps.command;
-// if (!dump) errorHandler(new Error('Missing dump key on dumpProps object'), 'CHILD-PROC:EXPORT');
 const createChildProcessToExport = async (
   uri: string,
   db: string,
   col: string,
-  // progressBar: SingleBar,
-) => {
+  progressBar: SingleBar,
+): Promise<string | never> => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-export');
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
-  return new Promise(async (resolve, reject) => {
+  return new Promise(async (resolve) => {
     const child = Bun.spawn([
       'mongoexport',
       `--db=${db}`,
@@ -30,28 +29,34 @@ const createChildProcessToExport = async (
       '--type=json',
       '--quiet',
     ]);
+
+    await child.exited;
     if (child.killed && child.exitCode === 0) {
-      console.log(`terminou a col ${col}`);
-      // resolve(col);
-      // progressBar.increment();
-    }
+      progressBar.increment();
+
+      return resolve(col);
+    } else customLog('error', `Error to export collection: ${col}`);
   });
 };
 
 const dumpDbFn = async (ymlpath: string) => {
   const options = parseYml<DumpYmlOptions>(ymlpath);
+
   const { dump } = options.command;
+
   customLog('info', 'Init collections export...');
-  // const progressBar = createSingleBar(dump.collections.length);
+
+  const progressBar = createSingleBar(dump.collections.length);
+
   const promises = dump.collections.map((col) =>
-    limiter.schedule(
-      () => createChildProcessToExport(dump.source.uri, dump.source.db, col),
-      // createChildProcessToExport(dump.source.uri, dump.source.db, col, progressBar),
+    limiter.schedule(() =>
+      createChildProcessToExport(dump.source.uri, dump.source.db, col, progressBar),
     ),
   );
+
   const results = await Promise.all(promises);
-  customLog('success', `Exported collections: ${results}`);
-  // progressBar.stop();
+  progressBar.stop();
+  customLog('success', `Exported collections: ${results.join(', ')}`);
 };
 
 export default dumpDbFn;
