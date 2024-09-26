@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { customLog } from '../utils/responses.chalk';
+import { customLog } from '../utils/custom-log';
 
 export class YmlToJsonError extends Error {
   code?: string;
