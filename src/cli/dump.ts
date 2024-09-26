@@ -10,6 +10,15 @@ import { conn } from '../db/conn';
 import type { MongoClient } from 'mongodb';
 
 // TODO: move three database ops to new folder
+/**
+ // TODO -> add error handler on:
+ *  todo -> createChildProcessToExport,
+ *  todo -> createChildProcessToImport,
+ *  todo -> createSyncStatsOnDestinDb,
+ *  todo -> dropOldCollections
+ *  todo -> and renameNewCollections
+ */
+
 const createChildProcessToExport = async (
   uri: string,
   db: string,
@@ -90,6 +99,26 @@ const deleteTempExport = (outputExport: string) => {
   fs.rmdirSync(outputExport, { recursive: true });
 };
 
+const dropOldCollections = async (client: MongoClient, dbName: string, collections: string[]) => {
+  const db = client.db(dbName);
+  const limiter = new Bottleneck({ maxConcurrent: 10 });
+  customLog('info', 'Drop old collections...');
+  const promises = collections.map((col) => limiter.schedule(() => db.dropCollection(col)));
+  await Promise.all(promises);
+  customLog('success', 'Dropped old collections\n');
+};
+
+const renameNewCollections = async (client: MongoClient, dbName: string, collections: string[]) => {
+  const db = client.db(dbName);
+  const limiter = new Bottleneck({ maxConcurrent: 10 });
+  customLog('info', 'Rename all new collections...');
+  const promises = collections.map((col) =>
+    limiter.schedule(() => db.renameCollection(`_dump_${col}`, col)),
+  );
+  await Promise.all(promises);
+  customLog('success', 'Renamed all new collections \n');
+};
+
 // TODO: See codes that repeat logic and create a function to modularize and clean up the main function
 const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-export');
@@ -151,8 +180,13 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   progressBarColdState.stop();
   customLog('success', 'Setted cold state on documents in __sync__ collection\n');
 
-  client.close();
   deleteTempExport(outputExport);
+
+  await dropOldCollections(client, dump.destination.db, dump.collections);
+
+  await renameNewCollections(client, dump.destination.db, dump.collections);
+
+  client.close();
 };
 
 export default dumpDbFn;
