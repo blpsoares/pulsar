@@ -40,7 +40,7 @@ const logger = createLogger({
 });
 
 export const customLog = (type: OptionsCustomLogs, message: string) => {
-  console.log('\n' + optionsLogs[type].bold(message));
+  console.log(optionsLogs[type].bold(message));
   logger.log({ level: type, message });
 };
 
