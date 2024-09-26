@@ -10,6 +10,17 @@ const program = new Command();
 
 program.version('1.0.0').description('Mongo pulsar cli to sync data');
 
+// TODO: config pulsar cli to runs on docker
+program.command('on <boolean>').action((on: string) => {
+  const state = on === 'true';
+
+  if (!state) {
+    Bun.spawn(['docker-compose', 'down']);
+  } else {
+    Bun.spawn(['docker-compose', 'up', '--build', '-d']);
+  }
+});
+
 program
   .command('dump <file>')
   .option(
