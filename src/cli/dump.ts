@@ -6,10 +6,7 @@ import Bottleneck from 'bottleneck';
 import { createSingleBar } from '../utils/create-progress-bar';
 import type { SingleBar } from 'cli-progress';
 import logger, { customLog } from '../utils/custom-log';
-
-const limiter = new Bottleneck({
-  maxConcurrent: 2,
-});
+import { Option } from 'commander';
 
 const createChildProcessToExport = async (
   uri: string,
@@ -39,10 +36,13 @@ const createChildProcessToExport = async (
   });
 };
 
-const dumpDbFn = async (ymlpath: string) => {
+const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   const options = parseYml<DumpYmlOptions>(ymlpath);
-
   const { dump } = options.command;
+
+  const limiter = new Bottleneck({
+    maxConcurrent: option.parallel ?? 3,
+  });
 
   customLog('info', 'Init collections export...');
 
