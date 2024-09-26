@@ -9,6 +9,7 @@ import logger, { customLog } from '../utils/custom-log';
 import { conn } from '../db/conn';
 import type { MongoClient } from 'mongodb';
 
+// TODO: move three database ops to new folder
 const createChildProcessToExport = async (
   uri: string,
   db: string,
@@ -76,13 +77,20 @@ const createSyncStatsOnDestinDb = async (
   client: MongoClient,
   db: string,
   col: string,
+  progressBar: SingleBar,
 ): Promise<void> => {
   await client
     .db(db)
     .collection('__sync__')
     .updateOne({ id: col }, { $setOnInsert: { id: col, status: 'cold' } }, { upsert: true });
+  progressBar.increment();
 };
 
+const deleteTempExport = (outputExport: string) => {
+  fs.rmdirSync(outputExport, { recursive: true });
+};
+
+// TODO: See codes that repeat logic and create a function to modularize and clean up the main function
 const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-export');
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
@@ -92,8 +100,8 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 3 });
 
+  //* EXPORT COLLECTIONS
   customLog('info', 'Init export collections...');
-
   const progressBarExport = createSingleBar(dump.collections.length, 'Export progress ');
 
   const exportCollectionsPromises = dump.collections.map((col) =>
@@ -110,15 +118,14 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   const solvedExports = await Promise.all(exportCollectionsPromises);
   progressBarExport.stop();
-  customLog('success', `Exported collections: ${solvedExports.join(', ')}`);
+  customLog('success', `Exported collections: ${solvedExports.join(', ')}\n`);
 
-  const progressBarImport = createSingleBar(dump.collections.length, 'Import progress');
+  //* IMPORT COLLECTIONS
   customLog('info', 'Init import collections...');
-
-  // createSyncStatsOnDestinDb(client, dump.destination.db, col);
-
   const client = await conn();
-  const solvedImports = solvedExports.map((col) =>
+  const progressBarImport = createSingleBar(dump.collections.length, 'Import progress');
+
+  const importCollectionsPromises = solvedExports.map((col) =>
     limiter.schedule(() =>
       createChildProcessToImport(
         dump.destination.uri,
@@ -129,18 +136,23 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
       ),
     ),
   );
-  await Promise.all(solvedImports);
+  const solvedImports = await Promise.all(importCollectionsPromises);
   progressBarImport.stop();
-  customLog('success', `Imported collections: ${solvedImports.join(', ')}`);
+  customLog('success', `Imported collections: ${solvedImports.join(', ')}\n`);
+
+  //* SET STATE ON __SYNC__ COLLECTION
+  customLog('info', 'Init set state on __sync__ collection...');
+  const progressBarColdState = createSingleBar(dump.collections.length, 'Set cold state');
   const solvedSetColdState = solvedExports.map((col) =>
-    createSyncStatsOnDestinDb(client, dump.destination.db, col),
+    createSyncStatsOnDestinDb(client, dump.destination.db, col, progressBarColdState),
   );
 
   await Promise.all(solvedSetColdState);
+  progressBarColdState.stop();
+  customLog('success', 'Setted cold state on documents in __sync__ collection\n');
 
   client.close();
+  deleteTempExport(outputExport);
 };
 
 export default dumpDbFn;
-
-// mongoimport --db="aurora-staging" --uri="mongodb://localdb:27017" --collection="_m_conjuntosLocaisComRegioes" --file="/app/temp-export/_m_conjuntosLocaisComRegioes.json"
