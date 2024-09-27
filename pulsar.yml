@@ -1,11 +1,9 @@
 command:
   dump:
     source:
-      uri: "mongodb://localdb:27017"
-      db: "aurora"
+      uri: ""
+      db: ""
     destination:
-      uri: "mongodb://localdb:27017"
-      db: "aurora-staging"
-    collections:  ["empresas",]
-    # collections:  ["_m_conjuntosLocaisComRegioes","_m_gruposProdutos",]
-    # collections:  ["_m_conjuntosLocaisComRegioes","_m_gruposProdutos","_m_locaisComRegioes","_m_snapshotConjuntosLocais","_sep_agrupamentosPredios","_sep_circuitos","_sep_dicionarioCidades","_sep_predios","arquivos","auditoria","briefings","campanhas","cidades","conjuntosLocais","contas","empresas","faixasPlanejamentoRegioes","fila-simulacoes","funcionalidadesControladas","gruposProdutos","imagens","locais","log","logs","metricas","municipios-db","notificacoes","pacotes","parametrosEletroads","planosPredefinidos","precificacoes","produtosDesconsiderados","regioesReal","retoolSessao","sep_sincronizacao","skus","targetsReal","targetsUniversos","uploadMidia","usuarios","usuariosContas","simulacoesPlanejamento","simulacoesPlanejamentoGeohashes","simulacoesPlanejamentoLocais","planoMidia","planoMidiaLocais","planoMidiaTracking","planoMidiaVersoes","mediaplans",]
+      uri: ""
+      db: ""
+    collections: []
