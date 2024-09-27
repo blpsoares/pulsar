@@ -7,7 +7,7 @@
     "pulsar": "./src/app.ts"
   },
   "scripts": {
-    "pulsar:dump": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
+    "pulsar": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
     "populate:db": "bun docker/populate-fakedb/src/app.js",
     "up-build:images": "docker-compose up --build -d",
     "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_localdb mongo-pulsar_pulsar-app "

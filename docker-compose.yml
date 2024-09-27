@@ -1,7 +1,7 @@
 version: '3.3'
 
 services:
-# mongo full database with fake data
+  # mongo full database with fake data
   localdb:
     build:
       context: ./docker/populate-fakedb
@@ -13,13 +13,13 @@ services:
     networks:
       - pulsar-net
 
-# pulsar application
+  # pulsar application
   pulsar-app:
     build: .
     container_name: pulsar-app
     volumes:
       - ./:/app/
-    user: "1000:1000"
+    user: '1000:1000'
     networks:
       - pulsar-net
     # The first parameter is your local UID and the second is your group ID. These commands run your container mapping your volume with the same permissions, ensuring that as you make changes to the script your container runs with the most recent changes. To get your GID and UID runs:
