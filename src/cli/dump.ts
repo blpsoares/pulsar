@@ -1,4 +1,3 @@
-import { errorHandler } from '../errors/error-handler';
 import parseYml from '../utils/parse-yml';
 import fs from 'fs';
 import path from 'path';
@@ -149,7 +148,7 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   //* IMPORT COLLECTIONS
   customLog('info', 'Init import collections...');
-  const client = await conn();
+  const client = await conn(dump.destination.uri);
   const progressBarImport = createSingleBar(dump.collections.length, 'Import progress');
 
   const importCollectionsPromises = solvedExports.map((col) =>
@@ -163,6 +162,7 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
       ),
     ),
   );
+
   const solvedImports = await Promise.all(importCollectionsPromises);
   progressBarImport.stop();
   customLog('success', `Imported collections: ${solvedImports.join(', ')}\n`);
