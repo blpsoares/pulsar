@@ -50,9 +50,3 @@ export const customLog = (type: OptionsCustomLogs, message: string) => {
 };
 
 export default logger;
-
-customLog('error', 'teste de error');
-customLog('warn', 'teste de warn');
-customLog('info', 'teste de info');
-customLog('success', 'teste de success');
-customLog('debug', 'teste de debug');
