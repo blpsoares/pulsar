@@ -8,6 +8,7 @@ import type { SingleBar } from 'cli-progress';
 import logger, { customLog } from '../utils/custom-log';
 import { conn } from '../db/conn';
 import type { MongoClient } from 'mongodb';
+import { $ } from 'bun';
 
 // TODO: move three database ops to new folder
 /**
@@ -25,25 +26,26 @@ const createChildProcessToExport = async (
   col: string,
   outputExport: string,
   progressBar: SingleBar,
-): Promise<string | never> => {
-  return new Promise(async (resolve) => {
-    const child = Bun.spawn([
-      'mongoexport',
-      `--db=${db}`,
-      `--uri=${uri}`,
-      `--collection=${col}`,
-      `--out=${outputExport}/${col}.json`,
-      '--type=json',
-      '--quiet',
-    ]);
+) => {
+  const { stdout, stderr, exitCode } =
+    await $`mongoexport --db=${db} --uri=${uri} --collection=${col} --out=${outputExport}/${col}.json --type=json --quiet`
+      .nothrow()
+      .quiet();
 
-    await child.exited;
-    if (child.killed && child.exitCode === 0) {
-      progressBar.increment();
-      logger.info(`Exported: ${col}`);
-      return resolve(col);
-    } else customLog('error', `Error to export collection: ${col}`);
-  });
+  if (exitCode !== 0) {
+    customLog('error', `Error to export collection: ${col}`);
+    logger.error(
+      `Error to export collection: ${col}
+      \nExit code: ${exitCode}
+      \nStdout: ${stdout}
+      \nStderr: ${stderr}
+      `,
+    );
+  }
+
+  progressBar.increment();
+  logger.info(`Exported: ${col}`);
+  return col;
 };
 
 const createChildProcessToImport = async (
@@ -52,34 +54,19 @@ const createChildProcessToImport = async (
   col: string,
   outputExport: string,
   progressBar: SingleBar,
-): Promise<string | never> => {
-  return new Promise(async (resolve, reject) => {
-    const child = Bun.spawn([
-      'mongoimport',
-      `--db=${db}`,
-      `--uri=${uri}`,
-      `--collection=_dump_${col}`,
-      `--file=${outputExport}/${col}.json`,
-      '--quiet',
-    ]);
+) => {
+  const { stdout, stderr, exitCode } =
+    await $`mongoimport --db=${db} --uri=${uri} --collection=_dump_${col} --file=${outputExport}/${col}.json --quiet`;
 
-    await child.exited;
-    if (child.killed && child.exitCode === 0) {
-      progressBar.increment();
-      logger.info(`imported : ${col}`);
-      return resolve(col);
-    } else {
-      customLog('error', `Error to import collection: ${col}`);
-      const text = await new Response(child.stdout).text();
-      logger.error(
-        `Error to import collection: ${col}
-        \nExit code: ${child.exitCode}
-        \nOutput: ${text}
-        `,
-      );
-      reject();
-    }
-  });
+  if (exitCode !== 0) {
+    logger.error(
+      `Error to import collection: ${col}\nExit code: ${exitCode}\nStdout: ${stdout}\nStderr: ${stderr}`,
+    );
+  }
+
+  progressBar.increment();
+  logger.info(`Exported: ${col}`);
+  return col;
 };
 
 const createSyncStatsOnDestinDb = async (
@@ -104,8 +91,14 @@ const dropOldCollections = async (client: MongoClient, dbName: string, collectio
   const limiter = new Bottleneck({ maxConcurrent: 10 });
   customLog('info', 'Drop old collections...');
   const promises = collections.map((col) => limiter.schedule(() => db.dropCollection(col)));
-  await Promise.all(promises);
-  customLog('success', 'Dropped old collections\n');
+
+  try {
+    await Promise.all(promises);
+  } catch (error) {
+    logger.error(`Error to drop collection: ${error}`);
+  } finally {
+    customLog('success', 'Dropped old collections\n');
+  }
 };
 
 const renameNewCollections = async (client: MongoClient, dbName: string, collections: string[]) => {
@@ -115,8 +108,13 @@ const renameNewCollections = async (client: MongoClient, dbName: string, collect
   const promises = collections.map((col) =>
     limiter.schedule(() => db.renameCollection(`_dump_${col}`, col)),
   );
-  await Promise.all(promises);
-  customLog('success', 'Renamed all new collections \n');
+  try {
+    await Promise.all(promises);
+  } catch (error) {
+    logger.error(`Error to rename collection: ${error}`);
+  } finally {
+    customLog('success', 'Renamed all new collections \n');
+  }
 };
 
 // TODO: See codes that repeat logic and create a function to modularize and clean up the main function
