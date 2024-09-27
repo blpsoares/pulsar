@@ -1,1 +1,1 @@
-type OptionsCustomLogs = 'error' | 'success' | 'info' | 'warn';
+type OptionsCustomLogs = 'error' | 'info' | 'success' | 'warn' | 'debug';
