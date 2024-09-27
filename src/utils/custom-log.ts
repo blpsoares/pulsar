@@ -29,7 +29,6 @@ const getFullDate = (): string => {
 
 const logger = createLogger({
   levels: optionsLogs.levels,
-  level: 'debug',
   format: combine(
     timestamp({
       format: getFullDate,
@@ -39,12 +38,11 @@ const logger = createLogger({
   transports: [
     new transports.File({ filename: './src/logs/debug.log', level: 'debug' }),
     new transports.File({ filename: './src/logs/error.log', level: 'error' }),
-    new transports.File({ filename: './src/logs/combined.log' }),
   ],
 });
 
 export const customLog = (type: OptionsCustomLogs, message: string) => {
-  const prefix = `[ ${type.toUpperCase()} ]: `;
+  const prefix = `[ ${type.toUpperCase()} ] `;
   console.log(optionsLogs[type].bold(prefix + message));
   logger.log({ level: type, message });
 };
