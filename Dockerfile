@@ -8,6 +8,4 @@ RUN apk add --no-cache curl bash unzip mongodb-tools
 
 RUN bun install
 
-VOLUME [ "/data/temp-export" ]
-
 CMD ["tail", "-f", "/dev/null"]
