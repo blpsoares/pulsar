@@ -20,7 +20,7 @@ export class CustomError extends Error {
   }
 
   logError() {
-    customLog('error', `${this.message}`);
+    customLog('error', `${this.message} `);
     return chalk.hex('#ff7c00').bold(this.breadcrumb);
   }
 }
