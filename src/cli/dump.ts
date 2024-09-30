@@ -19,28 +19,19 @@ import { $ } from 'bun';
  *  todo -> and renameNewCollections
  */
 
-const createChildProcessToExport = async (
+const createChildProcessToDump = async (
   uri: string,
   db: string,
   col: string,
   outputExport: string,
   progressBar: SingleBar,
 ) => {
-  const { stdout, stderr, exitCode } =
-    await $`mongoexport --db=${db} --uri=${uri} --collection=${col} --out=${outputExport}/${col}.json --type=json --quiet`
+  const { exitCode } =
+    await $`mongodump --uri=${uri} --db=${db} --collection=${col} --out=${outputExport}`
       .nothrow()
       .quiet();
 
-  if (exitCode !== 0) {
-    customLog('error', `Error to export collection: ${col}`);
-    logger.error(
-      `Error to export collection: ${col}
-      \nExit code: ${exitCode}
-      \nStdout: ${stdout}
-      \nStderr: ${stderr}
-      `,
-    );
-  }
+  if (exitCode !== 0) customLog('error', `Error to export collection: ${col}`);
 
   progressBar.increment();
   logger.info(`Exported: ${col}`);
@@ -51,17 +42,14 @@ const createChildProcessToImport = async (
   uri: string,
   db: string,
   col: string,
-  outputExport: string,
   progressBar: SingleBar,
 ) => {
-  const { stdout, stderr, exitCode } =
-    await $`mongoimport --db=${db} --uri=${uri} --collection=_dump_${col} --file=${outputExport}/${col}.json --quiet`;
+  const { exitCode } =
+    await $`mongorestore --uri=${uri} --db=${db} --collection=_dump_${col} temp-dump/myDatabase/${col}.bson`
+      .nothrow()
+      .quiet();
 
-  if (exitCode !== 0) {
-    logger.error(
-      `Error to import collection: ${col}\nExit code: ${exitCode}\nStdout: ${stdout}\nStderr: ${stderr}`,
-    );
-  }
+  if (exitCode !== 0) customLog('error', `Error to restore collection: ${col}`);
 
   progressBar.increment();
   logger.info(`Exported: ${col}`);
@@ -116,23 +104,14 @@ const renameNewCollections = async (client: MongoClient, dbName: string, collect
   }
 };
 
-// TODO: See codes that repeat logic and create a function to modularize and clean up the main function
-const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
-  const outputExport = path.resolve(__dirname, '..', '..', 'temp-export');
-  if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
-
-  const options = parseYml<DumpYmlOptions>(ymlpath);
+const initDump = async (options: DumpYmlOptions, outputExport: string, limiter: Bottleneck) => {
   const { dump } = options.command;
-
-  const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 3 });
-
-  //* EXPORT COLLECTIONS
-  customLog('info', 'Init export collections...');
-  const progressBarExport = createSingleBar(dump.collections.length, 'Export progress ');
+  customLog('info', 'Init dump collections...');
+  const progressBarExport = createSingleBar(dump.collections.length, 'Dump progress ');
 
   const exportCollectionsPromises = dump.collections.map((col) =>
     limiter.schedule(() =>
-      createChildProcessToExport(
+      createChildProcessToDump(
         dump.source.uri,
         dump.source.db,
         col,
@@ -144,46 +123,98 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   const solvedExports = await Promise.all(exportCollectionsPromises);
   progressBarExport.stop();
-  customLog('success', `Exported collections: ${solvedExports.join(', ')}\n`);
+  customLog('success', `Dumped collections: ${solvedExports.join(', ')}\n`);
+  return solvedExports;
+};
 
-  //* IMPORT COLLECTIONS
+const initRestore = async (options: DumpYmlOptions, collections: string[], limiter: Bottleneck) => {
+  const { dump } = options.command;
   customLog('info', 'Init import collections...');
-  const client = await conn(dump.destination.uri);
-  const progressBarImport = createSingleBar(dump.collections.length, 'Import progress');
+  const progressBarImport = createSingleBar(collections.length, 'Import progress');
 
-  const importCollectionsPromises = solvedExports.map((col) =>
+  const importCollectionsPromises = collections.map((col) =>
     limiter.schedule(() =>
-      createChildProcessToImport(
-        dump.destination.uri,
-        dump.destination.db,
-        col,
-        outputExport,
-        progressBarImport,
-      ),
+      createChildProcessToImport(dump.destination.uri, dump.destination.db, col, progressBarImport),
     ),
   );
 
   const solvedImports = await Promise.all(importCollectionsPromises);
   progressBarImport.stop();
   customLog('success', `Imported collections: ${solvedImports.join(', ')}\n`);
+  return solvedImports;
+};
 
-  //* SET STATE ON __SYNC__ COLLECTION
+const initRegistrationSync = async (
+  options: DumpYmlOptions,
+  collections: string[],
+  client: MongoClient,
+) => {
+  const { dump } = options.command;
   customLog('info', 'Init set state on __sync__ collection...');
-  const progressBarColdState = createSingleBar(dump.collections.length, 'Set cold state');
-  const solvedSetColdState = solvedExports.map((col) =>
+  const progressBarColdState = createSingleBar(collections.length, 'Set cold state');
+  const solvedSetColdState = collections.map((col) =>
     createSyncStatsOnDestinDb(client, dump.destination.db, col, progressBarColdState),
   );
 
   await Promise.all(solvedSetColdState);
   progressBarColdState.stop();
   customLog('success', 'Setted cold state on documents in __sync__ collection\n');
+};
 
+const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
+  const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
+  if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
+
+  const options = parseYml<DumpYmlOptions>(ymlpath);
+  const { dump } = options.command;
+  const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 3 });
+
+  /**
+   *
+   * ? DUMP COLLECTIONS
+   */
+  const dumpedCollections = await initDump(options, outputExport, limiter);
+
+  /**
+   *
+   * ? RESTORE COLLECTIONS
+   */
+  const restoredCollections = await initRestore(options, dumpedCollections, limiter);
+
+  /**
+   *
+   * ? CONNECT TO DESTINATION
+   */
+  const client = await conn(dump.destination.uri);
+
+  /**
+   *
+   * ? SET STATE ON __SYNC__ COLLECTION
+   */
+  await initRegistrationSync(options, restoredCollections, client);
+
+  /**
+   *
+   * ? CLEAN LOCAL REGISTRES (GENERATED FOR initDump)
+   */
   deleteTempExport(outputExport);
 
+  /**
+   *
+   * ? DROP ON DATABASE ALL COLLECTIONS DUMPED
+   */
   await dropOldCollections(client, dump.destination.db, dump.collections);
 
+  /**
+   *
+   * ? REMOVE ON DESTINATION DATABASE ALL _dump_ PREFIX ON RESTORED COLLECTIONS
+   */
   await renameNewCollections(client, dump.destination.db, dump.collections);
 
+  /**
+   *
+   * ? CLOSE MONGODB CONNECTION
+   */
   client.close();
 };
 
