@@ -8,9 +8,8 @@
   },
   "scripts": {
     "pulsar": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
-    "populate:db": "bun docker/populate-fakedb/src/app.js",
-    "up-build:images": "docker-compose up --build -d",
-    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_localdb mongo-pulsar_pulsar-app "
+    "up:pulsar": "docker-compose up --build -d",
+    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_pulsar-app "
   },
   "devDependencies": {
     "@types/bun": "1.1.10",
