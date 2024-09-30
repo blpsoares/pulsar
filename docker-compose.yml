@@ -1,19 +1,6 @@
 version: '3.3'
 
 services:
-  # mongo full database with fake data
-  localdb:
-    build:
-      context: ./docker/populate-fakedb
-    container_name: mongo-fakedb
-    ports:
-      - '27017:27017'
-    volumes:
-      - mongo-data:/data/db
-    networks:
-      - pulsar-net
-
-  # pulsar application
   pulsar-app:
     build: .
     container_name: pulsar-app
