@@ -38,14 +38,15 @@ const createChildProcessToDump = async (
   return col;
 };
 
-const createChildProcessToImport = async (
+const createChildProcessToRestore = async (
   uri: string,
-  db: string,
+  dbSrc: string,
+  dbDestin: string,
   col: string,
   progressBar: SingleBar,
 ) => {
   const { exitCode } =
-    await $`mongorestore --uri=${uri} --db=${db} --collection=_dump_${col} temp-dump/myDatabase/${col}.bson`
+    await $`mongorestore --uri=${uri} --db=${dbDestin} --collection=_dump_${col} temp-dump/${dbSrc}/${col}.bson`
       .nothrow()
       .quiet();
 
@@ -134,7 +135,13 @@ const initRestore = async (options: DumpYmlOptions, collections: string[], limit
 
   const importCollectionsPromises = collections.map((col) =>
     limiter.schedule(() =>
-      createChildProcessToImport(dump.destination.uri, dump.destination.db, col, progressBarImport),
+      createChildProcessToRestore(
+        dump.destination.uri,
+        dump.source.db,
+        dump.destination.db,
+        col,
+        progressBarImport,
+      ),
     ),
   );
 
