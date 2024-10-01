@@ -4,6 +4,9 @@ import type { SingleBar } from 'cli-progress';
 import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import { errorHandler } from '../../errors/error-handler';
+import fs from 'fs/promises';
+import { log } from 'winston';
+import { mongoToolsReturns } from '../../utils/mongo-tools-return';
 
 // * This function create a child process with mongodump command
 // const executeDumpCommand = async (
@@ -36,15 +39,15 @@ import { errorHandler } from '../../errors/error-handler';
 const createChildProcessToDump = async (
   uri: string,
   db: string,
-  col: string,
+  collection: string,
   outputExport: string,
   progressBar: SingleBar,
-) => {
+): Promise<MongoToolsReturn> => {
   const proc = Bun.spawn([
     'mongodump',
     `--uri=${uri}`,
     `--db=${db}`,
-    `--collection=${col}`,
+    `--collection=${collection}`,
     `--out=${outputExport}`,
     `--quiet`,
   ]);
@@ -52,13 +55,16 @@ const createChildProcessToDump = async (
   await proc.exited;
 
   if (proc.exitCode !== 0) {
-    customLog('error', `Error to export collection: ${col}`);
-    return;
+    logger.error(`Error to export collection: ${collection} Exit process code: ${proc.exitCode}`);
+    return { sucess: false, failed: collection };
   }
 
+  const exportedFileExists = await fs.exists(`${outputExport}/${db}/${collection}.bson`);
+  if (!exportedFileExists) return { sucess: false, failed: collection };
+
   progressBar.increment();
-  logger.info(`Exported: ${col}`);
-  return col;
+  logger.info(`Exported: ${collection}`);
+  return { sucess: collection, failed: false };
 };
 
 export const initDump = async (
@@ -70,12 +76,12 @@ export const initDump = async (
   customLog('info', 'Init dump collections...');
   const progressBarExport = createSingleBar(dump.collections.length, 'Dump progress ');
 
-  const exportCollectionsPromises = dump.collections.map((col) =>
+  const exportCollectionsPromises = dump.collections.map((collection) =>
     limiter.schedule(() =>
       createChildProcessToDump(
         dump.source.uri,
         dump.source.db,
-        col,
+        collection,
         outputExport,
         progressBarExport,
       ),
@@ -83,20 +89,27 @@ export const initDump = async (
   );
 
   const solvedExports = await Promise.all(exportCollectionsPromises);
-  const filteredExports: string[] = solvedExports.filter(
-    (item): item is string => item !== undefined,
-  );
   progressBarExport.stop();
-  console.log(`FILTERED EXPORTS ${filteredExports}`);
-  if (filteredExports.length === 0) {
+
+  const [successfulExports, failedExports] = mongoToolsReturns(solvedExports);
+
+  if (successfulExports.length === 0) {
     throw errorHandler(
       new Error(
-        'No collections imported, please verify your database (source or destin) and your array collection',
+        'No collections exported, please verify your database (source or destin) and your array collection',
       ),
       'RESTORE:FILTERED:EXPORTS',
     );
   }
+  if (failedExports.length > 0) {
+    customLog(
+      'warn',
+      `Some collections were not exported, check the logs at src/logs/error.log to view these collections`,
+    );
 
-  customLog('success', `Exported collections: ${solvedExports.join(', ')}\n`);
-  return filteredExports;
+    logger.error(`No exported collections\n${failedExports.join('\n\t\t\t✕ ')}\nPossible causes:
+- Collections do not exist in the source database`);
+  }
+  customLog('success', `Exported collections: ${successfulExports.join(', ')}\n`);
+  return successfulExports;
 };
