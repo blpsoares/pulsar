@@ -4,6 +4,7 @@ import type { SingleBar } from 'cli-progress';
 import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import { errorHandler } from '../../errors/error-handler';
+import { mongoToolsReturns } from '../../utils/mongo-tools-return';
 
 // * This function create a child process with mongorestore command
 // const createChildProcessToRestore = async (
@@ -30,28 +31,28 @@ const executeRestoreCommand = async (
   uri: string,
   dbSrc: string,
   dbDestin: string,
-  col: string,
+  collection: string,
   progressBar: SingleBar,
-) => {
+): Promise<MongoToolsReturn> => {
   const proc = Bun.spawn([
     'mongorestore',
     `--uri=${uri}`,
     `--db=${dbDestin}`,
-    `--collection=_dump_${col}`,
-    `temp-dump/${dbSrc}/${col}.bson`,
+    `--collection=_dump_${collection}`,
+    `temp-dump/${dbSrc}/${collection}.bson`,
     `--quiet`,
   ]);
 
   await proc.exited;
 
   if (proc.exitCode !== 0) {
-    customLog('error', `Error to restore collection: ${col}`);
-    return;
+    logger.error(`Error to restore collection: ${collection} Exit process code: ${proc.exitCode}`);
+    return { sucess: false, failed: collection };
   }
 
   progressBar.increment();
-  logger.info(`Exported: ${col}`);
-  return col;
+  logger.info(`Restored: ${collection}`);
+  return { sucess: collection, failed: false };
 };
 
 export const initRestore = async (
@@ -60,36 +61,43 @@ export const initRestore = async (
   limiter: Bottleneck,
 ) => {
   const { dump } = options.command;
-  customLog('info', 'Init import collections...');
-  const progressBarImport = createSingleBar(collections.length, 'Import progress');
+  customLog('info', 'Init restore collections...');
+  const progressBarImport = createSingleBar(collections.length, 'Restore progress');
 
-  const importCollectionsPromises = collections.map((col) =>
+  const importCollectionsPromises = collections.map((collection) =>
     limiter.schedule(() =>
       executeRestoreCommand(
         dump.destination.uri,
         dump.source.db,
         dump.destination.db,
-        col,
+        collection,
         progressBarImport,
       ),
     ),
   );
 
-  const solvedImports = await Promise.all(importCollectionsPromises);
-  const filteredImports: string[] = solvedImports.filter(
-    (item): item is string => item !== undefined,
-  );
-  progressBarImport.stop();
+  const solvedRestores = await Promise.all(importCollectionsPromises);
 
-  if (filteredImports.length === 0) {
+  const [successfulExports, failedRestores] = mongoToolsReturns(solvedRestores);
+
+  if (successfulExports.length === 0) {
     throw errorHandler(
       new Error(
-        'No collections imported, please verify your database (source or destin) and your array collection',
+        'No collections restored by mongorestore, please verify your database (source or destin) and your array collection',
       ),
       'RESTORE:FILTERED:IMPORTS',
     );
   }
+  if (failedRestores.length > 0) {
+    customLog(
+      'warn',
+      `Some collections were not restored, check the logs at src/logs/error.log to view these collections`,
+    );
 
-  customLog('success', `Imported collections: ${solvedImports.join(', ')}\n`);
-  return filteredImports;
+    logger.error(`No restored collections\n${failedRestores.join('\n\t\t\t✕ ')}`);
+  }
+
+  progressBarImport.stop();
+  customLog('success', `Imported collections: ${successfulExports.join(', ')}\n`);
+  return successfulExports;
 };
