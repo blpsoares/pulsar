@@ -77,6 +77,7 @@ export const initRestore = async (
   );
 
   const solvedRestores = await Promise.all(importCollectionsPromises);
+  progressBarImport.stop();
 
   const [successfulExports, failedRestores] = mongoToolsReturns(solvedRestores);
 
@@ -97,7 +98,6 @@ export const initRestore = async (
     logger.error(`No restored collections\n${failedRestores.join('\n\t\t\t✕ ')}`);
   }
 
-  progressBarImport.stop();
   customLog('success', `Imported collections: ${successfulExports.join(', ')}\n`);
   return successfulExports;
 };
