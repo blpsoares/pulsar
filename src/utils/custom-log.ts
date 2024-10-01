@@ -27,7 +27,7 @@ const getFullDate = (): string => {
   return formatDate(new Date(), 'dd/MM/yyyy - HH:mm:ss', { locale: ptBR });
 };
 
-const logger = createLogger({
+export const logger = createLogger({
   levels: optionsLogs.levels,
   format: combine(
     timestamp({
@@ -46,5 +46,3 @@ export const customLog = (type: OptionsCustomLogs, message: string) => {
   console.log(optionsLogs[type].bold(prefix + message));
   logger.log({ level: type, message });
 };
-
-export default logger;
