@@ -69,7 +69,7 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
    *
    * ? CLEAN LOCAL REGISTRES (GENERATED FOR initDump)
    */
-  // deleteTempFolder(outputExport);
+  deleteTempFolder(outputExport);
 
   /**
    *
