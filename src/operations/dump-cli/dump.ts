@@ -45,14 +45,16 @@ const createChildProcessToDump = async (
 ): Promise<MongoToolsReturn> => {
   const proc = Bun.spawn([
     'mongodump',
-    `--uri=${uri}`,
-    `--db=${db}`,
-    `--collection=${collection}`,
-    `--out=${outputExport}`,
+    `--uri="${uri}/${db}"`,
+    `--collection="${collection}"`,
+    `--out="${outputExport}"`,
     `--quiet`,
   ]);
 
   await proc.exited;
+  logger.debug(
+    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet`,
+  );
 
   if (proc.exitCode !== 0) {
     logger.error(`Error to export collection: ${collection} Exit process code: ${proc.exitCode}`);
