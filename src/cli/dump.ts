@@ -27,7 +27,7 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   const options = parseYml<DumpYmlOptions>(ymlpath);
   const { dump } = options.command;
-  const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 3 });
+  const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 2 });
 
   /**
    *
