@@ -36,14 +36,16 @@ const executeRestoreCommand = async (
 ): Promise<MongoToolsReturn> => {
   const proc = Bun.spawn([
     'mongorestore',
-    `--uri=${uri}`,
-    `--db=${dbDestin}`,
-    `--collection=_dump_${collection}`,
+    `--uri="${uri}/${dbDestin}"`,
+    `--collection="_dump_${collection}"`,
     `temp-dump/${dbSrc}/${collection}.bson`,
     `--quiet`,
   ]);
 
   await proc.exited;
+  logger.debug(
+    `Mongorestore command generated:\n mongorestore --uri="<CREDENTIALS>/<DATABASE>" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson --quiet`,
+  );
 
   if (proc.exitCode !== 0) {
     logger.error(`Error to restore collection: ${collection} Exit process code: ${proc.exitCode}`);
