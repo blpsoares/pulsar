@@ -1,8 +1,9 @@
 import { MongoClient, MongoParseError } from 'mongodb';
-import { customLog } from '../utils/custom-log';
+import { customLog, logger } from '../utils/custom-log';
 import { errorHandler } from '../errors/error-handler';
 export const conn = async (uri: string) => {
   if (!uri) {
+    logger.error(uri);
     throw errorHandler(
       new MongoParseError(`Mongo URI not declared or is empty: uri=${uri}`),
       'CONN:MONGO:URI',
@@ -20,6 +21,7 @@ export const conn = async (uri: string) => {
       'error',
       `Can't connect to MongoDB, please verify your credentials or see logs on /src/logs/error.log`,
     );
+    logger.error(uri);
     throw errorHandler(error, 'CONN:MONGO:CLIENT');
   }
 };
