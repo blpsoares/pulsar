@@ -53,7 +53,7 @@ const createChildProcessToDump = async (
 
   await proc.exited;
   logger.debug(
-    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet`,
+    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet\n`,
   );
 
   if (proc.exitCode !== 0) {

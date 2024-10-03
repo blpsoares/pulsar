@@ -44,7 +44,7 @@ const executeRestoreCommand = async (
 
   await proc.exited;
   logger.debug(
-    `Mongorestore command generated:\n mongorestore --uri="<CREDENTIALS>/<DATABASE>" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson --quiet`,
+    `Mongorestore command generated:\n mongorestore --uri="<CREDENTIALS>/<DATABASE>" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson --quiet\n`,
   );
 
   if (proc.exitCode !== 0) {
