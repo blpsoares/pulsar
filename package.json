@@ -7,9 +7,9 @@
     "pulsar": "./src/app.ts"
   },
   "scripts": {
-    "pulsar": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
-    "up:pulsar": "docker-compose up --build -d",
-    "clean:container": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_pulsar-app "
+    "pulsar-dev": "docker exec -it pulsar-app bun src/app.ts dump pulsar.yml",
+    "up:pulsar": "docker-compose -f docker-compose-dev.yml up --build -d",
+    "clean:container:dev": "docker rm -f $(docker ps -a -q) && docker rmi -f mongo-pulsar_pulsar-app-dev"
   },
   "devDependencies": {
     "@types/bun": "1.1.10",
