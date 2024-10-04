@@ -4,18 +4,3 @@ services:
   pulsar-app:
     build: .
     container_name: pulsar-app
-    volumes:
-      - ./:/app/
-    user: '1000:1000'
-    networks:
-      - pulsar-net
-    # The first parameter is your local UID and the second is your group ID. These commands run your container mapping your volume with the same permissions, ensuring that as you make changes to the script your container runs with the most recent changes. To get your GID and UID runs:
-    # UID = echo $UID
-    # GID= echo id -g
-
-volumes:
-  mongo-data:
-    driver: local
-
-networks:
-  pulsar-net:
