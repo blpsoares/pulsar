@@ -44,7 +44,7 @@ const executeRestoreCommand = async (
 
   await proc.exited;
   logger.debug(
-    `Mongorestore command generated:\n mongorestore --uri="<CREDENTIALS>/<DATABASE>" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson --quiet\n`,
+    `Mongorestore command generated:\n mongorestore --uri="<CREDENTIALS>/<DATABASE>" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson --quiet`,
   );
 
   if (proc.exitCode !== 0) {
@@ -53,7 +53,7 @@ const executeRestoreCommand = async (
   }
 
   progressBar.increment();
-  logger.info(`Restored: ${collection}`);
+  logger.info(`Restored: ${collection}\n`);
   return { success: collection, failed: false };
 };
 
