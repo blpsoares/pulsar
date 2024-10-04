@@ -10,16 +10,6 @@ import { initRegistrationSync } from '../operations/dump-cli/init-sync';
 import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
 import { renameNewCollections } from '../operations/dump-cli/rename-collections';
 
-// TODO: move three database ops to new folder
-/**
- // TODO -> add error handler on:
- *  todo -> createChildProcessToExport,
- *  todo -> createChildProcessToImport,
- *  todo -> createSyncStatsOnDestinDb,
- *  todo -> dropOldCollections
- *  todo -> and renameNewCollections
- */
-
 const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
@@ -51,19 +41,24 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
    *
    * ? SET STATE ON __SYNC__ COLLECTION
    */
-  await initRegistrationSync(options, restoredCollections, client);
+  const settedColds = await initRegistrationSync(options, restoredCollections, client, limiter);
 
   /**
    *
    * ? DROP ON DATABASE ALL COLLECTIONS DUMPED
    */
-  await dropOldCollections(client, dump.destination.db, dump.collections);
+  const droppedCollections = await dropOldCollections(
+    client,
+    dump.destination.db,
+    settedColds,
+    limiter,
+  );
 
   /**
    *
    * ? REMOVE ON DESTINATION DATABASE ALL _dump_ PREFIX ON RESTORED COLLECTIONS
    */
-  await renameNewCollections(client, dump.destination.db, dump.collections);
+  await renameNewCollections(client, dump.destination.db, droppedCollections, limiter);
 
   /**
    *
