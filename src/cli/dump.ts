@@ -9,6 +9,8 @@ import { initRestore } from '../operations/dump-cli/restore-dump';
 import { initRegistrationSync } from '../operations/dump-cli/init-sync';
 import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
 import { renameNewCollections } from '../operations/dump-cli/rename-collections';
+import { retry } from '../utils/retry-function';
+import { customLog } from '../utils/custom-log';
 
 const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
@@ -23,13 +25,31 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
    *
    * ? DUMP COLLECTIONS
    */
-  const dumpedCollections = await initDump(options, outputExport, limiter);
+  const [successExports, failedExports] = await initDump(
+    dump.source,
+    outputExport,
+    limiter,
+    dump.collections,
+  );
+
+  if (failedExports.length > 0) {
+    customLog('info', 'Retrying export failed collections');
+    const [newSuccessExports] = await initDump(dump.source, outputExport, limiter, failedExports);
+    successExports.push(...newSuccessExports);
+  }
 
   /**
    *
    * ? RESTORE COLLECTIONS
    */
-  const restoredCollections = await initRestore(options, dumpedCollections, limiter);
+  const [successRestores, failedRestores] = await initRestore(options, successExports, limiter);
+
+  if (failedRestores.length > 0) {
+    customLog('info', 'Retrying restore failed collections');
+
+    const [newSuccessRestores] = await initRestore(options, failedRestores, limiter);
+    successRestores.push(...newSuccessRestores);
+  }
 
   /**
    *
@@ -41,24 +61,47 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
    *
    * ? SET STATE ON __SYNC__ COLLECTION
    */
-  const settedColds = await initRegistrationSync(options, restoredCollections, client, limiter);
+  const [successColds, failedColds] = await initRegistrationSync(
+    options,
+    successRestores,
+    client,
+    limiter,
+  );
+
+  if (failedColds.length > 0) {
+    customLog('info', 'Retrying set cold stats on failed collections');
+
+    let [newSuccessColds] = await initRegistrationSync(options, failedColds, client, limiter);
+    successColds.push(...newSuccessColds);
+  }
 
   /**
    *
    * ? DROP ON DATABASE ALL COLLECTIONS DUMPED
    */
-  const droppedCollections = await dropOldCollections(
+  const [successDrops, failedDrops] = await dropOldCollections(
     client,
     dump.destination.db,
-    settedColds,
+    successColds,
     limiter,
   );
+  if (failedDrops.length > 0) {
+    customLog('info', 'Retrying drop failed collections');
+
+    const [newSuccessDrops] = await dropOldCollections(
+      client,
+      dump.destination.db,
+      failedDrops,
+      limiter,
+    );
+    successDrops.push(...newSuccessDrops);
+  }
 
   /**
    *
    * ? REMOVE ON DESTINATION DATABASE ALL _dump_ PREFIX ON RESTORED COLLECTIONS
    */
-  await renameNewCollections(client, dump.destination.db, droppedCollections, limiter);
+  await renameNewCollections(client, dump.destination.db, successDrops, limiter);
 
   /**
    *
