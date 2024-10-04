@@ -50,12 +50,12 @@ export const renameNewCollections = async (
 
   const [successfullRenames, failedRenames] = MongoStatusReturns(solvedRenames);
 
-  if (successfullRenames.length === 0) {
-    throw errorHandler(
-      new Error('No collections renamed, please verify collections names'),
-      'RENAME:FILTERED',
-    );
-  }
+  // if (successfullRenames.length === 0) {
+  //   throw errorHandler(
+  //     new Error('No collections renamed, please verify collections names'),
+  //     'RENAME:FILTERED',
+  //   );
+  // }
 
   if (failedRenames.length > 0) {
     customLog(

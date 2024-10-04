@@ -45,5 +45,5 @@ export const dropOldCollections = async (
   }
 
   customLog('success', `Dropped old collections\n`);
-  return successDrops;
+  return [successDrops, failedDrops];
 };

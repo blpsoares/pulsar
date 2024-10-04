@@ -1,11 +1,8 @@
 import type Bottleneck from 'bottleneck';
-import { $ } from 'bun';
 import type { SingleBar } from 'cli-progress';
 import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
-import { errorHandler } from '../../errors/error-handler';
 import fs from 'fs/promises';
-import { log } from 'winston';
 import { MongoStatusReturns } from '../../utils/mongo-tools-return';
 
 // * This function create a child process with mongodump command
@@ -53,7 +50,7 @@ const createChildProcessToDump = async (
 
   await proc.exited;
   logger.debug(
-    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet\n`,
+    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet`,
   );
 
   if (proc.exitCode !== 0) {
@@ -65,28 +62,22 @@ const createChildProcessToDump = async (
   if (!exportedFileExists) return { success: false, failed: collection };
 
   progressBar.increment();
-  logger.info(`Exported: ${collection}`);
+  logger.info(`Exported: ${collection}\n`);
   return { success: collection, failed: false };
 };
 
 export const initDump = async (
-  options: DumpYmlOptions,
+  source: DumpYmlOptions['command']['dump']['source'],
   outputExport: string,
   limiter: Bottleneck,
+  collections: string[],
 ) => {
-  const { dump } = options.command;
   customLog('info', 'Init dump collections...');
-  const progressBarExport = createSingleBar(dump.collections.length, 'Dump progress ');
+  const progressBarExport = createSingleBar(collections.length, 'Dump progress ');
 
-  const exportCollectionsPromises = dump.collections.map((collection) =>
+  const exportCollectionsPromises = collections.map((collection) =>
     limiter.schedule(() =>
-      createChildProcessToDump(
-        dump.source.uri,
-        dump.source.db,
-        collection,
-        outputExport,
-        progressBarExport,
-      ),
+      createChildProcessToDump(source.uri, source.db, collection, outputExport, progressBarExport),
     ),
   );
 
@@ -95,14 +86,14 @@ export const initDump = async (
 
   const [successfulExports, failedExports] = MongoStatusReturns(solvedExports);
 
-  if (successfulExports.length === 0) {
-    throw errorHandler(
-      new Error(
-        'No collections exported, please verify your database (source or destin) and your array collection',
-      ),
-      'RESTORE:FILTERED:EXPORTS',
-    );
-  }
+  // if (successfulExports.length === 0) {
+  //   throw errorHandler(
+  //     new Error(
+  //       'No collections exported, please verify your database (source or destin) and your array collection',
+  //     ),
+  //     'RESTORE:FILTERED:EXPORTS',
+  //   );
+  // }
   if (failedExports.length > 0) {
     customLog(
       'warn',
@@ -113,5 +104,5 @@ export const initDump = async (
 - Collections do not exist in the source database\n`);
   }
   customLog('success', `Exported collections\n`);
-  return successfulExports;
+  return [successfulExports, failedExports];
 };

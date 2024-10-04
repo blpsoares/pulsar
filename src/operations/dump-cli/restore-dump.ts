@@ -81,16 +81,16 @@ export const initRestore = async (
   const solvedRestores = await Promise.all(importCollectionsPromises);
   progressBarImport.stop();
 
-  const [successfulExports, failedRestores] = MongoStatusReturns(solvedRestores);
+  const [successFullRestores, failedRestores] = MongoStatusReturns(solvedRestores);
 
-  if (successfulExports.length === 0) {
-    throw errorHandler(
-      new Error(
-        'No collections restored by mongorestore, please verify your database (source or destin) and your array collection',
-      ),
-      'RESTORE:FILTERED:IMPORTS',
-    );
-  }
+  // if (successFullRestores.length === 0) {
+  //   throw errorHandler(
+  //     new Error(
+  //       'No collections restored by mongorestore, please verify your database (source or destin) and your array collection',
+  //     ),
+  //     'RESTORE:FILTERED:IMPORTS',
+  //   );
+  // }
   if (failedRestores.length > 0) {
     customLog(
       'warn',
@@ -101,5 +101,5 @@ export const initRestore = async (
   }
 
   customLog('success', `Restored collections\n`);
-  return successfulExports;
+  return [successFullRestores, failedRestores];
 };

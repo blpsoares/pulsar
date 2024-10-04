@@ -48,13 +48,6 @@ export const initRegistrationSync = async (
 
   const [successFullColds, failedColds] = MongoStatusReturns(settedColds);
 
-  // if (successFullColds.length === 0) {
-  //   throw errorHandler(
-  //     new Error('No collections renamed, please verify collections names'),
-  //     'RENAME:FILTERED',
-  //   );
-  // }
-
   if (failedColds.length > 0) {
     customLog(
       'warn',
@@ -63,5 +56,5 @@ export const initRegistrationSync = async (
     logger.error(`Collections with no setted states\n${failedColds.join('\n\t\t\t✕ ')}`);
   }
   customLog('success', 'Setted cold state on documents in __sync__\n');
-  return successFullColds;
+  return [successFullColds, failedColds];
 };
