@@ -1,4 +1,4 @@
-type MongoToolsReturn = {
-  sucess: string | false;
+type MongoStatusReturn = {
+  success: string | false;
   failed: string | false;
 };
