@@ -6,7 +6,7 @@ import { customLog, logger } from '../../utils/custom-log';
 import { errorHandler } from '../../errors/error-handler';
 import fs from 'fs/promises';
 import { log } from 'winston';
-import { mongoToolsReturns } from '../../utils/mongo-tools-return';
+import { MongoStatusReturns } from '../../utils/mongo-tools-return';
 
 // * This function create a child process with mongodump command
 // const executeDumpCommand = async (
@@ -42,7 +42,7 @@ const createChildProcessToDump = async (
   collection: string,
   outputExport: string,
   progressBar: SingleBar,
-): Promise<MongoToolsReturn> => {
+): Promise<MongoStatusReturn> => {
   const proc = Bun.spawn([
     'mongodump',
     `--uri="${uri}/${db}"`,
@@ -58,15 +58,15 @@ const createChildProcessToDump = async (
 
   if (proc.exitCode !== 0) {
     logger.error(`Error to export collection: ${collection} Exit process code: ${proc.exitCode}`);
-    return { sucess: false, failed: collection };
+    return { success: false, failed: collection };
   }
 
   const exportedFileExists = await fs.exists(`${outputExport}/${db}/${collection}.bson`);
-  if (!exportedFileExists) return { sucess: false, failed: collection };
+  if (!exportedFileExists) return { success: false, failed: collection };
 
   progressBar.increment();
   logger.info(`Exported: ${collection}`);
-  return { sucess: collection, failed: false };
+  return { success: collection, failed: false };
 };
 
 export const initDump = async (
@@ -93,7 +93,7 @@ export const initDump = async (
   const solvedExports = await Promise.all(exportCollectionsPromises);
   progressBarExport.stop();
 
-  const [successfulExports, failedExports] = mongoToolsReturns(solvedExports);
+  const [successfulExports, failedExports] = MongoStatusReturns(solvedExports);
 
   if (successfulExports.length === 0) {
     throw errorHandler(
@@ -110,8 +110,8 @@ export const initDump = async (
     );
 
     logger.error(`No exported collections\n${failedExports.join('\n\t\t\t✕ ')}\nPossible causes:
-- Collections do not exist in the source database`);
+- Collections do not exist in the source database\n`);
   }
-  customLog('success', `Exported collections: ${successfulExports.join(', ')}\n`);
+  customLog('success', `Exported collections\n`);
   return successfulExports;
 };

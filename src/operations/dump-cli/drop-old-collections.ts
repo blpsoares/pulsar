@@ -1,22 +1,49 @@
 import Bottleneck from 'bottleneck';
-import type { MongoClient } from 'mongodb';
+import type { Db, MongoClient } from 'mongodb';
 import { customLog, logger } from '../../utils/custom-log';
+import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+import { createSingleBar } from '../../utils/create-progress-bar';
+import type { SingleBar } from 'cli-progress';
+
+const validateDropCollections = async (
+  db: Db,
+  collection: string,
+  progressBar: SingleBar,
+): Promise<MongoStatusReturn> => {
+  const dropped = await db.dropCollection(collection);
+  if (!dropped) return { failed: collection, success: false };
+  progressBar.increment();
+  return { failed: false, success: collection };
+};
 
 export const dropOldCollections = async (
   client: MongoClient,
   dbName: string,
   collections: string[],
+  limiter: Bottleneck,
 ) => {
   const db = client.db(dbName);
-  const limiter = new Bottleneck({ maxConcurrent: 10 });
   customLog('info', 'Drop old collections...');
-  const promises = collections.map((col) => limiter.schedule(() => db.dropCollection(col)));
+  const progressBarDrop = createSingleBar(collections.length, 'Drop progress');
+  const droppedCollectionsPromise = collections.map((collection) =>
+    limiter.schedule(() => validateDropCollections(db, collection, progressBarDrop)),
+  );
 
-  try {
-    await Promise.all(promises);
-  } catch (error) {
-    logger.error(`Error to drop collection: ${error}`);
-  } finally {
-    customLog('success', 'Dropped old collections\n');
+  const droppedCollections = await Promise.all(droppedCollectionsPromise);
+  progressBarDrop.stop();
+
+  const [successDrops, failedDrops] = MongoStatusReturns(droppedCollections);
+
+  if (failedDrops.length > 0) {
+    customLog(
+      'warn',
+      `Some collections were not dropped, check the logs at src/logs/error.log to view these collections`,
+    );
+
+    logger.error(`No dropped collections\n${failedDrops.join('\n\t\t\t✕ ')}\nPossible causes:
+- Collections do not exist in the source database\n`);
   }
+
+  customLog('success', `Dropped old collections\n`);
+  return successDrops;
 };

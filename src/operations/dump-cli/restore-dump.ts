@@ -4,7 +4,7 @@ import type { SingleBar } from 'cli-progress';
 import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import { errorHandler } from '../../errors/error-handler';
-import { mongoToolsReturns } from '../../utils/mongo-tools-return';
+import { MongoStatusReturns } from '../../utils/mongo-tools-return';
 
 // * This function create a child process with mongorestore command
 // const createChildProcessToRestore = async (
@@ -33,7 +33,7 @@ const executeRestoreCommand = async (
   dbDestin: string,
   collection: string,
   progressBar: SingleBar,
-): Promise<MongoToolsReturn> => {
+): Promise<MongoStatusReturn> => {
   const proc = Bun.spawn([
     'mongorestore',
     `--uri="${uri}/${dbDestin}"`,
@@ -49,12 +49,12 @@ const executeRestoreCommand = async (
 
   if (proc.exitCode !== 0) {
     logger.error(`Error to restore collection: ${collection} Exit process code: ${proc.exitCode}`);
-    return { sucess: false, failed: collection };
+    return { success: false, failed: collection };
   }
 
   progressBar.increment();
   logger.info(`Restored: ${collection}`);
-  return { sucess: collection, failed: false };
+  return { success: collection, failed: false };
 };
 
 export const initRestore = async (
@@ -81,7 +81,7 @@ export const initRestore = async (
   const solvedRestores = await Promise.all(importCollectionsPromises);
   progressBarImport.stop();
 
-  const [successfulExports, failedRestores] = mongoToolsReturns(solvedRestores);
+  const [successfulExports, failedRestores] = MongoStatusReturns(solvedRestores);
 
   if (successfulExports.length === 0) {
     throw errorHandler(
@@ -100,6 +100,6 @@ export const initRestore = async (
     logger.error(`No restored collections\n${failedRestores.join('\n\t\t\t✕ ')}`);
   }
 
-  customLog('success', `Imported collections: ${successfulExports.join(', ')}\n`);
+  customLog('success', `Restored collections\n`);
   return successfulExports;
 };
