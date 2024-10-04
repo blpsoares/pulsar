@@ -1,3 +1,5 @@
 docker/
 .env
 node_modules
+temp-dump/
+src/logs/
