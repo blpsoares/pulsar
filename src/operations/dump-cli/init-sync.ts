@@ -43,18 +43,15 @@ export const initRegistrationSync = async (
     ),
   );
 
-  const settedColds = await Promise.all(solvedSetColdState);
+  const setColds = await Promise.all(solvedSetColdState);
   progressBarColdState.stop();
 
-  const [successFullColds, failedColds] = MongoStatusReturns(settedColds);
+  const [successFullColds, failedColds] = MongoStatusReturns(setColds);
 
   if (failedColds.length > 0) {
-    customLog(
-      'warn',
-      'Some states can not be setted, check these collections on src/logs/debug.log',
-    );
-    logger.error(`Collections with no setted states\n${failedColds.join('\n\t\t\t✕ ')}`);
+    customLog('warn', 'Some states can not be set, check these collections on src/logs/debug.log');
+    logger.error(`Collections with no Set states -> ["${failedColds.join('","')}"]`);
   }
-  customLog('success', 'Setted cold state on documents in __sync__\n');
+  customLog('success', 'Set cold state on documents in __sync__\n');
   return [successFullColds, failedColds];
 };

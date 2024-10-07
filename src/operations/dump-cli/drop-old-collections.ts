@@ -40,8 +40,7 @@ export const dropOldCollections = async (
       `Some collections were not dropped, check the logs at src/logs/error.log to view these collections`,
     );
 
-    logger.error(`No dropped collections\n${failedDrops.join('\n\t\t\t✕ ')}\nPossible causes:
-- Collections do not exist in the source database\n`);
+    logger.error(`No dropped collections\n["${failedDrops.join('","')}"]`);
   }
 
   customLog('success', `Dropped old collections\n`);

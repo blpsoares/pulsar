@@ -86,22 +86,13 @@ export const initDump = async (
 
   const [successfulExports, failedExports] = MongoStatusReturns(solvedExports);
 
-  // if (successfulExports.length === 0) {
-  //   throw errorHandler(
-  //     new Error(
-  //       'No collections exported, please verify your database (source or destin) and your array collection',
-  //     ),
-  //     'RESTORE:FILTERED:EXPORTS',
-  //   );
-  // }
   if (failedExports.length > 0) {
     customLog(
       'warn',
       `Some collections were not exported, check the logs at src/logs/error.log to view these collections`,
     );
 
-    logger.error(`No exported collections\n${failedExports.join('\n\t\t\t✕ ')}\nPossible causes:
-- Collections do not exist in the source database\n`);
+    logger.error(`No exported collections\n["${failedExports.join('","')}"]`);
   }
   customLog('success', `Exported collections\n`);
   return [successfulExports, failedExports];

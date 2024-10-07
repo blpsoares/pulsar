@@ -83,21 +83,13 @@ export const initRestore = async (
 
   const [successFullRestores, failedRestores] = MongoStatusReturns(solvedRestores);
 
-  // if (successFullRestores.length === 0) {
-  //   throw errorHandler(
-  //     new Error(
-  //       'No collections restored by mongorestore, please verify your database (source or destin) and your array collection',
-  //     ),
-  //     'RESTORE:FILTERED:IMPORTS',
-  //   );
-  // }
   if (failedRestores.length > 0) {
     customLog(
       'warn',
       `Some collections were not restored, check the logs at src/logs/error.log to view these collections`,
     );
 
-    logger.error(`No restored collections\n${failedRestores.join('\n\t\t\t✕ ')}`);
+    logger.error(`No restored collections\n["${failedRestores.join('","')}"]`);
   }
 
   customLog('success', `Restored collections\n`);
