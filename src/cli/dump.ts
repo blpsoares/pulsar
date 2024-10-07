@@ -9,7 +9,6 @@ import { initRestore } from '../operations/dump-cli/restore-dump';
 import { initRegistrationSync } from '../operations/dump-cli/init-sync';
 import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
 import { renameNewCollections } from '../operations/dump-cli/rename-collections';
-import { retry } from '../utils/retry-function';
 import { customLog } from '../utils/custom-log';
 
 const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
