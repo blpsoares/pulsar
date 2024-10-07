@@ -5,34 +5,6 @@ import { customLog, logger } from '../../utils/custom-log';
 import fs from 'fs/promises';
 import { MongoStatusReturns } from '../../utils/mongo-tools-return';
 
-// * This function create a child process with mongodump command
-// const executeDumpCommand = async (
-//   uri: string,
-//   db: string,
-//   col: string,
-//   outputExport: string,
-//   progressBar: SingleBar,
-// ) => {
-//   const proc = Bun.spawn([
-//     "mongodump",
-//     `--uri=${uri}`,
-//     `--db=${db}`,
-//     `--collection=${col}`,
-//     `--out=${outputExport}`
-//   ]);
-
-//   const { exitCode } = await proc.exited;
-
-//   if (exitCode !== 0) {
-//     customLog('error', `Error to export collection: ${col}`);
-//   }
-
-//   progressBar.increment();
-//   logger.info(`Exported: ${col}`);
-//   return col;
-// };
-
-//* This funcion execute a shell command, but does not create a child process
 const createChildProcessToDump = async (
   uri: string,
   db: string,
@@ -49,9 +21,6 @@ const createChildProcessToDump = async (
   ]);
 
   await proc.exited;
-  logger.debug(
-    `Tools command generated:\n mongodump --uri="<CREDENTIALS>/<DATABASE>" --collection="${collection}" --out="${outputExport}" --quiet`,
-  );
 
   if (proc.exitCode !== 0) {
     logger.error(`Error to export collection: ${collection} Exit process code: ${proc.exitCode}`);
