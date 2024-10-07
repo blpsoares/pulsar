@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY . /app/
 
-RUN apk add --no-cache curl bash mongodb-tools
+RUN apk add --no-cache curl bash nano mongodb-tools
 
 RUN bun install
 RUN bun link
