@@ -19,13 +19,9 @@ const optionsLogs = {
   },
 };
 
-const logFormat = printf(({ level, message, timestamp }) => {
-  return `${timestamp} [${level}]: ${message}`;
-});
+const logFormat = printf(({ level, message, timestamp }) => `${timestamp} [${level}]: ${message}`);
 
-const getFullDate = (): string => {
-  return formatDate(new Date(), 'dd/MM/yyyy - HH:mm:ss', { locale: ptBR });
-};
+const getFullDate = (): string => formatDate(new Date(), 'dd/MM/yyyy - HH:mm:ss', { locale: ptBR });
 
 export const logger = createLogger({
   levels: optionsLogs.levels,
@@ -41,7 +37,7 @@ export const logger = createLogger({
   ],
 });
 
-export const customLog = (type: OptionsCustomLogs, message: string, error?: any) => {
+export const customLog = (type: OptionsCustomLogs, message: string, error: any = '') => {
   const prefix = `[ ${type.toUpperCase()} ] `;
   console.log(optionsLogs[type].bold(prefix + message));
   logger.log({ level: type, message: message + error });
