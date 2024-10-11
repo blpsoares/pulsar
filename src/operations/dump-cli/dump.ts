@@ -12,6 +12,7 @@ const createChildProcessToDump = async (
   outputExport: string,
   progressBar: SingleBar,
 ): Promise<MongoStatusReturn> => {
+  if (uri.endsWith('/')) uri = uri.slice(0, -1);
   const proc = Bun.spawn([
     'mongodump',
     `--uri="${uri}/${db}"`,
