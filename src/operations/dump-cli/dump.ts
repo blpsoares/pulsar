@@ -4,6 +4,11 @@ import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import fs from 'fs/promises';
 import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+import { ObjectId } from 'mongodb';
+
+const data = new Date(`2024-09-01`);
+const objectId = new ObjectId(Math.floor(data.getTime() / 1000).toString(16) + '0000000000000000');
+const queryString = JSON.stringify({ _id: { $gte: { $oid: objectId.toString() } } });
 
 const createChildProcessToDump = async (
   uri: string,
@@ -17,10 +22,10 @@ const createChildProcessToDump = async (
     'mongodump',
     `--uri="${uri}/${db}"`,
     `--collection="${collection}"`,
+    `--query=${queryString}`,
     `--out="${outputExport}"`,
     `--quiet`,
   ]);
-
   await proc.exited;
 
   if (proc.exitCode !== 0) {
