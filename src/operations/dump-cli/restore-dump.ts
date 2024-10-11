@@ -1,0 +1,71 @@
+import type Bottleneck from 'bottleneck';
+import type { SingleBar } from 'cli-progress';
+import { createSingleBar } from '../../utils/create-progress-bar';
+import { customLog, logger } from '../../utils/custom-log';
+import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+
+const executeRestoreCommand = async (
+  uri: string,
+  dbSrc: string,
+  dbDestin: string,
+  collection: string,
+  progressBar: SingleBar,
+): Promise<MongoStatusReturn> => {
+  const proc = Bun.spawn([
+    'mongorestore',
+    `--uri="${uri}/${dbDestin}"`,
+    `--collection="_dump_${collection}"`,
+    `temp-dump/${dbSrc}/${collection}.bson`,
+    `--quiet`,
+  ]);
+
+  await proc.exited;
+
+  if (proc.exitCode !== 0) {
+    logger.error(`Error to restore collection: ${collection} Exit process code: ${proc.exitCode}`);
+    return { success: false, failed: collection };
+  }
+
+  progressBar.increment();
+  logger.info(`Restored: ${collection}\n`);
+  return { success: collection, failed: false };
+};
+
+export const initRestore = async (
+  options: DumpYmlOptions,
+  collections: string[],
+  limiter: Bottleneck,
+) => {
+  const { dump } = options.command;
+  customLog('info', 'Init restore collections...');
+  const progressBarImport = createSingleBar(collections.length, 'Restore progress');
+
+  const importCollectionsPromises = collections.map((collection) =>
+    limiter.schedule(() =>
+      executeRestoreCommand(
+        dump.destination.uri,
+        dump.source.db,
+        dump.destination.db,
+        collection,
+        progressBarImport,
+      ),
+    ),
+  );
+
+  const solvedRestores = await Promise.all(importCollectionsPromises);
+  progressBarImport.stop();
+
+  const [successFullRestores, failedRestores] = MongoStatusReturns(solvedRestores);
+
+  if (failedRestores.length > 0) {
+    customLog(
+      'warn',
+      `Some collections were not restored, check the logs at src/logs/error.log to view these collections`,
+    );
+
+    logger.error(`No restored collections\n["${failedRestores.join('","')}"]`);
+  }
+
+  customLog('success', `Restored collections\n`);
+  return [successFullRestores, failedRestores];
+};

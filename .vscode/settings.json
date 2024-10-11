@@ -1,0 +1,12 @@
+// {
+//   "files.exclude": {
+//     // "docker": true,
+//     "fontes.txt": true,
+//     ".eslintrc.js": true,
+//     // ".gitignore": true,
+//     "tsconfig.json": true,
+//     ".prettierrc": true,
+//     "README.md": true,
+//     ".editorconfig": true,
+//   }
+// }

@@ -1,0 +1,9 @@
+command:
+  dump:
+    source:
+      uri: ""
+      db: ""
+    destination:
+      uri: ""
+      db: ""
+    collections: []

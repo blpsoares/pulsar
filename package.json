@@ -1,17 +1,38 @@
 {
-  "name": "mongo-pulsar",
+  "name": "pulsar",
+  "version": "1.0.0",
   "module": "./src/app.ts",
   "type": "module",
+  "bin": {
+    "pulsar": "./src/app.ts"
+  },
   "scripts": {
-    "local": "bun ./src/app.ts"
+    "pulsar-dev": "docker exec -it pulsar-app-dev bun src/app.ts dump pulsar.yml",
+    "up:pulsar": "docker-compose -f docker-compose-dev.yml up --build -d",
+    "clean:container:dev": "docker rm -f pulsar-app-dev && docker rmi -f mongo-pulsar_pulsar-app-dev"
   },
   "devDependencies": {
-    "@types/bun": "1.1.9"
+    "@types/bun": "1.1.10",
+    "@types/chalk": "^2.2.0",
+    "@types/cli-progress": "^3.11.6",
+    "@types/commander": "^2.12.2",
+    "@types/figlet": "^1.5.8",
+    "@types/js-yaml": "^4.0.9",
+    "@types/mongodb": "^4.0.7",
+    "@types/winston": "^2.4.4"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "bottleneck": "^2.19.5"
+    "@types/date-fns": "^2.6.0",
+    "bottleneck": "^2.19.5",
+    "chalk": "^5.3.0",
+    "cli-progress": "^3.12.0",
+    "commander": "^12.1.0",
+    "figlet": "^1.7.0",
+    "js-yaml": "^4.1.0",
+    "mongodb": "^6.9.0",
+    "winston": "^3.14.2"
   }
 }
