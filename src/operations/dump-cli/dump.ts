@@ -4,32 +4,26 @@ import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import fs from 'fs/promises';
 import { MongoStatusReturns } from '../../utils/mongo-tools-return';
-import { ObjectId } from 'mongodb';
-
-const data = new Date(`2024-09-01`);
-const objectId = new ObjectId(Math.floor(data.getTime() / 1000).toString(16) + '0000000000000000');
-const queryString = JSON.stringify({ _id: { $gte: { $oid: objectId.toString() } } });
+import { $ } from 'bun';
 
 const createChildProcessToDump = async (
   uri: string,
   db: string,
   collection: string,
+  queryString: string = '',
   outputExport: string,
   progressBar: SingleBar,
 ): Promise<MongoStatusReturn> => {
   if (uri.endsWith('/')) uri = uri.slice(0, -1);
-  const proc = Bun.spawn([
-    'mongodump',
-    `--uri="${uri}/${db}"`,
-    `--collection="${collection}"`,
-    `--query=${queryString}`,
-    `--out="${outputExport}"`,
-    `--quiet`,
-  ]);
-  await proc.exited;
+  const { stderr, stdout, exitCode } =
+    await $`mongodump --uri="${uri}/${db}" --collection="${collection}" --query=${queryString} --out="${outputExport}"`
+      .nothrow()
+      .quiet();
 
-  if (proc.exitCode !== 0) {
-    logger.error(`Error to export collection: ${collection} Exit process code: ${proc.exitCode}`);
+  if (exitCode !== 0) {
+    logger.error(
+      `Error to export collection: ${collection}\nExit process code: ${exitCode}\nError: ${stderr}\nOutput: ${stdout}`,
+    );
     return { success: false, failed: collection };
   }
 
@@ -46,13 +40,21 @@ export const initDump = async (
   outputExport: string,
   limiter: Bottleneck,
   collections: string[],
+  query: string,
 ) => {
   customLog('info', 'Init dump collections...');
   const progressBarExport = createSingleBar(collections.length, 'Dump progress ');
 
   const exportCollectionsPromises = collections.map((collection) =>
     limiter.schedule(() =>
-      createChildProcessToDump(source.uri, source.db, collection, outputExport, progressBarExport),
+      createChildProcessToDump(
+        source.uri,
+        source.db,
+        collection,
+        query,
+        outputExport,
+        progressBarExport,
+      ),
     ),
   );
 
