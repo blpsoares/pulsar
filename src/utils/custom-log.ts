@@ -37,7 +37,7 @@ export const logger = createLogger({
   ],
 });
 
-export const customLog = (type: OptionsCustomLogs, message: string, error: any = '') => {
+export const customLog = (type: OptionsCustomLogs, message: any, error: any = '') => {
   const prefix = `[ ${type.toUpperCase()} ] `;
   console.log(optionsLogs[type].bold(prefix + message));
   logger.log({ level: type, message: message + error });
