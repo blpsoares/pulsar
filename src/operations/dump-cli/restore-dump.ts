@@ -3,6 +3,7 @@ import type { SingleBar } from 'cli-progress';
 import { createSingleBar } from '../../utils/create-progress-bar';
 import { customLog, logger } from '../../utils/custom-log';
 import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+import { $ } from 'bun';
 
 const executeRestoreCommand = async (
   uri: string,
@@ -12,18 +13,15 @@ const executeRestoreCommand = async (
   progressBar: SingleBar,
 ): Promise<MongoStatusReturn> => {
   if (uri.endsWith('/')) uri = uri.slice(0, -1);
-  const proc = Bun.spawn([
-    'mongorestore',
-    `--uri="${uri}/${dbDestin}"`,
-    `--collection="_dump_${collection}"`,
-    `temp-dump/${dbSrc}/${collection}.bson`,
-    `--quiet`,
-  ]);
+  const { stderr, stdout, exitCode } =
+    await $`mongorestore --uri="${uri}/${dbDestin}" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson`
+      .nothrow()
+      .quiet();
 
-  await proc.exited;
-
-  if (proc.exitCode !== 0) {
-    logger.error(`Error to restore collection: ${collection} Exit process code: ${proc.exitCode}`);
+  if (exitCode !== 0) {
+    logger.error(
+      `Error to restore collection: ${collection}\nExit process code: ${exitCode}\nError: ${stderr}\nOutput: ${stdout}`,
+    );
     return { success: false, failed: collection };
   }
 
