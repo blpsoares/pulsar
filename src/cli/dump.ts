@@ -29,11 +29,18 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
     outputExport,
     limiter,
     dump.collections,
+    dump.queryString,
   );
 
   if (failedExports.length > 0) {
     customLog('info', 'Retrying export failed collections');
-    const [newSuccessExports] = await initDump(dump.source, outputExport, limiter, failedExports);
+    const [newSuccessExports] = await initDump(
+      dump.source,
+      outputExport,
+      limiter,
+      failedExports,
+      dump.queryString,
+    );
     successExports.push(...newSuccessExports);
   }
 
