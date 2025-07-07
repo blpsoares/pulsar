@@ -8,6 +8,8 @@
 > Docker - docker-compose
 ```
 
+## First Option
+
 #### Installation:
 
 ```sh
@@ -18,6 +20,20 @@
 
 ```sh
  > docker exec -it pulsar-app bash
+```
+
+### Second option:
+
+#### Instalation:
+
+```sh
+  bun run pulsar:bin
+```
+
+#### Usage:
+
+```sh
+pulsar dump <config-file> <options>
 ```
 
 #### The configuration file to indicate the dump execution settings is in the following format:
