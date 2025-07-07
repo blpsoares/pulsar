@@ -7,6 +7,7 @@
     "pulsar": "./src/app.ts"
   },
   "scripts": {
+    "pulsar:bin": "bun build --compile src/app.ts --outfile dist/pulsar && chmod +x dist/pulsar",
     "pulsar-dev": "docker exec -it pulsar-app-dev bun src/app.ts dump pulsar.yml",
     "up:pulsar": "docker-compose -f docker-compose-dev.yml up --build -d",
     "clean:container:dev": "docker rm -f pulsar-app-dev && docker rmi -f mongo-pulsar_pulsar-app-dev"
