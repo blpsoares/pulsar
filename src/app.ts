@@ -2,7 +2,7 @@
 
 import { showTitle } from './utils/show-cli-title';
 import { Command } from 'commander';
-import dumpDbFn from './cli/dump';
+import migrateCollections from './cli/dump';
 
 await showTitle();
 
@@ -16,6 +16,6 @@ program
     '-p --parallel <number>',
     'send a number to export collections in parallel, example: -p 2 or --parallel 2.\nBy default this value is 2.',
   )
-  .action(dumpDbFn);
+  .action(migrateCollections);
 
 program.parse(process.argv);
