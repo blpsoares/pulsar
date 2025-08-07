@@ -1,1 +1,1 @@
-type OptionsCli = { parallel?: number };
+type OptionsCli = { parallel?: number, maxRetries?: number };

@@ -3,22 +3,22 @@ import path from 'path';
 import { conn } from '../db/conn';
 import Bottleneck from 'bottleneck';
 import parseYml from '../utils/parse-yml';
-import { dumpCollections, initDump } from '../operations/dump-cli/dump';
+import { initDump } from '../operations/dump-cli/dump';
 import { deleteTempFolder } from '../utils/delete-temp-folder';
-import { restoreCollections, initRestore } from '../operations/dump-cli/restore-dump';
+import { initRestore } from '../operations/dump-cli/restore-dump';
 import { initRegistrationSync } from '../operations/dump-cli/init-sync';
 import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
 import { renameNewCollections } from '../operations/dump-cli/rename-collections';
 import { customLog } from '../utils/custom-log';
 
-const migrateCollections = async (ymlpath: string, option: OptionsCli) => {
+const migrateCollections = async (ymlpath: string, cliParams: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
 
   const options = parseYml<DumpYmlOptions>(ymlpath);
   const { dump } = options.command;
-  const limiter = new Bottleneck({ maxConcurrent: option.parallel ?? 2 });
+  const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 
   /**
    *
@@ -30,7 +30,7 @@ const migrateCollections = async (ymlpath: string, option: OptionsCli) => {
   limiter,
   dump.collections,
   dump.queryString,
-  dump.maxRetries
+  cliParams.maxRetries
   );
 
   if (failedExports.length > 0) {
@@ -46,7 +46,7 @@ const migrateCollections = async (ymlpath: string, option: OptionsCli) => {
       options,
       successExports,
       limiter,
-      dump.maxRetries
+      cliParams.maxRetries
     );
 
   if (failedRestores.length > 0) {

@@ -16,6 +16,10 @@ program
     '-p --parallel <number>',
     'send a number to export collections in parallel, example: -p 2 or --parallel 2.\nBy default this value is 2.',
   )
+  .option(
+    '-r --maxRetries <number>',
+    'send a number to retry failed collections (exported and restored), example: -r 5 or --maxRetries 5.\nBy default this value is 3.',
+  )
   .action(migrateCollections);
 
 program.parse(process.argv);
