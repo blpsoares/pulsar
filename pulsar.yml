@@ -1,9 +1,11 @@
 command:
   dump:
     source:
-      uri: ""
-      db: ""
+      uri: "mongodb://127.0.0.1:27017"
+      db: "dbTeste"
     destination:
-      uri: ""
-      db: ""
-    collections: []
+      uri: "mongodb://127.0.0.1:27018"
+      db: "dbTeste2"
+    collections:
+        - "simpleCollection"
+    maxRetries: 10
