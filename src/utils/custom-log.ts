@@ -37,8 +37,9 @@ export const logger = createLogger({
   ],
 });
 
-export const customLog = (type: OptionsCustomLogs, message: any, error: any = '') => {
+export const customLog = (type: OptionsCustomLogs, message: any, breakLine?: boolean, error: any = '') => {
   const prefix = `[ ${type.toUpperCase()} ] `;
-  console.log(optionsLogs[type].bold(prefix + message));
+  const _breakLine = breakLine ? '\n' : '';
+  console.log(optionsLogs[type].bold(_breakLine + prefix + message));
   logger.log({ level: type, message: message + error });
 };
