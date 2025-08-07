@@ -1,7 +1,7 @@
 import { MongoClient, MongoParseError } from 'mongodb';
 import { customLog, logger } from '../utils/custom-log';
 import { errorHandler } from '../errors/error-handler';
-export const conn = async (uri: string) => {
+export const conn = async (uri: string, source: 'source' | 'destination') => {
   if (uri.endsWith('/')) uri = uri.slice(0, -1);
   if (!uri) {
     logger.error(uri);
@@ -15,7 +15,7 @@ export const conn = async (uri: string) => {
   try {
     const client = new MongoClient(uri);
     await client.connect();
-    customLog('success', 'Connected to MongoDB!');
+    customLog('success', `Connected to ${source} MongoDB!`);
     return client;
   } catch (error) {
     customLog(
