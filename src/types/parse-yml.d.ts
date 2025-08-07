@@ -11,6 +11,7 @@ type DumpYmlOptions = {
       };
       collections: string[];
       queryString: string;
+      maxRetries: number
     };
   };
 };
