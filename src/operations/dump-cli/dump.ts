@@ -35,14 +35,14 @@ const createChildProcessToDump = async (
   return { success: collection, failed: false };
 };
 
-export const initDump = async (
+export const dumpCollections = async (
   source: DumpYmlOptions['command']['dump']['source'],
   outputExport: string,
   limiter: Bottleneck,
   collections: string[],
-  query: string,
+  query?: string,
 ) => {
-  customLog('info', 'Init dump collections...');
+  customLog('info', 'Init dump collections...', true);
   const progressBarExport = createSingleBar(collections.length, 'Dump progress ');
 
   const exportCollectionsPromises = collections.map((collection) =>
@@ -71,6 +71,39 @@ export const initDump = async (
 
     logger.error(`No exported collections\n["${failedExports.join('","')}"]`);
   }
-  customLog('success', `Exported collections\n`);
+
+  if(failedExports.length === 0 ) customLog('success', `Collections exporteds\n`);
   return [successfulExports, failedExports];
+};
+
+
+export const initDump = async (
+  sourceUri: DumpYmlOptions['command']['dump']['source'],
+  outputPath: string,
+  limiter: Bottleneck,
+  collections: string[],
+  queryString: string = '',
+  maxRetries: number = 3
+): Promise<[string[], string[]]> => {
+  let remainingCollections = collections;
+  const allSuccess: string[] = [];
+  let attempts = 0;
+
+  while (remainingCollections.length > 0 && attempts < maxRetries) {
+    const [success, failed] = await dumpCollections(sourceUri, outputPath, limiter, remainingCollections, queryString);
+    allSuccess.push(...success);
+    remainingCollections = failed;
+
+    if (failed.length > 0) {
+      customLog('warn', `${attempts + 1}° Retrying export for collections: ${failed.join(', ')}`);
+    }
+
+    attempts++;
+  }
+
+  if (remainingCollections.length > 0) {
+    customLog('error', `Failed to export collections after ${maxRetries} attempts: ${remainingCollections}`, true);
+  }
+
+  return [allSuccess, remainingCollections];
 };

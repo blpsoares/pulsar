@@ -30,7 +30,7 @@ const executeRestoreCommand = async (
   return { success: collection, failed: false };
 };
 
-export const initRestore = async (
+export const restoreCollections = async (
   options: DumpYmlOptions,
   collections: string[],
   limiter: Bottleneck,
@@ -64,7 +64,36 @@ export const initRestore = async (
 
     logger.error(`No restored collections\n["${failedRestores.join('","')}"]`);
   }
+  if(failedRestores.length === 0 ) customLog('success', `Collections restored\n`);
 
-  customLog('success', `Restored collections\n`);
   return [successFullRestores, failedRestores];
+};
+
+export const initRestore = async (
+  options: DumpYmlOptions,
+  collections: string[],
+  limiter: Bottleneck,
+  maxRetries: number = 3
+): Promise<[string[], string[]]> => {
+  let remainingCollections = collections;
+  const allSuccess: string[] = [];
+  let attempts = 0;
+
+  while (remainingCollections.length > 0 && attempts < maxRetries) {
+    const [success, failed] = await restoreCollections(options, remainingCollections, limiter);
+    allSuccess.push(...success);
+    remainingCollections = failed;
+
+    if (failed.length > 0) {
+      customLog('warn', `${attempts + 1}° Retrying restore for collections: ${failed.join(', ')}`);
+    }
+
+    attempts++;
+  }
+
+  if (remainingCollections.length > 0) {
+    customLog('error', `Failed to restore collections after ${maxRetries} attempts: ${remainingCollections}`);
+  }
+
+  return [allSuccess, remainingCollections];
 };

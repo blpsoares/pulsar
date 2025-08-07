@@ -3,15 +3,15 @@ import path from 'path';
 import { conn } from '../db/conn';
 import Bottleneck from 'bottleneck';
 import parseYml from '../utils/parse-yml';
-import { initDump } from '../operations/dump-cli/dump';
+import { dumpCollections, initDump } from '../operations/dump-cli/dump';
 import { deleteTempFolder } from '../utils/delete-temp-folder';
-import { initRestore } from '../operations/dump-cli/restore-dump';
+import { restoreCollections, initRestore } from '../operations/dump-cli/restore-dump';
 import { initRegistrationSync } from '../operations/dump-cli/init-sync';
 import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
 import { renameNewCollections } from '../operations/dump-cli/rename-collections';
 import { customLog } from '../utils/custom-log';
 
-const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
+const migrateCollections = async (ymlpath: string, option: OptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
@@ -25,43 +25,40 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
    * ? DUMP COLLECTIONS
    */
   const [successExports, failedExports] = await initDump(
-    dump.source,
-    outputExport,
-    limiter,
-    dump.collections,
-    dump.queryString,
+  dump.source,
+  outputExport,
+  limiter,
+  dump.collections,
+  dump.queryString,
+  dump.maxRetries
   );
 
   if (failedExports.length > 0) {
-    customLog('info', 'Retrying export failed collections');
-    const [newSuccessExports] = await initDump(
-      dump.source,
-      outputExport,
-      limiter,
-      failedExports,
-      dump.queryString,
-    );
-    successExports.push(...newSuccessExports);
-  }
+    customLog('error', `Failed to restore collections: ${failedExports}`);
+    return;
+  };
 
   /**
    *
    * ? RESTORE COLLECTIONS
    */
-  const [successRestores, failedRestores] = await initRestore(options, successExports, limiter);
+    const [successRestores, failedRestores] = await initRestore(
+      options,
+      successExports,
+      limiter,
+      dump.maxRetries
+    );
 
   if (failedRestores.length > 0) {
-    customLog('info', 'Retrying restore failed collections');
-
-    const [newSuccessRestores] = await initRestore(options, failedRestores, limiter);
-    successRestores.push(...newSuccessRestores);
-  }
+    customLog('error', `Failed to restore collections: ${failedRestores}`);
+      return;
+  };
 
   /**
    *
    * ? CONNECT TO DESTINATION
    */
-  const client = await conn(dump.destination.uri);
+  const client = await conn(dump.destination.uri, 'destination');
 
   /**
    *
@@ -111,7 +108,7 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
 
   /**
    *
-   * ? CLEAN LOCAL REGISTRES (GENERATED FOR initDump)
+   * ? CLEAN LOCAL REGISTRES (GENERATED FOR dumpCollections)
    */
   deleteTempFolder(outputExport);
 
@@ -122,4 +119,4 @@ const dumpDbFn = async (ymlpath: string, option: OptionsCli) => {
   client.close();
 };
 
-export default dumpDbFn;
+export default migrateCollections;
