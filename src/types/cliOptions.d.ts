@@ -1,1 +1,2 @@
-type OptionsCli = { parallel?: number, maxRetries?: number };
+type DumpOptionsCli = { parallel?: number, maxRetries?: number };
+type WatchOptionsCli = { all?: boolean };
