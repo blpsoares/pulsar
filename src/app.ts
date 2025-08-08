@@ -3,6 +3,7 @@
 import { showTitle } from './utils/show-cli-title';
 import { Command } from 'commander';
 import migrateCollections from './cli/dump';
+import { watchCollections } from './cli/watch';
 
 await showTitle();
 
@@ -21,5 +22,9 @@ program
     'send a number to retry failed collections (exported and restored), example: -r 5 or --maxRetries 5.\nBy default this value is 3.',
   )
   .action(migrateCollections);
+
+program
+  .command('watch <file>')
+  .action(watchCollections);
 
 program.parse(process.argv);
