@@ -14,3 +14,19 @@ type DumpYmlOptions = {
     };
   };
 };
+
+type WatchYmlOptions = {
+  command: {
+    watch: {
+      source: {
+        uri: string;
+        db: string;
+      };
+      destination: {
+        uri: string;
+        db: string;
+      };
+      collections?: string[];
+    };
+  };
+};
