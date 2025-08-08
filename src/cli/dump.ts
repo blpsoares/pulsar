@@ -2,21 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import { conn } from '../db/conn';
 import Bottleneck from 'bottleneck';
-import parseYml from '../utils/parse-yml';
-import { initDump } from '../operations/dump-cli/dump';
-import { deleteTempFolder } from '../utils/delete-temp-folder';
-import { initRestore } from '../operations/dump-cli/restore-dump';
-import { initRegistrationSync } from '../operations/dump-cli/init-sync';
-import { dropOldCollections } from '../operations/dump-cli/drop-old-collections';
-import { renameNewCollections } from '../operations/dump-cli/rename-collections';
-import { customLog } from '../utils/custom-log';
+import parseYml from '../utils/parseYml';
+import { initDump } from '../operations/dumpCli/dump';
+import { deleteTempFolder } from '../utils/deleteTempFolder';
+import { initRestore } from '../operations/dumpCli/restoreDump';
+import { initRegistrationSync } from '../operations/dumpCli/initSync';
+import { dropOldCollections } from '../operations/dumpCli/dropOldCollections';
+import { renameNewCollections } from '../operations/dumpCli/renameCollections';
+import { customLog } from '../utils/customLog';
+import { dumpYmlSchema, type DumpYmlOptions } from '../types/parseYml';
 
-const migrateCollections = async (ymlpath: string, cliParams: OptionsCli) => {
+const migrateCollections = async (ymlpath: string, cliParams: DumpOptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
 
-  const options = parseYml<DumpYmlOptions>(ymlpath);
+  const options = parseYml<DumpYmlOptions>(ymlpath, dumpYmlSchema);
   const { dump } = options.command;
   const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 

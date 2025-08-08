@@ -1,9 +1,9 @@
 import type { MongoClient } from 'mongodb';
 import type { SingleBar } from 'cli-progress';
-import { createSingleBar } from '../../utils/create-progress-bar';
-import { customLog, logger } from '../../utils/custom-log';
+import { createSingleBar } from '../../utils/createProgressBar';
+import { customLog, logger } from '../../utils/customLog';
 import type Bottleneck from 'bottleneck';
-import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+import { MongoStatusReturns } from '../../utils/mongoToolsReturn';
 
 const createSyncStatsOnDestinDb = async (
   client: MongoClient,
