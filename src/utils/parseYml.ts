@@ -1,22 +1,30 @@
-import yaml from 'js-yaml';
 import fs from 'fs';
+import yaml from 'js-yaml';
+import type { ZodType } from 'zod';
+import { ZodError } from 'zod';
 import { errorHandler } from '../errors/errorHandler';
-import { YmlToJsonError } from '../classes/errorsClass';
+import { customLog } from './customLog';
 
-const parseYml = <T>(ymlPath: string): T => {
+const parseYml = <T>(ymlPath: string, schema: ZodType<T>): T => {
   if (!fs.existsSync(ymlPath)) {
-    throw errorHandler(new YmlToJsonError('ENOENT no such file or directory'), 'FS:YML:PARSE-FN');
+    throw errorHandler(new Error(`File not found on path: ${ymlPath}`));
   }
 
-  const yml = fs.readFileSync(ymlPath);
+  const yml = fs.readFileSync(ymlPath, 'utf-8');
+  const rawData = yaml.load(yml);
 
-  const options = yaml.load(yml.toString());
-
-  if (!options) {
-    throw errorHandler(new YmlToJsonError('YML file can not empty'), 'OPTIONS:LOAD:YML');
+  if (!rawData) {
+    throw errorHandler(new Error('YML file is empty or malformed'));
   }
 
-  return options as T;
+  try {
+    return schema.parse(rawData);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw errorHandler(err, "PARSE:YML:ZOD")
+    }
+    throw err;
+  }
 };
 
 export default parseYml;

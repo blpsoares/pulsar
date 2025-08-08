@@ -10,13 +10,14 @@ import { initRegistrationSync } from '../operations/dumpCli/initSync';
 import { dropOldCollections } from '../operations/dumpCli/dropOldCollections';
 import { renameNewCollections } from '../operations/dumpCli/renameCollections';
 import { customLog } from '../utils/customLog';
+import { dumpYmlSchema, type DumpYmlOptions } from '../types/parseYml';
 
 const migrateCollections = async (ymlpath: string, cliParams: DumpOptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
 
-  const options = parseYml<DumpYmlOptions>(ymlpath);
+  const options = parseYml<DumpYmlOptions>(ymlpath, dumpYmlSchema);
   const { dump } = options.command;
   const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 
