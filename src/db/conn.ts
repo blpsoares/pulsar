@@ -1,7 +1,7 @@
 import { MongoClient, MongoParseError } from 'mongodb';
 import { customLog, logger } from '../utils/custom-log';
 import { errorHandler } from '../errors/error-handler';
-export const conn = async (uri: string, source: 'source' | 'destination') => {
+export const conn = async (uri: string, source: string = '->') => {
   if (uri.endsWith('/')) uri = uri.slice(0, -1);
   if (!uri) {
     logger.error(uri);
