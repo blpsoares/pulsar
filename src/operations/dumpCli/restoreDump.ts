@@ -1,8 +1,8 @@
 import type Bottleneck from 'bottleneck';
 import type { SingleBar } from 'cli-progress';
-import { createSingleBar } from '../../utils/create-progress-bar';
-import { customLog, logger } from '../../utils/custom-log';
-import { MongoStatusReturns } from '../../utils/mongo-tools-return';
+import { createSingleBar } from '../../utils/createProgressBar';
+import { customLog, logger } from '../../utils/customLog';
+import { MongoStatusReturns } from '../../utils/mongoToolsReturn';
 import { $ } from 'bun';
 
 const executeRestoreCommand = async (

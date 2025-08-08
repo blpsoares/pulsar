@@ -1,9 +1,9 @@
 import Bottleneck from 'bottleneck';
-import { logger, customLog } from '../../utils/custom-log';
+import { logger, customLog } from '../../utils/customLog';
 import { Db, MongoClient } from 'mongodb';
-import { MongoStatusReturns } from '../../utils/mongo-tools-return';
-import { errorHandler } from '../../errors/error-handler';
-import { createSingleBar } from '../../utils/create-progress-bar';
+import { MongoStatusReturns } from '../../utils/mongoToolsReturn';
+import { errorHandler } from '../../errors/errorHandler';
+import { createSingleBar } from '../../utils/createProgressBar';
 import type { SingleBar } from 'cli-progress';
 
 const dbRenameCollection = async (

@@ -1,6 +1,6 @@
 import { MongoParseError, MongoError } from 'mongodb';
-import { YmlToJsonError } from '../classes/errors-class';
-import { CustomError } from '../classes/errors-class';
+import { YmlToJsonError } from '../classes/errorsClass';
+import { CustomError } from '../classes/errorsClass';
 
 export const errorHandler = (err: unknown, breadcrumb: string = 'NO:BREADCRUMB') => {
   let errorMessage = '';

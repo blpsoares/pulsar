@@ -1,7 +1,7 @@
 import yaml from 'js-yaml';
 import fs from 'fs';
-import { errorHandler } from '../errors/error-handler';
-import { YmlToJsonError } from '../classes/errors-class';
+import { errorHandler } from '../errors/errorHandler';
+import { YmlToJsonError } from '../classes/errorsClass';
 
 const parseYml = <T>(ymlPath: string): T => {
   if (!fs.existsSync(ymlPath)) {
