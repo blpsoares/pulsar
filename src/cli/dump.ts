@@ -11,7 +11,7 @@ import { dropOldCollections } from '../operations/dumpCli/dropOldCollections';
 import { renameNewCollections } from '../operations/dumpCli/renameCollections';
 import { customLog } from '../utils/customLog';
 
-const migrateCollections = async (ymlpath: string, cliParams: OptionsCli) => {
+const migrateCollections = async (ymlpath: string, cliParams: DumpOptionsCli) => {
   const outputExport = path.resolve(__dirname, '..', '..', 'temp-dump');
 
   if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
