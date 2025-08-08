@@ -100,8 +100,8 @@ pulsar dump <config-file> -p 5
 - pulsar: this is the name command
 - dump: alias to use dump option
 - config-file: filePath to your file with configurations to run dump
-- -p OR --parallel: this flag allows you to define how many collections will be exported in parallel (without one depending on the other), by default this value is 2 if nothing is sent
-
+- -p OR --parallel: this flag allows you to define how many collections will be exported in parallel (without one depending on the other). By default this value is 2 if nothing is sent
+- -r OR --maxRetries: this flah allows you to define how many times do you want that the application try again failed collections (exported and restored). By default this value is 3.
 #### Use example: <br>
 
 `pulsar dump config.yml -p 5`
