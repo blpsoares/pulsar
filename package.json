@@ -7,7 +7,7 @@
     "pulsar": "./src/app.ts"
   },
   "scripts": {
-    "bin": "bun build --compile src/app.ts --outfile dist/pulsar && chmod +x dist/pulsar ; mv dist/pulsar ~/.local/bin",
+    "bin": "bun build --compile src/app.ts --outfile dist/pulsar && chmod +x dist/pulsar",
     "up:pulsar": "docker compose -f docker-compose-dev.yml up --build -d",
     "clean:dev": "docker rm -f pulsar-app-dev && docker rmi -f mongo-pulsar_pulsar-app-dev"
   },
@@ -34,6 +34,7 @@
     "figlet": "^1.7.0",
     "js-yaml": "^4.1.0",
     "mongodb": "^6.9.0",
-    "winston": "^3.14.2"
+    "winston": "^3.14.2",
+    "zod": "^4.0.15"
   }
 }
