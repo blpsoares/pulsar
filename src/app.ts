@@ -1,6 +1,6 @@
 #! /usr/bin/env bun
 
-import { showTitle } from './utils/show-cli-title';
+import { showTitle } from './utils/showCliTitle';
 import { Command } from 'commander';
 import migrateCollections from './cli/dump';
 import { watchCollections } from './cli/watch';
@@ -25,6 +25,7 @@ program
 
 program
   .command('watch <file>')
+  .option('-a --all', 'watch all collections')
   .action(watchCollections);
 
 program.parse(process.argv);
