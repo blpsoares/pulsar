@@ -12,6 +12,7 @@ import { renameNewCollections } from "../core/dump/renameCollections";
 import { customLog } from "../utils/customLog";
 import { dumpYmlSchema, type DumpYmlOptions } from "../types/parseYml";
 import { getCollections } from "../functions/getCollections";
+import type { DumpOptionsCli } from "../types/cliOptions";
 
 const migrateCollections = async (
 	ymlPath: string,
