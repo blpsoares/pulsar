@@ -3,13 +3,16 @@ version: '3.3'
 services:
   pulsar-app:
     build: .
-    container_name: pulsar-app-dev
+    container_name: pulsar-dev
     volumes:
       - ./:/app/
     user: '1000:1000'
     network_mode: "host"
     # UID = echo $UID
     # GID = echo $(id -g)
+  mongo_test:
+    container_name: mongo_test
+    image: mongo
 
 volumes:
   mongo-data:
