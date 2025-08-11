@@ -1,99 +1,115 @@
-import type Bottleneck from 'bottleneck';
-import type { SingleBar } from 'cli-progress';
-import { createSingleBar } from '../../utils/createProgressBar';
-import { customLog, logger } from '../../utils/customLog';
-import { MongoStatusReturns } from '../../utils/mongoToolsReturn';
-import { $ } from 'bun';
+import type Bottleneck from "bottleneck";
+import type { SingleBar } from "cli-progress";
+import { createSingleBar } from "../../utils/createProgressBar";
+import { customLog, logger } from "../../utils/customLog";
+import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
+import { $ } from "bun";
+import type { DumpYmlOptions } from "../../types/parseYml";
 
 const executeRestoreCommand = async (
-  uri: string,
-  dbSrc: string,
-  dbDestin: string,
-  collection: string,
-  progressBar: SingleBar,
+	uri: string,
+	dbSrc: string,
+	dbDestin: string,
+	collection: string,
+	progressBar: SingleBar,
 ): Promise<MongoStatusReturn> => {
-  if (uri.endsWith('/')) uri = uri.slice(0, -1);
-  const { stderr, stdout, exitCode } =
-    await $`mongorestore --uri="${uri}/${dbDestin}" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson`
-      .nothrow()
-      .quiet();
+	if (uri.endsWith("/")) uri = uri.slice(0, -1);
+	const { stderr, stdout, exitCode } =
+		await $`mongorestore --uri="${uri}/${dbDestin}" --collection="_dump_${collection}" temp-dump/${dbSrc}/${collection}.bson`
+			.nothrow()
+			.quiet();
 
-  if (exitCode !== 0) {
-    logger.error(
-      `Error to restore collection: ${collection}\nExit process code: ${exitCode}\nError: ${stderr}\nOutput: ${stdout}`,
-    );
-    return { success: false, failed: collection };
-  }
+	if (exitCode !== 0) {
+		logger.error(
+			`Error to restore collection: ${collection}\nExit process code: ${exitCode}\nError: ${stderr}\nOutput: ${stdout}`,
+		);
+		return { success: false, failed: collection };
+	}
 
-  progressBar.increment();
-  logger.info(`Restored: ${collection}\n`);
-  return { success: collection, failed: false };
+	progressBar.increment();
+	logger.info(`Restored: ${collection}\n`);
+	return { success: collection, failed: false };
 };
 
 export const restoreCollections = async (
-  options: DumpYmlOptions,
-  collections: string[],
-  limiter: Bottleneck,
+	options: DumpYmlOptions,
+	collections: string[],
+	limiter: Bottleneck,
 ) => {
-  const { dump } = options.command;
-  customLog('info', 'Init restore collections...');
-  const progressBarImport = createSingleBar(collections.length, 'Restore progress');
+	const { dump } = options.command;
+	customLog("info", "Init restore collections...");
+	const progressBarImport = createSingleBar(
+		collections.length,
+		"Restore progress",
+	);
 
-  const importCollectionsPromises = collections.map((collection) =>
-    limiter.schedule(() =>
-      executeRestoreCommand(
-        dump.destination.uri,
-        dump.source.db,
-        dump.destination.db,
-        collection,
-        progressBarImport,
-      ),
-    ),
-  );
+	const importCollectionsPromises = collections.map((collection) =>
+		limiter.schedule(() =>
+			executeRestoreCommand(
+				dump.destination.uri,
+				dump.source.db,
+				dump.destination.db,
+				collection,
+				progressBarImport,
+			),
+		),
+	);
 
-  const solvedRestores = await Promise.all(importCollectionsPromises);
-  progressBarImport.stop();
+	const solvedRestores = await Promise.all(importCollectionsPromises);
+	progressBarImport.stop();
 
-  const [successFullRestores, failedRestores] = MongoStatusReturns(solvedRestores);
+	const [successFullRestores, failedRestores] =
+		MongoStatusReturns(solvedRestores);
 
-  if (failedRestores.length > 0) {
-    customLog(
-      'warn',
-      `Some collections were not restored, check the logs at src/logs/error.log to view these collections`,
-    );
+	if (failedRestores.length > 0) {
+		customLog(
+			"warn",
+			`Some collections were not restored, check the logs at src/logs/error.log to view these collections`,
+		);
 
-    logger.error(`No restored collections\n["${failedRestores.join('","')}"]`);
-  }
-  if(failedRestores.length === 0 ) customLog('success', `Collections restored\n`);
+		logger.error(`No restored collections\n["${failedRestores.join('","')}"]`);
+	}
+	if (failedRestores.length === 0)
+		customLog("success", `Collections restored\n`);
 
-  return [successFullRestores, failedRestores];
+	return [successFullRestores, failedRestores];
 };
 
 export const initRestore = async (
-  options: DumpYmlOptions,
-  collections: string[],
-  limiter: Bottleneck,
-  maxRetries: number = 3
+	options: DumpYmlOptions,
+	collections: string[],
+	limiter: Bottleneck,
+	maxRetries: number = 3,
 ): Promise<[string[], string[]]> => {
-  let remainingCollections = collections;
-  const allSuccess: string[] = [];
-  let attempts = 0;
+	let remainingCollections = collections;
+	const allSuccess: string[] = [];
+	let attempts = 0;
 
-  while (remainingCollections.length > 0 && attempts < maxRetries) {
-    const [success, failed] = await restoreCollections(options, remainingCollections, limiter);
-    allSuccess.push(...success);
-    remainingCollections = failed;
+	while (remainingCollections.length > 0 && attempts < maxRetries) {
+		const [success, failed] = await restoreCollections(
+			options,
+			remainingCollections,
+			limiter,
+		);
+		allSuccess.push(...success);
+		remainingCollections = failed;
 
-    if (failed.length > 0) {
-      customLog('warn', `${attempts + 1}° Retrying restore for collections: ${failed.join(', ')}`);
-    }
+		if (failed.length > 0) {
+			customLog(
+				"warn",
+				`${attempts + 1}° Retrying restore for collections: ${failed.join(", ")}`,
+			);
+		}
 
-    attempts++;
-  }
+		attempts++;
+	}
 
-  if (remainingCollections.length > 0) {
-    customLog('error', `Failed to restore collections after ${maxRetries} attempts: ${remainingCollections}`);
-  }
+	if (remainingCollections.length > 0) {
+		customLog(
+			"error",
+			`Failed to restore collections after ${maxRetries} attempts: ${remainingCollections}`,
+		);
+	}
 
-  return [allSuccess, remainingCollections];
+	return [allSuccess, remainingCollections];
 };
