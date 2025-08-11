@@ -11,19 +11,22 @@ import { dropOldCollections } from "../core/dump/dropOldCollections";
 import { renameNewCollections } from "../core/dump/renameCollections";
 import { customLog } from "../utils/customLog";
 import { dumpYmlSchema, type DumpYmlOptions } from "../types/parseYml";
+import { getCollections } from "../functions/getCollections";
 
 const migrateCollections = async (
-	ymlpath: string,
+	ymlPath: string,
 	cliParams: DumpOptionsCli,
 ) => {
 	const outputExport = path.resolve(__dirname, "..", "..", "temp-dump");
 
 	if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
-
-	const options = parseYml<DumpYmlOptions>(ymlpath, dumpYmlSchema);
+	const options = parseYml<DumpYmlOptions>(ymlPath, dumpYmlSchema);
 	const { dump } = options.command;
 	const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 
+	const clientSource = await conn(dump.source.uri, "source");
+	const dbSource = clientSource.db(dump.source.db);
+	const dumpCollections = await getCollections(dbSource, cliParams, ymlPath);
 	/**
 	 *
 	 * ? DUMP COLLECTIONS
@@ -32,7 +35,7 @@ const migrateCollections = async (
 		dump.source,
 		outputExport,
 		limiter,
-		dump.collections,
+		dumpCollections,
 		dump.queryString,
 		cliParams.maxRetries,
 	);
