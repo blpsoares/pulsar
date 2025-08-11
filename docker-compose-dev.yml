@@ -1,7 +1,7 @@
 version: '3.3'
 
 services:
-  pulsar-app:
+  app-dev:
     build: .
     container_name: pulsar-dev
     volumes:
@@ -13,6 +13,9 @@ services:
   mongo_test:
     container_name: mongo_test
     image: mongo
+    ports:
+      - "27018:27017"
+
 
 volumes:
   mongo-data:
