@@ -9,7 +9,7 @@
 	"scripts": {
 		"bin:dev": "bun build --compile src/app.ts --outfile dist/pulsar && chmod +x dist/pulsar && mv ~/.local/bin",
 		"bin:prod": "bun build --compile src/app.ts --outfile dist/pulsar && chmod +x dist/pulsar",
-		"up:pulsar": "docker compose -f docker-compose-dev.yml up --build -d",
+		"up:pulsar": "docker compose -f docker-compose-dev.yml up --build -d && docker exec -it pulsar-dev sh",
 		"clean:dev": "docker rm -f pulsar-dev mongo_test && docker rmi -f mongo-pulsar-app-dev"
 	},
 	"devDependencies": {
