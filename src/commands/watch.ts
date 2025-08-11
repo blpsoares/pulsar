@@ -1,13 +1,12 @@
-import { conn } from "../db/conn";
-import parseYml from "../utils/parseYml";
-import { errorHandler } from "../errors/errorHandler";
 import type { Db } from "mongodb";
+import { conn } from "../db/conn";
+import { errorHandler } from "../errors/errorHandler";
+import { insertEvent } from "../core/watch/insertEvent";
+import { updateEvent } from "../core/watch/updateEvent";
 import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
-import { insertEvent } from "../operations/watch/insertEvent";
-import { updateEvent } from "../operations/watch/updateEvent";
-import { Hash } from "../classes/hashClass";
-import { docValidation } from "../utils/documentValidation";
+import { encodeDocument, eventOperation } from "../functions/documentFunctions";
+import parseYml from "../utils/parseYml";
 
 export async function getCollections(
 	db: Db,
@@ -59,13 +58,11 @@ export async function watchCollections(
 				customLog("info", `[${collectionName}] Change detected`);
 				customLog("info", JSON.stringify(change));
 
-				const hashService = new Hash();
-
-				if (!docValidation(change)) return;
+				if (!eventOperation(change)) return;
 
 				const doc = change.fullDocument;
 
-				const hashDoc = hashService.encode(doc);
+				const hashDoc = encodeDocument(doc);
 				if (change.operationType === "insert") {
 					await insertEvent(destCollection, doc, hashDoc);
 				} else if (change.operationType === "update") {
