@@ -1,9 +1,0 @@
-command:
-  dump:
-    source:
-      uri: "mongodb+srv://u1-prod-escrita:REDACTED@elmd-aurora-01.9txz8.mongodb.net"
-      db: "aurora"
-    destination:
-      uri: "mongodb://127.0.0.1:27018"
-      db: "dbTeste2"
-    collections: ["_m_filtros", "fineTuning", "planoMidia", "pacotes"]

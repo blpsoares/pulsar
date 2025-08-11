@@ -1,0 +1,9 @@
+command:
+  watch:
+    source:
+      uri: "source database uri"
+      db: "source database name"
+    destination:
+      uri: "destination database uri"
+      db: "destination database name"
+    collections: ["collections", "name","to","sync"]
