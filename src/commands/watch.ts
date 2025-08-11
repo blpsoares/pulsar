@@ -7,6 +7,7 @@ import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
 import { encodeDocument, eventOperation } from "../functions/documentFunctions";
 import parseYml from "../utils/parseYml";
+import { freezeCollection } from "../functions/freeze";
 
 export async function getCollections(
 	db: Db,
@@ -46,9 +47,10 @@ export async function watchCollections(
 
 	try {
 		const collections = await getCollections(db, cliParams, options, ymlpath);
-		collections.forEach((collectionName) => {
+		collections.forEach(async (collectionName) => {
 			const collection = db.collection(collectionName);
 			const destCollection = destDb.collection(collectionName);
+			await freezeCollection(destCollection);
 
 			const changeStream = collection.watch([], {
 				fullDocument: "updateLookup",

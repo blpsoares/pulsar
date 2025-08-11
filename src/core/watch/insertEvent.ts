@@ -1,6 +1,5 @@
 import type { Document, Collection } from "mongodb";
 import { customLog } from "../../utils/customLog";
-import { Hash } from "../../classes/hashClass";
 
 export async function insertEvent(
 	collection: Collection,
