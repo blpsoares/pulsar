@@ -6,6 +6,8 @@ import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
 import { insertEvent } from "../operations/watch/insertEvent";
 import { updateEvent } from "../operations/watch/updateEvent";
+import { Hash } from "../classes/hashClass";
+import { docValidation } from "../utils/documentValidation";
 
 export async function getCollections(
 	db: Db,
@@ -57,11 +59,16 @@ export async function watchCollections(
 				customLog("info", `[${collectionName}] Change detected`);
 				customLog("info", JSON.stringify(change));
 
+				const hashService = new Hash();
+
+				if (!docValidation(change)) return;
+
+				const doc = change.fullDocument;
+
+				const hashDoc = hashService.encode(doc);
 				if (change.operationType === "insert") {
-					const doc = change.fullDocument;
-					await insertEvent(destCollection, doc);
+					await insertEvent(destCollection, doc, hashDoc);
 				} else if (change.operationType === "update") {
-					const doc = change.fullDocument;
 					if (!doc) return;
 					await updateEvent(destCollection, doc);
 				}
