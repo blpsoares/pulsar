@@ -17,11 +17,17 @@ const createSyncStatsOnDestinDb = async (
 			.collection("__sync")
 			.updateOne(
 				{ id: collection },
-				{ $setOnInsert: { id: collection, status: "cold" } },
+				{
+					$setOnInsert: {
+						id: collection,
+						status: "cold",
+					},
+					$set: { ts: Date.now() },
+				},
 				{ upsert: true },
 			);
 		return { success: collection, failed: false };
-	} catch (error) {
+	} catch (_error) {
 		return { failed: collection, success: false };
 	} finally {
 		progressBar.increment();
