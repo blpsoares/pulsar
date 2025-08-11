@@ -7,33 +7,13 @@ import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
 import { encodeDocument, eventOperation } from "../functions/documentFunctions";
 import parseYml from "../utils/parseYml";
-
-export async function getCollections(
-	db: Db,
-	cliParams: WatchOptionsCli,
-	options: WatchYmlOptions,
-	ymlpath: string,
-) {
-	let collections: string[] = [];
-	if (cliParams.all) {
-		collections = (await db.listCollections().toArray()).map(
-			(collection) => collection.name,
-		);
-	} else if (options.command.watch.collections) {
-		collections = options.command.watch.collections;
-	} else {
-		throw errorHandler(
-			new Error(`No collections to watch on file: ${ymlpath}`),
-		);
-	}
-	return collections;
-}
+import { getCollections } from "../functions/getCollections";
 
 export async function watchCollections(
-	ymlpath: string,
+	ymlPath: string,
 	cliParams: WatchOptionsCli,
 ) {
-	const options = parseYml<WatchYmlOptions>(ymlpath, watchYmlSchema);
+	const options = parseYml<WatchYmlOptions>(ymlPath, watchYmlSchema);
 	const client = await conn(options.command.watch.source.uri, "source");
 	const db = client.db(options.command.watch.source.db);
 
@@ -45,7 +25,12 @@ export async function watchCollections(
 	const destDb = destClient.db(options.command.watch.destination.db);
 
 	try {
-		const collections = await getCollections(db, cliParams, options, ymlpath);
+		const collections = await getCollections(
+			db,
+			cliParams,
+			ymlPath,
+			options.command.watch.collections,
+		);
 		collections.forEach((collectionName) => {
 			const collection = db.collection(collectionName);
 			const destCollection = destDb.collection(collectionName);
