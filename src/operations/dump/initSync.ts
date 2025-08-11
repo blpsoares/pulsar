@@ -4,6 +4,7 @@ import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import type Bottleneck from "bottleneck";
 import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
+import type { DumpYmlOptions } from "../../types/parseYml";
 
 const createSyncStatsOnDestinDb = async (
 	client: MongoClient,
