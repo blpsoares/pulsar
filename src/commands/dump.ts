@@ -3,12 +3,12 @@ import path from "path";
 import { conn } from "../db/conn";
 import Bottleneck from "bottleneck";
 import parseYml from "../utils/parseYml";
-import { initDump } from "../operations/dump/dump";
+import { initDump } from "../core/dump/dump";
 import { deleteTempFolder } from "../utils/deleteTempFolder";
-import { initRestore } from "../operations/dump/restoreDump";
-import { initRegistrationSync } from "../operations/dump/initSync";
-import { dropOldCollections } from "../operations/dump/dropOldCollections";
-import { renameNewCollections } from "../operations/dump/renameCollections";
+import { initRestore } from "../core/dump/restoreDump";
+import { initRegistrationSync } from "../core/dump/initSync";
+import { dropOldCollections } from "../core/dump/dropOldCollections";
+import { renameNewCollections } from "../core/dump/renameCollections";
 import { customLog } from "../utils/customLog";
 import { dumpYmlSchema, type DumpYmlOptions } from "../types/parseYml";
 

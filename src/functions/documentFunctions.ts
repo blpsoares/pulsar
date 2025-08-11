@@ -1,6 +1,7 @@
+import { crc32 } from "crc";
 import type { ChangeStreamDocument, Document } from "mongodb";
 
-export function docValidation<T extends Document>(
+export function eventOperation<T extends Document>(
 	change: ChangeStreamDocument<T>,
 ): change is ChangeStreamDocument<T> & { fullDocument: T } {
 	return (
@@ -8,4 +9,8 @@ export function docValidation<T extends Document>(
 		change.operationType === "update" ||
 		change.operationType === "replace"
 	);
+}
+
+export function encodeDocument(document: Document) {
+	return crc32(JSON.stringify(document));
 }

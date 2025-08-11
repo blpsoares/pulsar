@@ -1,45 +1,53 @@
-import chalk from 'chalk';
-import { createLogger, format, transports } from 'winston';
-import { format as formatDate } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import chalk from "chalk";
+import { createLogger, format, transports } from "winston";
+import { format as formatDate } from "date-fns";
+import { ptBR } from "date-fns/locale";
 const { combine, timestamp, printf } = format;
 
 const optionsLogs = {
-  success: chalk.greenBright,
-  error: chalk.redBright,
-  info: chalk.gray,
-  warn: chalk.yellowBright,
-  debug: chalk.blueBright,
-  levels: {
-    error: 0,
-    info: 1,
-    success: 2,
-    warn: 3,
-    debug: 4,
-  },
+	success: chalk.greenBright,
+	error: chalk.redBright,
+	info: chalk.gray,
+	warn: chalk.yellowBright,
+	debug: chalk.blueBright,
+	levels: {
+		error: 0,
+		info: 1,
+		success: 2,
+		warn: 3,
+		debug: 4,
+	},
 };
 
-const logFormat = printf(({ level, message, timestamp }) => `${timestamp} [${level}]: ${message}`);
+const logFormat = printf(
+	({ level, message, timestamp }) => `${timestamp} [${level}]: ${message}`,
+);
 
-const getFullDate = (): string => formatDate(new Date(), 'dd/MM/yyyy - HH:mm:ss', { locale: ptBR });
+const getFullDate = (): string =>
+	formatDate(new Date(), "dd/MM/yyyy - HH:mm:ss", { locale: ptBR });
 
 export const logger = createLogger({
-  levels: optionsLogs.levels,
-  format: combine(
-    timestamp({
-      format: getFullDate,
-    }),
-    logFormat,
-  ),
-  transports: [
-    new transports.File({ filename: './src/logs/debug.log', level: 'debug' }),
-    new transports.File({ filename: './src/logs/error.log', level: 'error' }),
-  ],
+	levels: optionsLogs.levels,
+	format: combine(
+		timestamp({
+			format: getFullDate,
+		}),
+		logFormat,
+	),
+	transports: [
+		new transports.File({ filename: "./logs/debug.log", level: "debug" }),
+		new transports.File({ filename: "./logs/error.log", level: "error" }),
+	],
 });
 
-export const customLog = (type: OptionsCustomLogs, message: any, breakLine?: boolean, error: any = '') => {
-  const prefix = `[ ${type.toUpperCase()} ] `;
-  const _breakLine = breakLine ? '\n' : '';
-  console.log(optionsLogs[type].bold(_breakLine + prefix + message));
-  logger.log({ level: type, message: message + error });
+export const customLog = (
+	type: OptionsCustomLogs,
+	message: any,
+	breakLine?: boolean,
+	error: any = "",
+) => {
+	const prefix = `[ ${type.toUpperCase()} ] `;
+	const _breakLine = breakLine ? "\n" : "";
+	console.log(optionsLogs[type].bold(_breakLine + prefix + message));
+	logger.log({ level: type, message: message + error });
 };
