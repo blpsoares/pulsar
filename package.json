@@ -10,7 +10,7 @@
 		"bin:dev": "bun build --compile src/cli.ts --outfile dist/pulsar && cp ./dist/pulsar ~/.local/bin",
 		"rm:folders": "rm -rf ./temp-dump ./logs",
 		"bin:prod": "bun build --compile src/cli.ts --outfile dist/pulsar && chmod +x dist/pulsar",
-		"up:pulsar": "bun rm:folders && docker compose -f docker-compose-dev.yml up --build -d && docker exec -it pulsar-dev sh",
+		"up:pulsar": "docker compose -f docker-compose-dev.yml up --build -d && docker exec -it pulsar-dev sh",
 		"clean:dev": "docker rm -f pulsar-dev mongo_test && docker rmi -f mongo-pulsar-app-dev"
 	},
 	"devDependencies": {
