@@ -1,2 +1,6 @@
-type DumpOptionsCli = { parallel?: number, maxRetries?: number };
-type WatchOptionsCli = { all?: boolean };
+export type DumpOptionsCli = {
+	parallel?: number;
+	maxRetries?: number;
+	all?: boolean;
+};
+export type WatchOptionsCli = { all?: boolean };

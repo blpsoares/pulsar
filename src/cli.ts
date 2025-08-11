@@ -21,6 +21,7 @@ program
 		"-r --maxRetries <number>",
 		"send a number to retry failed collections (exported and restored), example: -r 5 or --maxRetries 5.\nBy default this value is 3.",
 	)
+	.option("-a --all", "watch all collections")
 	.action(migrateCollections);
 
 program
