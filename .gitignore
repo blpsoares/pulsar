@@ -1,5 +1,8 @@
+
+
 # Project directorys
 /temp-dump
+/configs/*.dev.yml
 
 # Logs
 logs
