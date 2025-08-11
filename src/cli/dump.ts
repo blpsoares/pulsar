@@ -66,7 +66,7 @@ const migrateCollections = async (
 
 	/**
 	 *
-	 * ? SET STATE ON __SYNC__ COLLECTION
+	 * ? SET STATE ON __sync COLLECTION
 	 */
 	const [successColds, failedColds] = await initRegistrationSync(
 		options,
