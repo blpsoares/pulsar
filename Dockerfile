@@ -4,7 +4,8 @@ USER root
 
 WORKDIR /app
 
-COPY . /app/
+COPY . /app
+
 
 RUN apk add --no-cache curl bash nano mongodb-tools
 

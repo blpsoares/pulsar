@@ -5,7 +5,9 @@ services:
     build: .
     container_name: pulsar-dev
     volumes:
-      - ./:/app/
+      - ./src:/app/src
+      - ./package.json:/app/package.json
+      - ./configs:/app/configs
     user: '1000:1000'
     network_mode: "host"
     # UID = echo $UID
