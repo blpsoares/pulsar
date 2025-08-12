@@ -6,10 +6,13 @@ export async function insertEvent(
 	doc: Document,
 	hash: string,
 ) {
+	const collectionName = collection.namespace.split(".")[1];
+
+	customLog("info", `Collection [ ${collectionName} ] Insert change detected`);
 	if (!doc) {
 		customLog(
 			"warn",
-			`[${collection.namespace}] fullDocument não encontrado. Ignorando.`,
+			`[${collectionName}] fullDocument não encontrado. Ignorando.`,
 		);
 		return;
 	}
@@ -20,5 +23,5 @@ export async function insertEvent(
 		ts: Date.now(),
 		hash: hash,
 	});
-	console.log(`[${collection.namespace}] Documento enviado para destino`);
+	customLog("info", `[${collectionName}] Documento enviado para destino`);
 }

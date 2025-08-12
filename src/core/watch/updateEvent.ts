@@ -6,6 +6,11 @@ export async function updateEvent(
 	doc: Document,
 	hash: string,
 ) {
+	customLog(
+		"info",
+		`[${collection.namespace.split(".")[1]}] Update change detected`,
+	);
+
 	if (!doc) {
 		customLog(
 			"warn",

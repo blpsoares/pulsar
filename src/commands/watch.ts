@@ -1,15 +1,10 @@
-import type { Db } from "mongodb";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
-import { insertEvent } from "../core/watch/insertEvent";
-import { updateEvent } from "../core/watch/updateEvent";
-import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
-import { customLog } from "../utils/customLog";
-import { encodeDocument, eventOperation } from "../functions/documentFunctions";
-import parseYml from "../utils/parseYml";
-import { freezeCollection } from "../functions/freeze";
+import { eventHandler } from "../functions/documentFunctions";
 import { getCollections } from "../functions/getCollections";
 import type { WatchOptionsCli } from "../types/cliOptions";
+import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
+import parseYml from "../utils/parseYml";
 
 export async function watchCollections(
 	ymlPath: string,
@@ -33,38 +28,9 @@ export async function watchCollections(
 			ymlPath,
 			options.command.watch.collections,
 		);
+
 		collections.forEach(async (collectionName) => {
-			const collection = db.collection(collectionName);
-			const destCollection = destDb.collection(collectionName);
-			await freezeCollection(destCollection);
-
-			const changeStream = collection.watch([], {
-				fullDocument: "updateLookup",
-			});
-
-			changeStream.on("change", async (change) => {
-				customLog("info", `[${collectionName}] Change detected`);
-				customLog("info", JSON.stringify(change));
-
-				if (!eventOperation(change)) return;
-
-				const doc = change.fullDocument;
-
-				const hashDoc = encodeDocument(doc);
-				if (change.operationType === "insert") {
-					await insertEvent(destCollection, doc, hashDoc);
-				} else if (change.operationType === "update") {
-					if (!doc) return;
-					await updateEvent(destCollection, doc, hashDoc);
-				}
-			});
-			changeStream.on("error", (err) => {
-				customLog("error", err);
-			});
-
-			changeStream.on("close", () => {
-				customLog("info", "Change stream closed");
-			});
+			await eventHandler(collectionName, db, destDb);
 		});
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");
