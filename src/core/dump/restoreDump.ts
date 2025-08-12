@@ -5,7 +5,7 @@ import { customLog, logger } from "../../utils/customLog";
 import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
 import { $ } from "bun";
 import type { DumpYmlOptions } from "../../types/parseYml";
-import { readdirSync } from "fs";
+import { readdirSync, unlinkSync } from "fs";
 import path from "path";
 import chalk from "chalk";
 
@@ -31,6 +31,8 @@ const executeRestoreCommand = async (
 
 	progressBar.increment();
 	logger.info(`Restored: ${collection}\n`);
+	unlinkSync(`temp-dump/${dbSrc}/${collection}.bson`);
+	unlinkSync(`temp-dump/${dbSrc}/${collection}.metadata.json`);
 	return { success: collection, failed: false };
 };
 
