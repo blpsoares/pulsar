@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, hash } from "node:crypto";
 import { BSON, type ChangeStreamDocument, type Document } from "mongodb";
+import { customLog } from "../utils/customLog";
 
 export function eventOperation<T extends Document>(
 	change: ChangeStreamDocument<T>,
@@ -12,8 +13,9 @@ export function eventOperation<T extends Document>(
 }
 
 export function encodeDocument(document: Document) {
-  const hash = createHash("SHA-1");
-  const hashedDocument = hash.update(BSON.serialize(document))
-  return hashedDocument;
-	// return crc32(JSON.stringify(document));
+	const hash = createHash("SHA-1");
+	const hashedDocument = hash.update(BSON.serialize(document)).digest("hex");
+	return hashedDocument;
 }
+
+export const isHashEquals = <T>(hashOne: T, hashTwo: T) => hashOne === hashTwo;
