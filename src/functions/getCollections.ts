@@ -9,9 +9,13 @@ export async function getCollections<T extends { all?: boolean }>(
 ) {
 	let finalCollections: string[] = [];
 	if (cliParams.all) {
-		finalCollections = (await db.listCollections().toArray()).map(
-			(collection) => collection.name,
-		);
+		finalCollections = (await db.listCollections().toArray())
+			.filter(
+				(collection) =>
+					collection.type === "collection" &&
+					collection.name !== "system.views",
+			)
+			.map((collection) => collection.name);
 	} else if (collections) {
 		finalCollections = collections;
 	} else {
