@@ -27,7 +27,12 @@ const migrateCollections = async (
 
 	const clientSource = await conn(dump.source.uri, "source");
 	const dbSource = clientSource.db(dump.source.db);
-	const dumpCollections = await getCollections(dbSource, cliParams, ymlPath);
+	const dumpCollections = await getCollections(
+		dbSource,
+		cliParams,
+		ymlPath,
+		dump.collections,
+	);
 	/**
 	 *
 	 * ? DUMP COLLECTIONS
