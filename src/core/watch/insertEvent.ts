@@ -19,7 +19,6 @@ export async function insertEvent(
 		hot: true,
 		ts: Date.now(),
 		hash: hash,
-		hashiiii: hash,
 	});
 	console.log(`[${collection.namespace}] Documento enviado para destino`);
 }

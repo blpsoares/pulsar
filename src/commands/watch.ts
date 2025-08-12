@@ -55,7 +55,7 @@ export async function watchCollections(
 					await insertEvent(destCollection, doc, hashDoc);
 				} else if (change.operationType === "update") {
 					if (!doc) return;
-					await updateEvent(destCollection, doc);
+					await updateEvent(destCollection, doc, hashDoc);
 				}
 			});
 			changeStream.on("error", (err) => {
