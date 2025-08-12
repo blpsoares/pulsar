@@ -3,9 +3,13 @@ import type { SingleBar } from "cli-progress";
 import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import fs from "fs/promises";
+import { existsSync, readdirSync } from "fs";
 import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
 import { $ } from "bun";
 import type { DumpYmlOptions } from "../../types/parseYml";
+import { errorHandler } from "../../errors/errorHandler";
+import path from "path";
+import { getPreviouslyExportedCollections } from "./restoreDump";
 
 const createChildProcessToDump = async (
 	uri: string,
@@ -90,9 +94,20 @@ export const initDump = async (
 	collections: string[],
 	queryString: string = "",
 	maxRetries: number = 3,
-): Promise<[string[], string[]]> => {
-	let remainingCollections = collections;
-	const allSuccess: string[] = [];
+) => {
+	let alreadyExported: string[] = [];
+	const dumpPath = `temp-dump/${sourceUri.db}`;
+
+	const tempDumpExists = existsSync(dumpPath);
+	if (tempDumpExists) {
+		alreadyExported = getPreviouslyExportedCollections(dumpPath);
+	}
+
+	let remainingCollections = collections.filter(
+		(collection) => !alreadyExported.includes(collection),
+	);
+
+	const allSuccess: string[] = [...alreadyExported];
 	let attempts = 0;
 
 	while (remainingCollections.length > 0 && attempts < maxRetries) {
@@ -117,12 +132,10 @@ export const initDump = async (
 	}
 
 	if (remainingCollections.length > 0) {
-		customLog(
-			"error",
+		throw errorHandler(
 			`Failed to export collections after ${maxRetries} attempts: ${remainingCollections}`,
-			true,
 		);
 	}
 
-	return [allSuccess, remainingCollections];
+	return [...new Set(allSuccess)];
 };

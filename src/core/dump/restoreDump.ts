@@ -5,6 +5,9 @@ import { customLog, logger } from "../../utils/customLog";
 import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
 import { $ } from "bun";
 import type { DumpYmlOptions } from "../../types/parseYml";
+import { readdirSync } from "fs";
+import path from "path";
+import chalk from "chalk";
 
 const executeRestoreCommand = async (
 	uri: string,
@@ -113,3 +116,28 @@ export const initRestore = async (
 
 	return [allSuccess, remainingCollections];
 };
+
+export function getPreviouslyExportedCollections(dumpPath: string) {
+	const files = readdirSync(dumpPath);
+
+	const bsonNames = new Set(
+		files
+			.filter((file) => path.extname(file) === ".bson")
+			.map((file) => path.basename(file, ".bson")),
+	);
+
+	const jsonNames = new Set(
+		files
+			.filter((file) => file.endsWith(".metadata.json"))
+			.map((file) => file.replace(".metadata.json", "")),
+	);
+
+	const alreadyExported = [...bsonNames].filter((name) => jsonNames.has(name));
+	customLog(
+		"info",
+		`Skipping ${alreadyExported.length} previously exported collections: ${chalk.gray(alreadyExported.join(", "))}`,
+		true,
+	);
+
+	return alreadyExported;
+}

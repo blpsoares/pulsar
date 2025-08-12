@@ -37,7 +37,7 @@ const migrateCollections = async (
 	 *
 	 * ? DUMP COLLECTIONS
 	 */
-	const [successExports, failedExports] = await initDump(
+	const successExports = await initDump(
 		dump.source,
 		outputExport,
 		limiter,
@@ -45,11 +45,6 @@ const migrateCollections = async (
 		dump.queryString,
 		cliParams.maxRetries,
 	);
-
-	if (failedExports.length > 0) {
-		customLog("error", `Failed to restore collections: ${failedExports}`);
-		return;
-	}
 
 	/**
 	 *
