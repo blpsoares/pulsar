@@ -3,7 +3,7 @@
 import { showTitle } from "./utils/showCliTitle";
 import { Command } from "commander";
 import migrateCollections from "./commands/dump";
-import { watchCollections } from "./commands/watch";
+import { syncCollections } from "./commands/watch";
 
 await showTitle();
 
@@ -27,6 +27,6 @@ program
 program
 	.command("watch <file>")
 	.option("-a --all", "watch all collections")
-	.action(watchCollections);
+	.action(syncCollections);
 
 program.parse(process.argv);

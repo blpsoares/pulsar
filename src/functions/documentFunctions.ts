@@ -43,12 +43,22 @@ const triggerEvent: Partial<
 	update: updateEvent,
 };
 
-export async function eventHandler(collectionName: string, db: Db, destDb: Db) {
-	const collection = db.collection(collectionName);
+export async function eventHandler(
+	collectionName: string,
+	sourceDb: Db,
+	destDb: Db,
+) {
+	const sourceCollection = sourceDb.collection(collectionName);
 	const destCollection = destDb.collection(collectionName);
 	await freezeCollection(destCollection);
 
-	const changeStream = collection.watch([], {
+	await watchCollections(sourceCollection, destCollection);
+}
+export async function watchCollections(
+	sourceCollection: Collection,
+	destCollection: Collection,
+) {
+	const changeStream = sourceCollection.watch([], {
 		fullDocument: "updateLookup",
 	});
 

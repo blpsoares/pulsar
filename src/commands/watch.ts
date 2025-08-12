@@ -6,7 +6,7 @@ import type { WatchOptionsCli } from "../types/cliOptions";
 import { watchYmlSchema, type WatchYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
 
-export async function watchCollections(
+export async function syncCollections(
 	ymlPath: string,
 	cliParams: WatchOptionsCli,
 ) {
