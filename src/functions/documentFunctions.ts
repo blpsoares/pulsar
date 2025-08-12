@@ -1,5 +1,5 @@
-import { crc32 } from "crc";
-import type { ChangeStreamDocument, Document } from "mongodb";
+import { createHash } from "node:crypto";
+import { BSON, type ChangeStreamDocument, type Document } from "mongodb";
 
 export function eventOperation<T extends Document>(
 	change: ChangeStreamDocument<T>,
@@ -12,5 +12,8 @@ export function eventOperation<T extends Document>(
 }
 
 export function encodeDocument(document: Document) {
-	return crc32(JSON.stringify(document));
+  const hash = createHash("SHA-1");
+  const hashedDocument = hash.update(BSON.serialize(document))
+  return hashedDocument;
+	// return crc32(JSON.stringify(document));
 }
