@@ -1,5 +1,5 @@
 command:
-  watch:
+  sync:
     source:
       uri: "source database uri"
       db: "source database name"
