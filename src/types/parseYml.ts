@@ -17,9 +17,9 @@ export const dumpYmlSchema = z.object({
 	}),
 });
 
-export const watchYmlSchema = z.object({
+export const syncYmlSchema = z.object({
 	command: z.object({
-		watch: z.object({
+		sync: z.object({
 			source: z.object({
 				uri: z.string(),
 				db: z.string(),
@@ -34,4 +34,4 @@ export const watchYmlSchema = z.object({
 });
 
 export type DumpYmlOptions = z.infer<typeof dumpYmlSchema>;
-export type WatchYmlOptions = z.infer<typeof watchYmlSchema>;
+export type SyncYmlOptions = z.infer<typeof syncYmlSchema>;
