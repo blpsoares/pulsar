@@ -27,6 +27,10 @@ program
 program
 	.command("sync <file>")
 	.option("-a --all", "watch all collections")
+	.option(
+		"-p --parallel <number>",
+		"send a number to export collections in parallel, example: -p 2 or --parallel 2.\nBy default this value is 2.",
+	)
 	.action(syncCollections);
 
 program.parse(process.argv);
