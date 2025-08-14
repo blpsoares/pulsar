@@ -6,11 +6,11 @@ import {
 	type Document,
 } from "mongodb";
 import { createHash } from "node:crypto";
-import { insertEvent } from "../core/watch/insertEvent";
-import { updateEvent } from "../core/watch/updateEvent";
+import { insertEvent } from "../core/sync/insertEvent";
+import { updateEvent } from "../core/sync/updateEvent";
 import { errorHandler } from "../errors/errorHandler";
-import { customLog } from "../utils/customLog";
 import { freezeCollection } from "./freeze";
+import { dumpEvent } from "./dumpEvent";
 
 export function eventOperation<T extends Document>(
 	change: ChangeStreamDocument<T>,
@@ -52,8 +52,10 @@ export async function eventHandler(
 	const destCollection = destDb.collection(collectionName);
 	await freezeCollection(destCollection);
 
-	await watchCollections(sourceCollection, destCollection);
+	dumpEvent.emit("dump", sourceCollection, destCollection);
+	watchCollections(sourceCollection, destCollection);
 }
+
 export async function watchCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
