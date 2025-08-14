@@ -1,4 +1,3 @@
-import { cli } from "winston/lib/winston/config";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
 import { eventHandler } from "../functions/documentFunctions";
@@ -31,8 +30,6 @@ export async function syncCollections(
 			ymlPath,
 			options.command.sync.collections,
 		);
-
-		console.log(collections);
 
 		collections.forEach((collectionName) => {
 			limiter.schedule(() => eventHandler(collectionName, db, destDb));
