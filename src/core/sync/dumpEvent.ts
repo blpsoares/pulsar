@@ -1,24 +1,29 @@
 // biome-ignore assist/source/organizeImports: <explanation>
-import {
-	MongoServerError,
-	type Collection,
-	type Document,
-	type ObjectId,
-} from "mongodb";
+import { MongoServerError, type Collection, type Document } from "mongodb";
 import { customLog } from "../../utils/customLog";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { watcher } from "./watcherEvents";
 
+function sleep(ms: number) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let temp = 20000;
 export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
-	deletedIds: ObjectId[],
+	deletedIds: string[],
 ) {
-	const collectionName = destCollection.namespace.split(".")[1];
+	const { collectionName } = destCollection;
 	try {
-		const cursor = sourceCollection.find().sort({ _id: 1 });
+		const cursor = sourceCollection.find().sort({ _id: -1 });
+
 		for await (const coldDocument of cursor) {
-			if (deletedIds.includes(coldDocument._id)) return;
+			await sleep(temp);
+			if (deletedIds.includes(coldDocument._id.toString())) {
+				customLog("warn", `TO TIRANDO O DOC ${coldDocument._id} DO CURSOR`);
+				return;
+			}
 
 			const newDocument = addFieldsOnMongoDocument(coldDocument, "dump");
 			await insertOrUpdateDocument(coldDocument, newDocument, destCollection);

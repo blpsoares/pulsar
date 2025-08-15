@@ -1,7 +1,6 @@
-import type { Document, Collection, ChangeStreamInsertDocument } from "mongodb";
+import type { Document, Collection } from "mongodb";
 import { customLog } from "../../utils/customLog";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
-import { watcher } from "./watcherEvents";
 
 export async function watchInsertEvent(
 	destCollection: Collection,
@@ -17,8 +16,4 @@ export async function watchInsertEvent(
 	}
 	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:insert");
 	await destCollection.insertOne(newDocument);
-}
-
-export function insertFn(doc: ChangeStreamInsertDocument, coll: Collection) {
-	watcher.emit("insert", coll, doc.fullDocument);
 }

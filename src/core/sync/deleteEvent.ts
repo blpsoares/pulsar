@@ -1,16 +1,13 @@
-import type { ChangeStreamDeleteDocument, Collection, ObjectId } from "mongodb";
-import { watcher } from "./watcherEvents";
+import { ObjectId, type Collection } from "mongodb";
+import { customLog } from "../../utils/customLog";
 
 export async function watchDeleteEvent(
-	destCollection: Collection,
 	_id: ObjectId,
-	deletedIds: ObjectId[],
+	destCollection: Collection,
+	deletedIds: string[],
 ) {
 	const { deletedCount } = await destCollection.deleteOne({ _id });
-	if (deletedCount) deletedIds.push(_id);
-}
 
-export function deleteFn(doc: ChangeStreamDeleteDocument, coll: Collection) {
-	const deletedIds: string[] = [];
-	watcher.emit("delete", coll, doc.documentKey._id, deletedIds);
+	if (deletedCount) deletedIds.push(_id.toString());
+	if (deletedCount) customLog("success", `Doc: ${_id.toString()} deletado.`); // !COMMIT
 }
