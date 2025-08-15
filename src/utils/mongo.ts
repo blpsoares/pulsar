@@ -32,9 +32,11 @@ export function addFieldsOnMongoDocument(
 	const hash = encodeDocument(rawDocument);
 	const newDocument: Record<string, any> = {
 		...rawDocument,
-		hot,
-		ts: Date.now(),
-		hash,
+		__sync: {
+			hot,
+			ts: Date.now(),
+			hash,
+		},
 	};
 
 	if (origin) newDocument.origin = origin;
