@@ -1,3 +1,4 @@
+//TODO: RENAME ALL DUMPS TO MIGRATE | MIGRATION
 import fs from "fs";
 import path from "path";
 import { conn } from "../db/conn";
