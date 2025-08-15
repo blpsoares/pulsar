@@ -1,7 +1,6 @@
-import type { Document, Collection, ChangeStreamUpdateDocument } from "mongodb";
+import type { Document, Collection } from "mongodb";
 import { customLog } from "../../utils/customLog";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
-import { watcher } from "./watcherEvents";
 
 export async function watchUpdateEvent(
 	destCollection: Collection,
@@ -25,8 +24,4 @@ export async function watchUpdateEvent(
 		},
 		{ upsert: true },
 	);
-}
-
-export function updateFn(doc: ChangeStreamUpdateDocument, coll: Collection) {
-	watcher.emit("update", coll, doc.fullDocument);
 }
