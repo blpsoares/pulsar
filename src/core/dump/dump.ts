@@ -3,12 +3,11 @@ import type { SingleBar } from "cli-progress";
 import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import fs from "fs/promises";
-import { existsSync, readdirSync } from "fs";
-import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
+import { existsSync } from "fs";
+import { MongoStatusReturns } from "../../utils/mongo";
 import { $ } from "bun";
 import type { DumpYmlOptions } from "../../types/parseYml";
 import { errorHandler } from "../../errors/errorHandler";
-import path from "path";
 import { getPreviouslyExportedCollections } from "./restoreDump";
 
 const createChildProcessToDump = async (

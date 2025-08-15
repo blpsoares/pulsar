@@ -1,12 +1,12 @@
 // TODO:
 
-import type { Document } from "mongodb";
-import { encodeDocument } from "../functions/documentFunctions";
+import { BSON, type Document } from "mongodb";
+import { createHash } from "node:crypto";
 
 //? Bring messages from collections that were not dumped/restored to this file (making the dump and restore functions cleaner)
 export const MongoStatusReturns = (
 	collectionsStats: MongoStatusReturn[],
-	message?: string,
+	// message?: string,
 ): string[][] => {
 	const successfulExports: string[] = [];
 	const failedExports: string[] = [];
@@ -17,6 +17,12 @@ export const MongoStatusReturns = (
 
 	return [successfulExports, failedExports];
 };
+
+function encodeDocument(document: Document) {
+	const hash = createHash("SHA-1");
+	const hashedDocument = hash.update(BSON.serialize(document)).digest("hex");
+	return hashedDocument;
+}
 
 export function addFieldsOnMongoDocument(
 	rawDocument: Document,
@@ -34,3 +40,5 @@ export function addFieldsOnMongoDocument(
 	if (origin) newDocument.origin = origin;
 	return newDocument;
 }
+
+export const isHashEquals = <T>(hashOne: T, hashTwo: T) => hashOne === hashTwo;

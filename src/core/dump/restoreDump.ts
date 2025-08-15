@@ -2,7 +2,7 @@ import type Bottleneck from "bottleneck";
 import type { SingleBar } from "cli-progress";
 import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
-import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
+import { MongoStatusReturns } from "../../utils/mongo";
 import { $ } from "bun";
 import type { DumpYmlOptions } from "../../types/parseYml";
 import { readdirSync, unlinkSync } from "fs";

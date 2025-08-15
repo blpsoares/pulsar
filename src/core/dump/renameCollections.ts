@@ -1,7 +1,7 @@
 import Bottleneck from "bottleneck";
 import { logger, customLog } from "../../utils/customLog";
 import { Db, MongoClient } from "mongodb";
-import { MongoStatusReturns } from "../../utils/mongoToolsReturn";
+import { MongoStatusReturns } from "../../utils/mongo";
 import { createSingleBar } from "../../utils/createProgressBar";
 import type { SingleBar } from "cli-progress";
 
