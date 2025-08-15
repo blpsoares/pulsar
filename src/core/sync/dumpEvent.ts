@@ -4,11 +4,6 @@ import { customLog } from "../../utils/customLog";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { watcher } from "./watcherEvents";
 
-function sleep(ms: number) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-let temp = 20000;
 export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
@@ -19,11 +14,7 @@ export async function dumpCollections(
 		const cursor = sourceCollection.find().sort({ _id: -1 });
 
 		for await (const coldDocument of cursor) {
-			await sleep(temp);
-			if (deletedIds.includes(coldDocument._id.toString())) {
-				customLog("warn", `TO TIRANDO O DOC ${coldDocument._id} DO CURSOR`);
-				return;
-			}
+			if (deletedIds.includes(coldDocument._id.toString())) return;
 
 			const newDocument = addFieldsOnMongoDocument(coldDocument, "dump");
 			await insertOrUpdateDocument(coldDocument, newDocument, destCollection);
