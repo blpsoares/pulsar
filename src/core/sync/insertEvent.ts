@@ -1,16 +1,24 @@
-import type { Document, Collection } from "mongodb";
+import type { Document, Collection, ChangeStreamInsertDocument } from "mongodb";
 import { customLog } from "../../utils/customLog";
-import { addFieldsOnMongoDocument } from "../../utils/mongoToolsReturn";
+import { addFieldsOnMongoDocument } from "../../utils/mongo";
+import { watcher } from "./watcherEvents";
 
-export async function insertEvent(collection: Collection, doc: Document) {
-	const collectionName = collection.namespace.split(".")[1];
-	if (!doc) {
+export async function watchInsertEvent(
+	destCollection: Collection,
+	rawDocument: Document,
+) {
+	const destCollectionName = destCollection.namespace.split(".")[1];
+	if (!rawDocument) {
 		customLog(
 			"warn",
-			`[${collectionName}] fullDocument não encontrado. Ignorando.`,
+			`[${destCollectionName}] fullDocument não encontrado. Ignorando.`,
 		);
 		return;
 	}
-	const newDocument = addFieldsOnMongoDocument(doc, "watch:insert");
-	await collection.insertOne(newDocument);
+	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:insert");
+	await destCollection.insertOne(newDocument);
+}
+
+export function insertFn(doc: ChangeStreamInsertDocument, coll: Collection) {
+	watcher.emit("insert", coll, doc.fullDocument);
 }
