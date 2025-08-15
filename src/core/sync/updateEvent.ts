@@ -1,23 +1,32 @@
-import type { Document, Collection } from "mongodb";
+import type { Document, Collection, ChangeStreamUpdateDocument } from "mongodb";
 import { customLog } from "../../utils/customLog";
-import { addFieldsOnMongoDocument } from "../../utils/mongoToolsReturn";
+import { addFieldsOnMongoDocument } from "../../utils/mongo";
+import { watcher } from "./watcherEvents";
 
-export async function updateEvent(collection: Collection, doc: Document) {
-	if (!doc) {
+export async function watchUpdateEvent(
+	destCollection: Collection,
+	rawDocument: Document,
+) {
+	if (!rawDocument) {
 		customLog(
 			"warn",
-			`[${collection.namespace}] fullDocument não encontrado. Ignorando.`,
+			`[${destCollection.namespace}] fullDocument não encontrado. Ignorando.`,
 		);
 		return;
 	}
+	customLog("info", "updatado papi");
 
-	const newDocument = addFieldsOnMongoDocument(doc, "watch:update");
+	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:update");
 
-	await collection.updateOne(
-		{ _id: doc._id },
+	await destCollection.updateOne(
+		{ _id: rawDocument._id },
 		{
 			$set: newDocument,
 		},
 		{ upsert: true },
 	);
+}
+
+export function updateFn(doc: ChangeStreamUpdateDocument, coll: Collection) {
+	watcher.emit("update", coll, doc.fullDocument);
 }
