@@ -1,3 +1,4 @@
+/** biome-ignore-all assist/source/organizeImports: <explanation> */
 import { eventHandler } from "../core/sync";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
