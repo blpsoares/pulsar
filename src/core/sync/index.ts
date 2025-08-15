@@ -1,12 +1,10 @@
 // biome-ignore assist/source/organizeImports: <explanation>
 
-import type { ChangeStreamDocument, Collection, Db } from "mongodb";
+import type { ChangeStreamDocument, Collection, Db, ObjectId } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { watcher } from "./watcherEvents";
 import { errorHandler } from "../../errors/errorHandler";
-import { insertFn } from "./insertEvent";
-import { deleteFn } from "./deleteEvent";
-import { updateFn } from "./updateEvent";
+import { customLog } from "../../utils/customLog";
 
 export const acceptableEventOperations = [
 	"insert",
@@ -15,6 +13,8 @@ export const acceptableEventOperations = [
 	"replace",
 ];
 
+const deletedIds: string[] = [];
+
 export async function eventHandler(
 	collectionName: string,
 	sourceDb: Db,
@@ -22,6 +22,7 @@ export async function eventHandler(
 ) {
 	const sourceCollection = sourceDb.collection(collectionName);
 	const destCollection = destDb.collection(collectionName);
+
 	await freezeCollection(destCollection);
 	watchCollections(sourceCollection, destCollection);
 }
@@ -34,22 +35,39 @@ export async function watchCollections(
 		fullDocument: "updateLookup",
 	});
 
-	watcher.emit("dump", sourceCollection, destCollection);
-	changeStream.on("change", delegateEvent);
+	changeStream.on("change", (change) => {
+		customLog("debug", "INICIANDO WATCH");
+		delegateEvent(change, destCollection, deletedIds);
+	});
+
+	customLog("debug", "INICIANDO DUMP");
+	watcher.emit("dump", sourceCollection, destCollection, deletedIds);
 
 	changeStream.on("error", errorHandler);
 }
 
-const eventMap: Record<string, Function> = {
-	insertFn,
-	updateFn,
-	deleteFn,
-};
-
-export function delegateEvent(
+function delegateEvent(
 	change: ChangeStreamDocument,
 	destCollection: Collection,
+	deletedIds: string[],
 ) {
-	const eventHandler = eventMap[change.operationType.concat("Fn")];
-	if (eventHandler) eventHandler(change, destCollection);
+	const { operationType } = change;
+	switch (operationType) {
+		case "insert":
+			watcher.emit("insert", destCollection, change.fullDocument);
+			break;
+		case "update":
+			watcher.emit("update", destCollection, change.fullDocument);
+			break;
+		case "delete":
+			watcher.emit(
+				"delete",
+				change.documentKey._id,
+				destCollection,
+				deletedIds,
+			);
+			break;
+		default:
+			break;
+	}
 }
