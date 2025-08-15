@@ -36,11 +36,9 @@ export async function watchCollections(
 	});
 
 	changeStream.on("change", (change) => {
-		customLog("debug", "INICIANDO WATCH");
 		delegateEvent(change, destCollection, deletedIds);
 	});
 
-	customLog("debug", "INICIANDO DUMP");
 	watcher.emit("dump", sourceCollection, destCollection, deletedIds);
 
 	changeStream.on("error", errorHandler);
@@ -67,6 +65,7 @@ function delegateEvent(
 				deletedIds,
 			);
 			break;
+		//TODO: Implementar replace (update nao pega replace)
 		default:
 			break;
 	}
