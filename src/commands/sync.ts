@@ -1,6 +1,6 @@
+import { eventHandler } from "../core/sync";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
-import { eventHandler } from "../functions/documentFunctions";
 import { getCollections } from "../functions/getCollections";
 import type { SyncOptionsCli } from "../types/cliOptions";
 import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
