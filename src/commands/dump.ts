@@ -134,7 +134,7 @@ const migrateCollections = async (
 	 *
 	 * ? CLOSE MONGODB CONNECTION
 	 */
-	client.close();
+	await client.close();
 };
 
 export default migrateCollections;
