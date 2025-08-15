@@ -11,11 +11,8 @@ export const watcher = new EventEmitter();
 watcher.on("dump", dumpCollections);
 
 watcher.on("finishDump", (coll: string) =>
-	customLog("success", `Collection [ ${coll} ] dumpada para o destino.`, true),
+	customLog("success", `Collection [ ${coll} ] migrada para o destino.`, true),
 );
-watcher.on("errorDump", (err: Error | unknown, coll: string) => {
-	throw errorHandler(err, `DUMP:${coll}`);
-});
 watcher.on("errorDump", (err: Error | unknown, coll: string) => {
 	throw errorHandler(err, `DUMP:${coll}`);
 });
