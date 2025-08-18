@@ -9,7 +9,7 @@ export async function watchUpdateEvent(
 	if (!rawDocument) {
 		customLog(
 			"warn",
-			`[${destCollection.namespace}] fullDocument não encontrado. Ignorando.`,
+			`[${destCollection.collectionName}] fullDocument não encontrado. Ignorando.`,
 		);
 		return;
 	}

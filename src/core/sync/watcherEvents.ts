@@ -5,6 +5,7 @@ import { watchDeleteEvent } from "./deleteEvent";
 import { watchInsertEvent } from "./insertEvent";
 import { watchUpdateEvent } from "./updateEvent";
 import { EventEmitter } from "node:events";
+import { watchReplaceEvent } from "./replaceEvent";
 
 export const watcher = new EventEmitter();
 
@@ -20,3 +21,4 @@ watcher.on("errorDump", (err: Error | unknown, coll: string) => {
 watcher.on("insert", watchInsertEvent);
 watcher.on("update", watchUpdateEvent);
 watcher.on("delete", watchDeleteEvent);
+watcher.on("replace", watchReplaceEvent);

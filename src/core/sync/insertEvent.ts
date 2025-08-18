@@ -6,7 +6,7 @@ export async function watchInsertEvent(
 	destCollection: Collection,
 	rawDocument: Document,
 ) {
-	const destCollectionName = destCollection.namespace.split(".")[1];
+	const destCollectionName = destCollection.collectionName;
 	if (!rawDocument) {
 		customLog(
 			"warn",
