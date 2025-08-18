@@ -33,14 +33,14 @@
 #### Usage:
 
 ```sh
-pulsar dump <config-file> <options>
+pulsar migrate <config-file> <options>
 ```
 
 #### The configuration file to indicate the dump execution settings is in the following format:
 
 ```yaml
 command:
-  dump:
+  migrate:
     source:
       uri: ''
       db: ''
@@ -54,9 +54,9 @@ command:
 #### Their respective types are:
 
 ```Typescript
-type DumpYmlOptions = {
+type MigrateYmlOptions = {
   command: {
-    dump: {
+    migrate: {
       source: {
         uri: string;
         db: string;
@@ -76,7 +76,7 @@ type DumpYmlOptions = {
 
 ```yaml
 command:
-  dump:
+  migrate:
     source:
       uri: 'mongodb://localhost:27017/'
       db: 'source-database'
@@ -94,17 +94,18 @@ command:
 #### After filling in the configuration yml file, you can run the following commands:
 
 ```sh
-pulsar dump <config-file> -p 5
+pulsar migrate <config-file> -p 5
 ```
 
 - pulsar: this is the name command
-- dump: alias to use dump option
+- migrate: alias to use dump option
 - config-file: filePath to your file with configurations to run dump
 - -p OR --parallel: this flag allows you to define how many collections will be exported in parallel (without one depending on the other). By default this value is 2 if nothing is sent
 - -r OR --maxRetries: this flah allows you to define how many times do you want that the application try again failed collections (exported and restored). By default this value is 3.
+- -a to export ALL DATABASE COLLECTIONS
 #### Use example: <br>
 
-`pulsar dump config.yml -p 5`
+`pulsar migrate config.yml -p 5 -r 10 -a`
 
 ### Logs:
 
