@@ -65,6 +65,9 @@ function delegateEvent(
 				deletedIds,
 			);
 			break;
+		case "replace":
+			watcher.emit("replace", destCollection, change.fullDocument);
+			break;
 		//TODO: Implementar replace (update nao pega replace)
 		default:
 			break;
