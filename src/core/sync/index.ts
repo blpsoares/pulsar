@@ -1,10 +1,9 @@
 // biome-ignore assist/source/organizeImports: <explanation>
 
-import type { ChangeStreamDocument, Collection, Db, ObjectId } from "mongodb";
+import type { ChangeStreamDocument, Collection, Db } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { watcher } from "./watcherEvents";
 import { errorHandler } from "../../errors/errorHandler";
-import { customLog } from "../../utils/customLog";
 
 export const acceptableEventOperations = [
 	"insert",
@@ -68,7 +67,6 @@ function delegateEvent(
 		case "replace":
 			watcher.emit("replace", destCollection, change.fullDocument);
 			break;
-		//TODO: Implementar replace (update nao pega replace)
 		default:
 			break;
 	}
