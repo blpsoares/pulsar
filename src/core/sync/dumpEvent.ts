@@ -43,7 +43,7 @@ async function insertOrUpdateDocument(
 		if (err instanceof MongoServerError && err.code === 11000) {
 			customLog(
 				"warn",
-				`O Documento: ${coldDocument._id.toString()} ja existe no destino e foi atualizado pelo watch durante o dump.`,
+				`O Documento: ${coldDocument._id.toString()} ja existe no destino e foi atualizado pelo watch durante o migrate`,
 			);
 		} else {
 			throw err;

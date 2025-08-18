@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-export const dumpYmlSchema = z.object({
+export const migrateYmlSchema = z.object({
 	command: z.object({
-		dump: z.object({
+		migrate: z.object({
 			source: z.object({
 				uri: z.string(),
 				db: z.string(),
@@ -33,5 +33,5 @@ export const syncYmlSchema = z.object({
 	}),
 });
 
-export type DumpYmlOptions = z.infer<typeof dumpYmlSchema>;
+export type MigrateYmlOptions = z.infer<typeof migrateYmlSchema>;
 export type SyncYmlOptions = z.infer<typeof syncYmlSchema>;

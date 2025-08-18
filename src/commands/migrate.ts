@@ -1,49 +1,48 @@
-//TODO: RENAME ALL DUMPS TO MIGRATE | MIGRATION
 import fs from "fs";
 import path from "path";
 import { conn } from "../db/conn";
 import Bottleneck from "bottleneck";
 import parseYml from "../utils/parseYml";
-import { initDump } from "../core/dump/dump";
+import { initMigration } from "../core/dump/dump";
 import { deleteTempFolder } from "../utils/deleteTempFolder";
 import { initRestore } from "../core/dump/restoreDump";
 import { initRegistrationSync } from "../core/dump/initSync";
 import { dropOldCollections } from "../core/dump/dropOldCollections";
 import { renameNewCollections } from "../core/dump/renameCollections";
 import { customLog } from "../utils/customLog";
-import { dumpYmlSchema, type DumpYmlOptions } from "../types/parseYml";
+import { migrateYmlSchema, type MigrateYmlOptions } from "../types/parseYml";
 import { getCollections } from "../functions/getCollections";
-import type { DumpOptionsCli } from "../types/cliOptions";
+import type { MigrateOptionsCli } from "../types/cliOptions";
 
 const migrateCollections = async (
 	ymlPath: string,
-	cliParams: DumpOptionsCli,
+	cliParams: MigrateOptionsCli,
 ) => {
 	const outputExport = path.resolve(__dirname, "..", "..", "temp-dump");
 
 	if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
-	const options = parseYml<DumpYmlOptions>(ymlPath, dumpYmlSchema);
-	const { dump } = options.command;
+	const options = parseYml<MigrateYmlOptions>(ymlPath, migrateYmlSchema);
+	const { migrate } = options.command;
 	const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 
-	const clientSource = await conn(dump.source.uri, "source");
-	const dbSource = clientSource.db(dump.source.db);
-	const dumpCollections = await getCollections(
+	const clientSource = await conn(migrate.source.uri, "source");
+	const dbSource = clientSource.db(migrate.source.db);
+	const migrateCollections = await getCollections(
 		dbSource,
 		cliParams,
 		ymlPath,
-		dump.collections,
+		migrate.collections,
 	);
 	/**
 	 *
-	 * ? DUMP COLLECTIONS
+	 * ? MIGRATE COLLECTIONS
 	 */
-	const successExports = await initDump(
-		dump.source,
+	const successExports = await initMigration(
+		migrate.source,
 		outputExport,
 		limiter,
-		dumpCollections,
-		dump.queryString,
+		migrateCollections,
+		migrate.queryString,
 		cliParams.maxRetries,
 	);
 
@@ -67,7 +66,7 @@ const migrateCollections = async (
 	 *
 	 * ? CONNECT TO DESTINATION
 	 */
-	const client = await conn(dump.destination.uri, "destination");
+	const clientDestination = await conn(migrate.destination.uri, "destination");
 
 	/**
 	 *
@@ -76,7 +75,7 @@ const migrateCollections = async (
 	const [successColds, failedColds] = await initRegistrationSync(
 		options,
 		successRestores,
-		client,
+		clientDestination,
 		limiter,
 	);
 
@@ -86,7 +85,7 @@ const migrateCollections = async (
 		let [newSuccessColds] = await initRegistrationSync(
 			options,
 			failedColds,
-			client,
+			clientDestination,
 			limiter,
 		);
 		successColds.push(...newSuccessColds);
@@ -94,11 +93,11 @@ const migrateCollections = async (
 
 	/**
 	 *
-	 * ? DROP ON DATABASE ALL COLLECTIONS DUMPED
+	 * ? DROP ON DATABASE ALL COLLECTIONS migrateED
 	 */
 	const [successDrops, failedDrops] = await dropOldCollections(
-		client,
-		dump.destination.db,
+		clientDestination,
+		migrate.destination.db,
 		successColds,
 		limiter,
 	);
@@ -106,8 +105,8 @@ const migrateCollections = async (
 		customLog("info", "Retrying drop failed collections");
 
 		const [newSuccessDrops] = await dropOldCollections(
-			client,
-			dump.destination.db,
+			clientDestination,
+			migrate.destination.db,
 			failedDrops,
 			limiter,
 		);
@@ -119,15 +118,15 @@ const migrateCollections = async (
 	 * ? REMOVE ON DESTINATION DATABASE ALL _dump_ PREFIX ON RESTORED COLLECTIONS
 	 */
 	await renameNewCollections(
-		client,
-		dump.destination.db,
+		clientDestination,
+		migrate.destination.db,
 		successDrops,
 		limiter,
 	);
 
 	/**
 	 *
-	 * ? CLEAN LOCAL REGISTRES (GENERATED FOR dumpCollections)
+	 * ? CLEAN LOCAL REGISTRES (GENERATED FOR migrateCollections)
 	 */
 	deleteTempFolder(outputExport);
 
@@ -135,7 +134,8 @@ const migrateCollections = async (
 	 *
 	 * ? CLOSE MONGODB CONNECTION
 	 */
-	await client.close();
+	await clientSource.close();
+	await clientDestination.close();
 };
 
 export default migrateCollections;

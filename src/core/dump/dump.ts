@@ -6,7 +6,7 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import { MongoStatusReturns } from "../../utils/mongo";
 import { $ } from "bun";
-import type { DumpYmlOptions } from "../../types/parseYml";
+import type { MigrateYmlOptions } from "../../types/parseYml";
 import { errorHandler } from "../../errors/errorHandler";
 import { getPreviouslyExportedCollections } from "./restoreDump";
 
@@ -42,7 +42,7 @@ const createChildProcessToDump = async (
 };
 
 export const dumpCollections = async (
-	source: DumpYmlOptions["command"]["dump"]["source"],
+	source: MigrateYmlOptions["command"]["dump"]["source"],
 	outputExport: string,
 	limiter: Bottleneck,
 	collections: string[],
@@ -86,8 +86,8 @@ export const dumpCollections = async (
 	return [successfulExports, failedExports];
 };
 
-export const initDump = async (
-	sourceUri: DumpYmlOptions["command"]["dump"]["source"],
+export const initMigration = async (
+	sourceUri: MigrateYmlOptions["command"]["dump"]["source"],
 	outputPath: string,
 	limiter: Bottleneck,
 	collections: string[],

@@ -4,7 +4,7 @@ import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import type Bottleneck from "bottleneck";
 import { MongoStatusReturns } from "../../utils/mongo";
-import type { DumpYmlOptions } from "../../types/parseYml";
+import type { MigrateYmlOptions } from "../../types/parseYml";
 
 const createSyncStatsOnDestinDb = async (
 	client: MongoClient,
@@ -35,12 +35,12 @@ const createSyncStatsOnDestinDb = async (
 	}
 };
 export const initRegistrationSync = async (
-	options: DumpYmlOptions,
+	options: MigrateYmlOptions,
 	collections: string[],
 	client: MongoClient,
 	limiter: Bottleneck,
 ) => {
-	const { dump } = options.command;
+	const { migrate } = options.command;
 	customLog("info", "Init set state on __sync collection...");
 	const progressBarColdState = createSingleBar(
 		collections.length,
@@ -51,7 +51,7 @@ export const initRegistrationSync = async (
 		limiter.schedule(() =>
 			createSyncStatsOnDestinDb(
 				client,
-				dump.destination.db,
+				migrate.destination.db,
 				col,
 				progressBarColdState,
 			),

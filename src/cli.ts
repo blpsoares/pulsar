@@ -2,7 +2,7 @@
 
 import { showTitle } from "./utils/showCliTitle";
 import { Command } from "commander";
-import migrateCollections from "./commands/dump";
+import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
 
 await showTitle();
@@ -12,7 +12,7 @@ const program = new Command();
 program.version("1.0.0").description("Mongo pulsar cli to sync data");
 
 program
-	.command("dump <file>")
+	.command("migrate <file>")
 	.option(
 		"-p --parallel <number>",
 		"send a number to export collections in parallel, example: -p 2 or --parallel 2.\nBy default this value is 2.",

@@ -4,7 +4,7 @@ import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import { MongoStatusReturns } from "../../utils/mongo";
 import { $ } from "bun";
-import type { DumpYmlOptions } from "../../types/parseYml";
+import type { MigrateYmlOptions } from "../../types/parseYml";
 import { readdirSync, unlinkSync } from "fs";
 import path from "path";
 import chalk from "chalk";
@@ -37,11 +37,11 @@ const executeRestoreCommand = async (
 };
 
 export const restoreCollections = async (
-	options: DumpYmlOptions,
+	options: MigrateYmlOptions,
 	collections: string[],
 	limiter: Bottleneck,
 ) => {
-	const { dump } = options.command;
+	const { migrate } = options.command;
 	customLog("info", "Init restore collections...");
 	const progressBarImport = createSingleBar(
 		collections.length,
@@ -51,9 +51,9 @@ export const restoreCollections = async (
 	const importCollectionsPromises = collections.map((collection) =>
 		limiter.schedule(() =>
 			executeRestoreCommand(
-				dump.destination.uri,
-				dump.source.db,
-				dump.destination.db,
+				migrate.destination.uri,
+				migrate.source.db,
+				migrate.destination.db,
 				collection,
 				progressBarImport,
 			),
@@ -81,7 +81,7 @@ export const restoreCollections = async (
 };
 
 export const initRestore = async (
-	options: DumpYmlOptions,
+	options: MigrateYmlOptions,
 	collections: string[],
 	limiter: Bottleneck,
 	maxRetries: number = 3,

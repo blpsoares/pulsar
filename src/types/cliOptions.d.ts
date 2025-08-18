@@ -1,5 +1,5 @@
 //TODO: unificar os tipos
-export type DumpOptionsCli = {
+export type MigrateOptionsCli = {
 	parallel?: number;
 	maxRetries?: number;
 	all?: boolean;
