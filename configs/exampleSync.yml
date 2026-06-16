@@ -1,9 +1,20 @@
 command:
   sync:
     source:
-      uri: "source database uri"
-      db: "source database name"
+      uri: "mongodb://localhost:27017/?replicaSet=rs0&directConnection=true"
+      db: "source-database"
     destination:
-      uri: "destination database uri"
-      db: "destination database name"
-    collections: ["collections", "name","to","sync"]
+      uri: "mongodb://localhost:27017"
+      db: "destination-database"
+    logging:
+      verbose: false   # log each watch event on terminal (insert, update, delete, replace)
+      progress: true   # show progress bar during initial dump
+    collections:
+      - simple-collection              # no filter — syncs everything
+      - name: filtered-collection
+        filter:
+          status: "active"             # only sync documents where status = active
+          value:
+            $gt: 100
+      - name: large-filter-collection
+        filterFile: ./filters/large.json   # load filter from external JSON file
