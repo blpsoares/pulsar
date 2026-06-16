@@ -1,5 +1,3 @@
-// TODO:
-
 import { BSON, type Document } from "mongodb";
 import { createHash } from "node:crypto";
 
@@ -44,3 +42,17 @@ export function addFieldsOnMongoDocument(
 }
 
 export const isHashEquals = <T>(hashOne: T, hashTwo: T) => hashOne === hashTwo;
+
+export function transformFilterForChangeStream(filter: Document): Document {
+	const result: Document = {};
+	for (const [key, value] of Object.entries(filter)) {
+		if (key.startsWith("$")) {
+			result[key] = Array.isArray(value)
+				? value.map((v) => transformFilterForChangeStream(v as Document))
+				: transformFilterForChangeStream(value as Document);
+		} else {
+			result[`fullDocument.${key}`] = value;
+		}
+	}
+	return result;
+}

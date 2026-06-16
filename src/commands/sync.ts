@@ -32,8 +32,8 @@ export async function syncCollections(
 			options.command.sync.collections,
 		);
 
-		collections.forEach((collectionName) => {
-			limiter.schedule(() => eventHandler(collectionName, db, destDb));
+		collections.forEach(({ name, filter }) => {
+			limiter.schedule(() => eventHandler(name, db, destDb, filter));
 		});
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");

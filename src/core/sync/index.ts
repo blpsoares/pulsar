@@ -1,9 +1,10 @@
 // biome-ignore assist/source/organizeImports: <explanation>
 
-import type { ChangeStreamDocument, Collection, Db } from "mongodb";
+import type { ChangeStreamDocument, Collection, Db, Document } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { watcher } from "./watcherEvents";
 import { errorHandler } from "../../errors/errorHandler";
+import { transformFilterForChangeStream } from "../../utils/mongo";
 
 export const acceptableEventOperations = [
 	"insert",
@@ -18,19 +19,25 @@ export async function eventHandler(
 	collectionName: string,
 	sourceDb: Db,
 	destDb: Db,
+	filter?: Document,
 ) {
 	const sourceCollection = sourceDb.collection(collectionName);
 	const destCollection = destDb.collection(collectionName);
 
 	await freezeCollection(destCollection);
-	watchCollections(sourceCollection, destCollection);
+	watchCollections(sourceCollection, destCollection, filter);
 }
 
 export async function watchCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
+	filter?: Document,
 ) {
-	const changeStream = sourceCollection.watch([], {
+	const pipeline = filter
+		? [{ $match: { $or: [{ operationType: "delete" }, transformFilterForChangeStream(filter)] } }]
+		: [];
+
+	const changeStream = sourceCollection.watch(pipeline, {
 		fullDocument: "updateLookup",
 	});
 
@@ -38,7 +45,7 @@ export async function watchCollections(
 		delegateEvent(change, destCollection, deletedIds);
 	});
 
-	watcher.emit("dump", sourceCollection, destCollection, deletedIds);
+	watcher.emit("dump", sourceCollection, destCollection, deletedIds, filter);
 
 	changeStream.on("error", errorHandler);
 }

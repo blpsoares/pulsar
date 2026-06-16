@@ -27,12 +27,13 @@ const migrateCollections = async (
 
 	const clientSource = await conn(migrate.source.uri, "source");
 	const dbSource = clientSource.db(migrate.source.db);
-	const migrateCollections = await getCollections(
+	const collectionEntries = await getCollections(
 		dbSource,
 		cliParams,
 		ymlPath,
 		migrate.collections,
 	);
+	const migrateCollections = collectionEntries.map((e) => e.name);
 	/**
 	 *
 	 * ? MIGRATE COLLECTIONS

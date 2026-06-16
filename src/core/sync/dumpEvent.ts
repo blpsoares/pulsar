@@ -7,10 +7,11 @@ export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
 	deletedIds: string[],
+	filter?: Document,
 ) {
 	const { collectionName } = destCollection;
 	try {
-		const cursor = sourceCollection.find().sort({ _id: -1 });
+		const cursor = sourceCollection.find(filter ?? {}).sort({ _id: -1 });
 
 		for await (const coldDocument of cursor) {
 			if (deletedIds.includes(coldDocument._id.toString())) return;
