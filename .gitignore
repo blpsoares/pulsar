@@ -1,8 +1,15 @@
 
 
-# Project directorys
+# Project directories
 /temp-dump
-/configs/*.dev.yml
+
+# Compiled binary
+/pulsar
+
+# Local config files with credentials (use configs/test-sync.yml as reference)
+configs/dump.yml
+configs/sync.yml
+configs/*.dev.yml
 
 # Logs
 logs

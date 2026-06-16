@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  mongo-a:
+    image: mongo:7
+    container_name: mongo-a
+    ports:
+      - "27020:27017"
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo-b:
+    image: mongo:7
+    container_name: mongo-b
+    ports:
+      - "27021:27017"

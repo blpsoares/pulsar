@@ -1,6 +1,5 @@
 // biome-ignore assist/source/organizeImports: <explanation>
-import { MongoServerError, type Collection, type Document } from "mongodb";
-import { customLog } from "../../utils/customLog";
+import type { Collection, Document } from "mongodb";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { watcher } from "./watcherEvents";
 
@@ -30,23 +29,21 @@ async function insertOrUpdateDocument(
 	newDocument: Document,
 	destCollection: Collection,
 ) {
-	try {
-		const result = await destCollection.updateOne(
-			{
-				_id: coldDocument._id,
-				hot: { $exists: false },
-			},
+	const sourceHash = newDocument.__sync?.hash;
+
+	const destDoc = await destCollection.findOne(
+		{ _id: coldDocument._id },
+		{ projection: { "__sync.hash": 1 } },
+	);
+
+	if (destDoc === null) {
+		await destCollection.insertOne(newDocument);
+	} else if (destDoc.__sync?.hash === sourceHash) {
+		return;
+	} else {
+		await destCollection.updateOne(
+			{ _id: coldDocument._id },
 			{ $set: newDocument },
 		);
-		if (result.matchedCount === 0) await destCollection.insertOne(newDocument);
-	} catch (err) {
-		if (err instanceof MongoServerError && err.code === 11000) {
-			customLog(
-				"warn",
-				`O Documento: ${coldDocument._id.toString()} ja existe no destino e foi atualizado pelo watch durante o migrate`,
-			);
-		} else {
-			throw err;
-		}
 	}
 }

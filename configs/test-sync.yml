@@ -1,0 +1,9 @@
+command:
+  sync:
+    source:
+      uri: "mongodb://127.0.0.1:27020/?replicaSet=rs0&directConnection=true"
+      db: "testdb"
+    destination:
+      uri: "mongodb://127.0.0.1:27021"
+      db: "testdb"
+    collections: ["colA", "colB", "colC", "colD"]
