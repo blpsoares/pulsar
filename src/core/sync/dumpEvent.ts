@@ -33,12 +33,12 @@ async function insertOrUpdateDocument(
 
 	const destDoc = await destCollection.findOne(
 		{ _id: coldDocument._id },
-		{ projection: { "__sync.hash": 1 } },
+		{ projection: { "__sync.hot": 1, "__sync.hash": 1 } },
 	);
 
 	if (destDoc === null) {
 		await destCollection.insertOne(newDocument);
-	} else if (destDoc.__sync?.hash === sourceHash) {
+	} else if (destDoc.__sync?.hot === true || destDoc.__sync?.hash === sourceHash) {
 		return;
 	} else {
 		await destCollection.updateOne(
