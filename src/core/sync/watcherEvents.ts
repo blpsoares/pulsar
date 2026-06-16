@@ -19,6 +19,7 @@ watcher.on(
 			`Collection [ ${coll} ] concluída — ${total} docs | ${stats.skipped} iguais | ${stats.updated} atualizados | ${stats.inserted} inseridos`,
 			true,
 		);
+		console.log("");
 		logger.info(`finishDump [${coll}] total=${total} skipped=${stats.skipped} updated=${stats.updated} inserted=${stats.inserted}`);
 	},
 );
