@@ -87,7 +87,10 @@ command:
     destination:
       uri: 'mongodb://localhost:27017'
       db: 'destination-database'
-    collections: ['collection-1', 'collection-2']
+    collections: ['collection-1', 'collection-2']  # ou formato com filtro — ver abaixo
+    logging:
+      verbose: false   # loga cada evento no terminal (insert, update, delete, replace)
+      progress: true   # exibe barra de progresso durante o dump inicial
 ```
 
 **Uso:**
@@ -100,26 +103,95 @@ pulsar sync config.yml [opções]
 |---|---|---|
 | `-p, --parallel <n>` | Collections processadas em paralelo | `3` |
 | `-a, --all` | Sincroniza todas as collections do banco | — |
+| `-v, --verbose` | Loga cada evento no terminal (sobrescreve `logging.verbose` do yml) | `false` |
 
-**Exemplo:**
+**Exemplos:**
 
 ```sh
 pulsar sync config.yml -p 5
 pulsar sync config.yml -a
+pulsar sync config.yml --verbose
 ```
 
-**Comportamento interno:**
+---
+
+### Filtros por collection
+
+Collections podem ter filtros opcionais aplicados tanto no cursor do dump inicial quanto no Change Stream. Duas formas de definir:
+
+**Inline no yml (YAML nativo):**
+
+```yaml
+collections:
+  - users                      # sem filtro — sincroniza tudo
+  - name: orders
+    filter:
+      status: "active"
+  - name: logs
+    filter:
+      level:
+        $in: ["error", "warn"]
+      createdAt:
+        $gte: "2024-01-01"
+```
+
+**Arquivo JSON externo (para filtros grandes):**
+
+```yaml
+collections:
+  - name: events
+    filterFile: ./filters/events.json   # path relativo ao CWD
+```
+
+`./filters/events.json`:
+```json
+{
+  "$and": [
+    { "status": "published" },
+    { "deletedAt": { "$exists": false } }
+  ]
+}
+```
+
+> Filtros inline e `filterFile` não podem ser usados juntos na mesma collection.
+> Deletes sempre são propagados independente do filtro.
+
+---
+
+### Comportamento interno do sync
 
 Ao iniciar (ou reiniciar), para cada collection:
 
-1. Abre um Change Stream para capturar eventos em tempo real.
-2. Roda um cursor completo no source (`find().sort({ _id: -1 })`).
-3. Para cada documento do cursor, compara o hash do source com `__sync.hash` no destino:
-   - **Hash igual** → documento idêntico, pula sem nenhuma escrita.
-   - **Hash diferente** → atualiza o documento no destino.
-   - **Documento ausente** → insere no destino.
+1. Abre um Change Stream — eventos em tempo real já estão sendo capturados.
+2. Conta o total de documentos (`countDocuments`) para exibir a barra de progresso.
+3. Roda um cursor completo no source (`find(filter).sort({ _id: -1 })`).
+4. Para cada documento, compara o hash SHA-1 do source com `__sync.hash` no destino:
+   - **Doc ausente no destino** → `insertOne`
+   - **`__sync.hot === true`** → pula (change stream já atualizou este doc com versão mais recente)
+   - **Hash igual** → pula (documento idêntico, zero writes)
+   - **Hash diferente** → `updateOne`
 
 Isso garante que ao adicionar uma nova collection e reiniciar o watch, apenas documentos novos ou alterados são processados nas collections existentes.
+
+**Progresso durante o dump:**
+
+```
+colA ⟬████████░░⟭ 80% | 8000/10000 | ↷ 7950 skip | ✎ 30 upd | ⊕ 20 ins | ⧖ 00:45
+```
+
+**Ao finalizar cada collection:**
+
+```
+[ SUCCESS ] Collection [ colA ] concluída — 10000 docs | 9950 iguais | 30 atualizados | 20 inseridos
+```
+
+**Com `--verbose`, cada evento do watch:**
+
+```
+[ INFO ] [orders] insert | _id: 63abc123...
+[ INFO ] [orders] update | _id: 63abc124...
+[ INFO ] [orders] delete | _id: 63abc125...
+```
 
 **Metadados adicionados aos documentos no destino:**
 
@@ -147,6 +219,24 @@ Isso garante que ao adicionar uma nova collection e reiniciar o watch, apenas do
 
 ---
 
+## Logs
+
+Todos os eventos são registrados em arquivo via Winston, independente de `--verbose`.
+
+| Arquivo | Conteúdo |
+|---|---|
+| `logs/error.log` | Apenas erros |
+| `logs/debug.log` | Todos os eventos (info, success, warn, error) |
+
+Para desabilitar a barra de progresso (ex.: em ambientes sem TTY):
+
+```yaml
+logging:
+  progress: false
+```
+
+---
+
 ## Teste local com Docker
 
 O repositório inclui um `docker-compose-test.yml` com dois Mongos isolados (mongo-a na porta 27020, mongo-b na porta 27021) e um config de exemplo em `configs/test-sync.yml`.
@@ -160,13 +250,7 @@ docker exec mongo-a mongosh --eval "rs.initiate({_id:'rs0', members:[{_id:0, hos
 
 # Rodar o sync
 pulsar sync configs/test-sync.yml
+
+# Com verbose
+pulsar sync configs/test-sync.yml --verbose
 ```
-
----
-
-## Logs
-
-| Arquivo | Conteúdo |
-|---|---|
-| `logs/error.log` | Apenas erros |
-| `logs/debug.log` | Todos os eventos (info, success, warn, error) |
