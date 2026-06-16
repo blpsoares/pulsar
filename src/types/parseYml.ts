@@ -42,6 +42,12 @@ export const syncYmlSchema = z.object({
 				db: z.string(),
 			}),
 			collections: z.array(syncCollectionEntrySchema).optional(),
+			logging: z
+				.object({
+					verbose: z.boolean().optional(),
+					progress: z.boolean().optional(),
+				})
+				.optional(),
 		}),
 	}),
 });

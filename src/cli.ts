@@ -31,6 +31,7 @@ program
 		"-p --parallel <number>",
 		"send a number to export collections in parallel, example: -p 2 or --parallel 2.\nBy default this value is 2.",
 	)
+	.option("-v --verbose", "log each watch event (insert, update, delete, replace)")
 	.action(syncCollections);
 
 program.parse(process.argv);

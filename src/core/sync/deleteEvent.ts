@@ -1,13 +1,20 @@
 import { ObjectId, type Collection } from "mongodb";
-import { customLog } from "../../utils/customLog";
+import { customLog, logger } from "../../utils/customLog";
+import { getLogConfig } from "../../utils/logConfig";
 
 export async function watchDeleteEvent(
 	_id: ObjectId,
 	destCollection: Collection,
 	deletedIds: string[],
 ) {
+	const { collectionName } = destCollection;
 	const { deletedCount } = await destCollection.deleteOne({ _id });
 
-	if (deletedCount) deletedIds.push(_id.toString());
-	if (deletedCount) customLog("success", `Doc: ${_id.toString()} deletado.`); // !COMMIT
+	if (!deletedCount) return;
+
+	deletedIds.push(_id.toString());
+
+	const msg = `[${collectionName}] delete | _id: ${_id}`;
+	logger.info(msg);
+	if (getLogConfig().verbose) customLog("info", msg);
 }

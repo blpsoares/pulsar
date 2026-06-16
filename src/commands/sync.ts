@@ -6,6 +6,7 @@ import { getCollections } from "../functions/getCollections";
 import type { SyncOptionsCli } from "../types/cliOptions";
 import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
+import { setLogConfig } from "../utils/logConfig";
 import Bottleneck from "bottleneck";
 
 export async function syncCollections(
@@ -13,6 +14,13 @@ export async function syncCollections(
 	cliParams: SyncOptionsCli,
 ) {
 	const options = parseYml<SyncYmlOptions>(ymlPath, syncYmlSchema);
+
+	const ymlLogging = options.command.sync.logging ?? {};
+	setLogConfig({
+		verbose: cliParams.verbose ?? ymlLogging.verbose ?? false,
+		progress: ymlLogging.progress ?? true,
+	});
+
 	const client = await conn(options.command.sync.source.uri, "source");
 	const db = client.db(options.command.sync.source.db);
 
