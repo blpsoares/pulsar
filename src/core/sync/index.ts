@@ -2,6 +2,7 @@
 
 import type { ChangeStreamDocument, Collection, Db, Document } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
+import { dumpCollections } from "./dumpEvent";
 import { watcher } from "./watcherEvents";
 import { errorHandler } from "../../errors/errorHandler";
 import { transformFilterForChangeStream } from "../../utils/mongo";
@@ -25,7 +26,7 @@ export async function eventHandler(
 	const destCollection = destDb.collection(collectionName);
 
 	await freezeCollection(destCollection);
-	watchCollections(sourceCollection, destCollection, filter);
+	await watchCollections(sourceCollection, destCollection, filter);
 }
 
 export async function watchCollections(
@@ -45,9 +46,9 @@ export async function watchCollections(
 		delegateEvent(change, destCollection, deletedIds);
 	});
 
-	watcher.emit("dump", sourceCollection, destCollection, deletedIds, filter);
-
 	changeStream.on("error", errorHandler);
+
+	await dumpCollections(sourceCollection, destCollection, deletedIds, filter);
 }
 
 function delegateEvent(

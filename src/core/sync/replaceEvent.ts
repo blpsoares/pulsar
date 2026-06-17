@@ -9,7 +9,7 @@ export async function watchReplaceEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] replace: fullDocument não encontrado. Ignorando.`);
+		customLog("warn", `[${collectionName}] replace: fullDocument not found, skipping.`);
 		return;
 	}
 

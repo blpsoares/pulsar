@@ -9,7 +9,7 @@ export async function watchInsertEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] insert: fullDocument não encontrado. Ignorando.`);
+		customLog("warn", `[${collectionName}] insert: fullDocument not found, skipping.`);
 		return;
 	}
 

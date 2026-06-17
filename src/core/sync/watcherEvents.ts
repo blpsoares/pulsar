@@ -1,6 +1,5 @@
 import { errorHandler } from "../../errors/errorHandler";
 import { customLog, logger } from "../../utils/customLog";
-import { dumpCollections } from "./dumpEvent";
 import { watchDeleteEvent } from "./deleteEvent";
 import { watchInsertEvent } from "./insertEvent";
 import { watchUpdateEvent } from "./updateEvent";
@@ -9,17 +8,14 @@ import { watchReplaceEvent } from "./replaceEvent";
 
 export const watcher = new EventEmitter();
 
-watcher.on("dump", dumpCollections);
-
 watcher.on(
 	"finishDump",
 	(coll: string, total: number, stats: { skipped: number; updated: number; inserted: number }) => {
 		customLog(
 			"success",
-			`Collection [ ${coll} ] concluída — ${total} docs | ${stats.skipped} iguais | ${stats.updated} atualizados | ${stats.inserted} inseridos`,
+			`Collection [ ${coll} ] synced — ${total} docs | ${stats.skipped} skipped | ${stats.updated} updated | ${stats.inserted} inserted`,
 			true,
 		);
-		console.log("");
 		logger.info(`finishDump [${coll}] total=${total} skipped=${stats.skipped} updated=${stats.updated} inserted=${stats.inserted}`);
 	},
 );

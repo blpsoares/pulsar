@@ -9,7 +9,7 @@ export async function watchUpdateEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] update: fullDocument não encontrado. Ignorando.`);
+		customLog("warn", `[${collectionName}] update: fullDocument not found, skipping.`);
 		return;
 	}
 

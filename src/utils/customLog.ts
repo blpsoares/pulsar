@@ -2,6 +2,7 @@ import chalk from "chalk";
 import { createLogger, format, transports } from "winston";
 import { format as formatDate } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { multiLog } from "./progressManager";
 const { combine, timestamp, printf } = format;
 
 const optionsLogs = {
@@ -48,6 +49,6 @@ export const customLog = (
 ) => {
 	const prefix = `[ ${type.toUpperCase()} ] `;
 	const _breakLine = breakLine ? "\n" : "";
-	console.log(optionsLogs[type].bold(_breakLine + prefix + message));
+	multiLog(optionsLogs[type].bold(_breakLine + prefix + message));
 	logger.log({ level: type, message: message + error });
 };
