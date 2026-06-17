@@ -1,5 +1,5 @@
 /** biome-ignore-all assist/source/organizeImports: <explanation> */
-import { eventHandler } from "../core/sync";
+import { eventHandler, acceptableEventOperations } from "../core/sync";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
 import { getCollections } from "../functions/getCollections";
@@ -7,6 +7,8 @@ import type { SyncOptionsCli } from "../types/cliOptions";
 import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
 import { setLogConfig } from "../utils/logConfig";
+import { customLog } from "../utils/customLog";
+import { initProgress } from "../utils/progressManager";
 import Bottleneck from "bottleneck";
 
 export async function syncCollections(
@@ -40,9 +42,19 @@ export async function syncCollections(
 			options.command.sync.collections,
 		);
 
-		collections.forEach(({ name, filter }) => {
-			limiter.schedule(() => eventHandler(name, db, destDb, filter));
-		});
+		initProgress(collections.length);
+
+		const jobs = collections.map(({ name, filter }) =>
+			limiter.schedule(() => eventHandler(name, db, destDb, filter)),
+		);
+
+		await Promise.all(jobs);
+
+		customLog(
+			"info",
+			`Initial sync done. Watching ${collections.length} collection(s) for live changes — events: ${acceptableEventOperations.join(", ")}`,
+			true,
+		);
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");
 	}

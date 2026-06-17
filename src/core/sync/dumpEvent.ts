@@ -3,7 +3,7 @@ import type { Collection, Document } from "mongodb";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { customLog, logger } from "../../utils/customLog";
 import { getLogConfig } from "../../utils/logConfig";
-import { createBar, removeBar } from "../../utils/progressManager";
+import { createBar, markDone } from "../../utils/progressManager";
 import { watcher } from "./watcherEvents";
 
 type DumpResult = "skipped" | "updated" | "inserted";
@@ -16,12 +16,13 @@ export async function dumpCollections(
 ) {
 	const { collectionName } = destCollection;
 	const { progress } = getLogConfig();
+	let bar: ReturnType<typeof createBar> | null = null;
 
 	try {
 		const total = await sourceCollection.countDocuments(filter ?? {});
 		const stats = { skipped: 0, updated: 0, inserted: 0 };
 
-		const bar = progress ? createBar(collectionName, total) : null;
+		bar = progress ? createBar(collectionName, total) : null;
 
 		const cursor = sourceCollection.find(filter ?? {}).sort({ _id: -1 });
 
@@ -36,9 +37,10 @@ export async function dumpCollections(
 		}
 
 		watcher.emit("finishDump", collectionName, total, stats);
-		if (bar) removeBar(bar);
 	} catch (error) {
 		watcher.emit("errorDump", error, collectionName);
+	} finally {
+		markDone();
 	}
 }
 

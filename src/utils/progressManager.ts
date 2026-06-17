@@ -2,8 +2,9 @@ import { MultiBar } from "cli-progress";
 import chalk from "chalk";
 
 let _multiBar: MultiBar | null = null;
-let _activeCount = 0;
-let _pendingLogs: string[] = [];
+let _total = 0;
+let _done = 0;
+let _pending: string[] = [];
 
 const barFormat =
 	`${chalk.cyan("{collection}")} ⟬{bar}⟭ {percentage}% ` +
@@ -19,16 +20,26 @@ function getMultiBar(): MultiBar {
 			format: barFormat,
 			barCompleteChar: "█",
 			barIncompleteChar: "░",
+			barsize: 24,
 			hideCursor: true,
 			clearOnComplete: false,
+			stopOnComplete: false,
+			linewrap: false,
+			forceRedraw: true,
 			autopadding: true,
 		});
 	}
 	return _multiBar;
 }
 
+/** Reset state for a new sync run with the expected number of collections. */
+export function initProgress(total: number) {
+	_total = total;
+	_done = 0;
+	_pending = [];
+}
+
 export function createBar(collectionName: string, total: number) {
-	_activeCount++;
 	return getMultiBar().create(total, 0, {
 		collection: collectionName,
 		skip: 0,
@@ -37,24 +48,36 @@ export function createBar(collectionName: string, total: number) {
 	});
 }
 
-export function removeBar(bar: ReturnType<MultiBar["create"]>) {
-	_multiBar?.remove(bar);
-	_activeCount--;
-
-	if (_activeCount <= 0) {
-		_multiBar?.stop();
-		_multiBar = null;
-		_activeCount = 0;
-		for (const msg of _pendingLogs) {
-			process.stdout.write(`${msg}\n`);
+/**
+ * Mark one collection as fully processed. Finished bars are kept on screen
+ * (frozen at 100%) so nothing disappears. Once every expected collection is
+ * done, the MultiBar is stopped and any queued logs are flushed in order.
+ */
+export function markDone() {
+	_done++;
+	if (_total > 0 && _done >= _total) {
+		if (_multiBar) {
+			_multiBar.stop();
+			_multiBar = null;
 		}
-		_pendingLogs = [];
+		flush();
+		_total = 0;
+		_done = 0;
 	}
 }
 
+function flush() {
+	for (const msg of _pending) process.stdout.write(`${msg}\n`);
+	_pending = [];
+}
+
+/**
+ * Print a log line without corrupting the live MultiBar render. While bars are
+ * on screen the message is queued and flushed once they're gone.
+ */
 export function multiLog(message: string) {
-	if (_activeCount > 0) {
-		_pendingLogs.push(message);
+	if (_multiBar) {
+		_pending.push(message);
 	} else {
 		console.log(message);
 	}
