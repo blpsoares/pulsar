@@ -9,4 +9,5 @@ export type SyncOptionsCli = {
 	parallel?: number;
 	batch?: number;
 	verbose?: boolean;
+	full?: boolean;
 };

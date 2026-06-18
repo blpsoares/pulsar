@@ -1,5 +1,5 @@
-import { MultiBar } from "cli-progress";
 import chalk from "chalk";
+import { MultiBar } from "cli-progress";
 
 let _multiBar: MultiBar | null = null;
 let _total = 0;
@@ -69,6 +69,22 @@ export function markDone() {
 function flush() {
 	for (const msg of _pending) process.stdout.write(`${msg}\n`);
 	_pending = [];
+}
+
+/**
+ * Encerra a MultiBar e despeja logs pendentes — chamado ao fim do startup do
+ * sync. Necessário porque collections que RETOMAM (resume, sem dump) não
+ * chamam `markDone`, então o contador `_done` pode nunca alcançar `_total`.
+ * Idempotente: se as barras já pararam (caso 100% dump), é no-op.
+ */
+export function finishProgress() {
+	if (_multiBar) {
+		_multiBar.stop();
+		_multiBar = null;
+	}
+	flush();
+	_total = 0;
+	_done = 0;
 }
 
 /**

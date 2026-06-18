@@ -49,6 +49,10 @@ program
 		"tamanho do lote (find $in + bulkWrite) no dump inicial. Padrão: 500.",
 	)
 	.option("-v --verbose", "log each watch event (insert, update, delete, replace)")
+	.option(
+		"-f --full",
+		"força o dump completo de todas as collections, ignorando os carimbos de conclusão (reconciliação total).",
+	)
 	.action(syncCollections);
 
 program.parse(process.argv);

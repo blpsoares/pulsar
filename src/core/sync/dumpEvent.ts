@@ -15,7 +15,7 @@ export async function dumpCollections(
 	deletedIds: string[],
 	filter?: Document,
 	batchSize: number = DEFAULT_BATCH_SIZE,
-) {
+): Promise<boolean> {
 	const { collectionName } = destCollection;
 	const { progress } = getLogConfig();
 	let bar: ReturnType<typeof createBar> | null = null;
@@ -61,15 +61,18 @@ export async function dumpCollections(
 		};
 
 		for await (const coldDocument of cursor) {
-			if (!coldDocument?._id) continue;
+			// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
+			if (coldDocument?._id == null) continue;
 			page.push(coldDocument);
 			if (page.length >= batchSize) await flush();
 		}
 		await flush();
 
 		watcher.emit("finishDump", collectionName, total, stats);
+		return true;
 	} catch (error) {
 		watcher.emit("errorDump", error, collectionName);
+		return false;
 	} finally {
 		markDone();
 	}

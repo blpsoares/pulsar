@@ -39,7 +39,11 @@ src/
       dropOldCollections.ts
       renameCollections.ts
     sync/
-      index.ts            # eventHandler: abre change stream + dispara dump inicial
+      engine.ts           # SyncEngine: orquestra restart incremental (resume vs dump), streams e checkpoints
+      restartDecision.ts  # decide resume|dump + detector do erro 286 (oplog estourado)
+      syncState.ts        # lê/grava dumpCompletedAt + resumeToken na collection __sync do destino
+      resumeCheckpointer.ts # persiste o resume token (PBRT) a cada ~5s
+      index.ts            # só exporta acceptableEventOperations (orquestração migrou pro engine)
       dumpEvent.ts        # cursor completo com hash comparison, progress bar e stats
       watcherEvents.ts    # EventEmitter central para eventos do change stream
       insertEvent.ts      # loga [collection] insert | _id quando verbose
@@ -61,6 +65,21 @@ src/
 ```
 
 ## Comportamento crítico do sync
+
+### Restart incremental — resume token (`core/sync/engine.ts`)
+
+Orquestração do `sync` vive na classe `SyncEngine` (`core/sync/engine.ts`), não mais no `index.ts`. No restart, **cada collection decide entre RETOMAR ou re-DUMPAR**:
+
+- **Retoma** (pula o dump) quando o dump anterior concluiu (`dumpCompletedAt`) **e** há um resume token salvo. O change stream reabre com `startAfter: token` → o oplog reentrega tudo que mudou offline (insert/update/**delete**), em segundos, **sem re-escanear** a collection.
+- **Re-dumpa** quando: nunca terminou o dump, não há token, o token expirou (oplog estourado → erro `286 ChangeStreamHistoryLost` → fallback automático pro dump), ou a flag `--full` foi passada.
+
+Estado guardado no `__sync` do destino (1 doc por collection): `{ id, dumpCompletedAt, resumeToken, tokenUpdatedAt }`.
+
+- `dumpCompletedAt` é carimbado **só quando o dump conclui de fato** (`dumpCollections` retorna `true`).
+- `resumeToken` é o PBRT (`changeStream.resumeToken`), persistido a cada ~5s pelo `ResumeTokenCheckpointer` (avança mesmo em collection parada). Um `kill -9` perde no máximo ~5s; SIGINT/SIGTERM fazem flush final do token antes de sair.
+- `--full` (`-f`) ignora os carimbos e força dump completo de tudo (reconciliação total).
+
+Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (24 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido no restart). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
 
 ### Dump inicial (`core/sync/dumpEvent.ts`)
 
@@ -175,7 +194,7 @@ bun run src/cli.ts sync configs/test-sync.yml --verbose
 ## Pontos de atenção
 
 - Change Streams exigem Replica Set na origem. Standalone retorna erro.
-- `freeze.ts` faz `updateMany({ hot: { $exists: true } }, ...)` — filtra campo `hot` na raiz, não em `__sync.hot`. Não tem efeito prático (nenhum doc tem `hot` na raiz), mas não quebra nada.
+- `freeze.ts` faz `updateMany({ "__sync.hot": true }, { $unset: { "__sync.hot": "" } })` no destino — limpa `hot` velho antes do dump (só roda no caminho de dump; o caminho de resume não chama freeze).
 - `configs/dump.yml` e `configs/sync.yml` ficam no `.gitignore` pois contêm credenciais. Usar `configs/test-sync.yml` como referência.
-- Deleções offline (com watch desligado) não são propagadas no reinício — limitação conhecida e aceita.
+- Deleções offline (com watch desligado) **são propagadas** no restart quando a collection retoma pelo resume token (via oplog). Só ficam de fora se a collection cair no caminho de dump (token expirado/`--full`), pois o cursor não enxerga o que já foi apagado na origem.
 - `filterFile` paths são relativos ao CWD, não ao arquivo yml.
