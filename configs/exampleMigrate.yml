@@ -1,10 +1,10 @@
 command:
-  migrate:
+  dump:
     source:
-      uri: "mongodb://localhost:27017"
-      db: "source-database"
+      uri: "source database uri"
+      db: "source database name"
     destination:
-      uri: "mongodb://localhost:27017"
-      db: "destination-database"
-    collections: ["collection-1", "collection-2"]
-    queryString: '{"status":"active"}'   # optional — filter in JSON.stringify format
+      uri: "destination database uri"
+      db: "destination database name"
+      collections: ["collections", "name","to","export"]
+

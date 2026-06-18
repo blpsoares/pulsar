@@ -4,4 +4,9 @@ export type MigrateOptionsCli = {
 	maxRetries?: number;
 	all?: boolean;
 };
-export type SyncOptionsCli = { all?: boolean; parallel?: number; verbose?: boolean };
+export type SyncOptionsCli = {
+	all?: boolean;
+	parallel?: number;
+	batch?: number;
+	verbose?: boolean;
+};

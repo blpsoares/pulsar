@@ -41,14 +41,23 @@ export const logger = createLogger({
 	],
 });
 
+/** Escreve apenas no terminal (não toca no winston/arquivo). */
+export const terminalLog = (
+	type: OptionsCustomLogs,
+	message: any,
+	breakLine?: boolean,
+) => {
+	const prefix = `[ ${type.toUpperCase()} ] `;
+	const _breakLine = breakLine ? "\n" : "";
+	multiLog(optionsLogs[type].bold(_breakLine + prefix + message));
+};
+
 export const customLog = (
 	type: OptionsCustomLogs,
 	message: any,
 	breakLine?: boolean,
 	error: any = "",
 ) => {
-	const prefix = `[ ${type.toUpperCase()} ] `;
-	const _breakLine = breakLine ? "\n" : "";
-	multiLog(optionsLogs[type].bold(_breakLine + prefix + message));
+	terminalLog(type, message, breakLine);
 	logger.log({ level: type, message: message + error });
 };

@@ -1,4 +1,3 @@
-import { errorHandler } from "../../errors/errorHandler";
 import { customLog, logger } from "../../utils/customLog";
 import { watchDeleteEvent } from "./deleteEvent";
 import { watchInsertEvent } from "./insertEvent";
@@ -20,7 +19,13 @@ watcher.on(
 	},
 );
 watcher.on("errorDump", (err: Error | unknown, coll: string) => {
-	throw errorHandler(err, `DUMP:${coll}`);
+	// NÃO dar throw aqui: este é um listener de EventEmitter e um throw vira
+	// uncaught exception, derrubando o processo inteiro por causa de um erro
+	// transitório (ex.: queda de conexão) numa única collection. Apenas logamos
+	// e seguimos — o change stream da collection continua ativo.
+	const message = err instanceof Error ? err.message : String(err);
+	customLog("error", `Falha no dump da collection [ ${coll} ]: ${message}`, true);
+	logger.error(`DUMP:${coll} ${message}`);
 });
 
 watcher.on("insert", watchInsertEvent);

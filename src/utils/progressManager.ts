@@ -72,6 +72,16 @@ function flush() {
 }
 
 /**
+ * Print a line immediately above the live bars (cli-progress sabe redesenhar as
+ * barras por baixo). Quando não há barras (não-TTY/pm2), cai num console.log
+ * normal. Use para mensagens que precisam aparecer NA HORA, sem esperar o fim.
+ */
+export function logAboveBars(message: string) {
+	if (_multiBar) _multiBar.log(`${message}\n`);
+	else console.log(message);
+}
+
+/**
  * Print a log line without corrupting the live MultiBar render. While bars are
  * on screen the message is queued and flushed once they're gone.
  */

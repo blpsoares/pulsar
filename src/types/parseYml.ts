@@ -48,6 +48,14 @@ export const syncYmlSchema = z.object({
 					progress: z.boolean().optional(),
 				})
 				.optional(),
+			performance: z
+				.object({
+					// quantas collections fazem o dump inicial em paralelo
+					parallel: z.number().int().positive().optional(),
+					// tamanho do lote (find $in + bulkWrite) no dump
+					batchSize: z.number().int().positive().optional(),
+				})
+				.optional(),
 		}),
 	}),
 });

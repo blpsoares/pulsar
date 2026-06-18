@@ -8,6 +8,7 @@
 	},
 	"scripts": {
 		"bin:dev": "bun build --compile src/cli.ts --outfile dist/pulsar && cp ./dist/pulsar ~/.local/bin",
+		"sync:vm": "UV_THREADPOOL_SIZE=2 taskset -c 0,1 nice -n 19 bun src/cli.ts sync -p 3 ads-staging.yml",
 		"rm:folders": "rm -rf ./temp-dump ./logs",
 		"bin:prod": "bun build --compile src/cli.ts --outfile dist/pulsar && chmod +x dist/pulsar",
 		"up:pulsar": "bun rm:folders && docker compose -f docker-compose-dev.yml up --build -d && docker exec -it pulsar-dev sh",
