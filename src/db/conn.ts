@@ -20,11 +20,15 @@ export const conn = async (uri: string, source: string = '->') => {
       connectTimeoutMS: 30000,
       // cursores de dump podem ficar abertos por muito tempo; 0 = sem timeout
       socketTimeoutMS: 0,
-      // Cada change stream segura ~1 conexão (long-poll). Com N collections,
-      // são N streams + as conexões dos dumps. O pool precisa caber tudo, senão
-      // os dumps ficam sem conexão e travam. 250 cobre folgado as ~55 atuais.
-      maxPoolSize: 250,
-      maxIdleTimeMS: 60000,
+      // TETO de conexões por client (origem e destino são clients separados).
+      // Cada change stream segura ~1 conexão presa (long-poll) na origem; os
+      // dumps/writes reusam o restante do pool. 250 deixava o número explodir
+      // (400-950 conexões no Atlas, sobrecarregando o cluster compartilhado).
+      // 80 corta o teto sem starvar os ~55 streams atuais. O alívio definitivo
+      // vem de colapsar os 55 streams num único db.watch() (aí dá p/ baixar bem).
+      maxPoolSize: 80,
+      // libera conexões ociosas mais rápido p/ não segurar slots do cluster.
+      maxIdleTimeMS: 30000,
     });
     await client.connect();
     customLog('success', `Connected to ${source} MongoDB!`);
