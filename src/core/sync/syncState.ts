@@ -8,6 +8,39 @@ import type { SyncStateDoc } from "./restartDecision";
  */
 export const SYNC_META_COLLECTION = "__sync";
 
+/**
+ * Id reservado (não colide com nome de collection real) do doc que guarda o
+ * resume token ÚNICO do `db.watch` — um stream pro banco inteiro tem um token só.
+ */
+const DB_TOKEN_ID = "__pulsar_db__";
+
+/** Lê o resume token global do db.watch. undefined se não houver. */
+export async function loadDbResumeToken(
+	destDb: Db,
+): Promise<ResumeToken | undefined> {
+	const doc = await destDb
+		.collection(SYNC_META_COLLECTION)
+		.findOne({ id: DB_TOKEN_ID }, { projection: { _id: 0, resumeToken: 1 } });
+	if (!doc || doc.resumeToken == null) return undefined;
+	return doc.resumeToken as ResumeToken;
+}
+
+/** Persiste o resume token global do db.watch. */
+export async function saveDbResumeToken(
+	destDb: Db,
+	token: ResumeToken,
+	at: number = Date.now(),
+): Promise<void> {
+	await destDb.collection(SYNC_META_COLLECTION).updateOne(
+		{ id: DB_TOKEN_ID },
+		{
+			$setOnInsert: { id: DB_TOKEN_ID },
+			$set: { resumeToken: token, tokenUpdatedAt: at },
+		},
+		{ upsert: true },
+	);
+}
+
 /** Lê o estado de uma collection. Retorna {} quando não há doc. */
 export async function loadSyncState(
 	destDb: Db,

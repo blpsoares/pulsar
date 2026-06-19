@@ -39,9 +39,10 @@ src/
       dropOldCollections.ts
       renameCollections.ts
     sync/
-      engine.ts           # SyncEngine: orquestra restart incremental (resume vs dump), streams e checkpoints
+      engine.ts           # SyncEngine: UM db.watch p/ todas as colls (roteia por ns.coll) + restart incremental
+      dbWatchPipeline.ts  # monta o $match do db.watch recortado nas X collections (+ filtros)
       restartDecision.ts  # decide resume|dump + detector do erro 286 (oplog estourado)
-      syncState.ts        # lê/grava dumpCompletedAt + resumeToken na collection __sync do destino
+      syncState.ts        # __sync do destino: dumpCompletedAt/dumpCursorId por coll + resumeToken GLOBAL do db.watch
       resumeCheckpointer.ts # persiste o resume token (PBRT) a cada ~5s
       index.ts            # só exporta acceptableEventOperations (orquestração migrou pro engine)
       dumpEvent.ts        # cursor completo com hash comparison, progress bar e stats
@@ -66,22 +67,26 @@ src/
 
 ## Comportamento crítico do sync
 
+### Stream único (`db.watch`) — 1 conexão pra todas as collections
+
+**Crítico p/ não saturar o Atlas.** O `sync` abre **UM único change stream no banco** (`sourceDb.watch`), recortado nas X collections via `$match` em `ns.coll` (`dbWatchPipeline.ts`), e **roteia cada evento pela `ns.coll`** pra collection de destino. Antes era 1 `collection.watch()` por collection → 55 conexões presas (cada change stream é um long-poll que prende 1 conexão pra vida toda) → 400-950 conexões no Atlas, derrubando o cluster compartilhado. Agora: **1 conexão de escuta** + ~`parallel` conexões de dump que giram. Por isso `maxPoolSize` é baixo (30) em `db/conn.ts`.
+
 ### Restart incremental — resume token (`core/sync/engine.ts`)
 
-Orquestração do `sync` vive na classe `SyncEngine` (`core/sync/engine.ts`), não mais no `index.ts`. No restart, **cada collection decide entre RETOMAR ou re-DUMPAR**:
+No restart, **cada collection decide entre RETOMAR ou re-DUMPAR**:
 
-- **Retoma** (pula o dump) quando o dump anterior concluiu (`dumpCompletedAt`) **e** há um resume token salvo. O change stream reabre com `startAfter: token` → o oplog reentrega tudo que mudou offline (insert/update/**delete**), em segundos, **sem re-escanear** a collection.
-- **Re-dumpa** quando: nunca terminou o dump, não há token, o token expirou (oplog estourado → erro `286 ChangeStreamHistoryLost` → fallback automático pro dump), ou a flag `--full` foi passada.
+- **Retoma** (pula o dump) quando o dump anterior concluiu (`dumpCompletedAt`) **e** há um resume token global salvo. O `db.watch` reabre com `startAfter: token` → o oplog reentrega tudo que mudou offline (insert/update/**delete**), em segundos, **sem re-escanear**.
+- **Re-dumpa** quando: nunca terminou o dump, não há token, ou `--full`. Se o **token global** expirar (oplog estourado → `286 ChangeStreamHistoryLost`), o stream único cai em **forceDumpAll** → re-dumpa **todas** (perdeu-se a posição de todas de uma vez — é o tradeoff do token único).
 
-Estado guardado no `__sync` do destino (1 doc por collection): `{ id, dumpCompletedAt, resumeToken, tokenUpdatedAt }`.
+Estado no `__sync` do destino: 1 doc por collection `{ id, dumpCompletedAt, dumpCursorId }` + 1 doc global `{ id: "__pulsar_db__", resumeToken, tokenUpdatedAt }`.
 
 - `dumpCompletedAt` é carimbado **só quando o dump conclui de fato** (`dumpCollections` retorna `true`).
-- `resumeToken` é o PBRT (`changeStream.resumeToken`), persistido a cada ~5s pelo `ResumeTokenCheckpointer` (avança mesmo em collection parada). Um `kill -9` perde no máximo ~5s; SIGINT/SIGTERM fazem flush final do token antes de sair.
+- `resumeToken` é o PBRT do `db.watch` (**um só, global**), persistido a cada ~5s pelo `ResumeTokenCheckpointer`. Um `kill -9` perde no máximo ~5s; SIGINT/SIGTERM fazem flush final antes de sair.
 - `--full` (`-f`) ignora os carimbos e força dump completo de tudo (reconciliação total).
 
 **Dump retomável (`dumpCursorId`):** se um dump **não termina** (interrompido, timeout de conexão), o cursor (que varre `_id:-1`) carimba a fronteira — o menor `_id` já processado — no `__sync` a cada ~5s (`saveDumpProgress`). No restart, um dump incompleto **continua de `find({ _id: { $lt: dumpCursorId } })`** em vez de recomeçar do zero. `markDumpCompleted` limpa a fronteira ao concluir; `--full` a ignora. Limitação: mudanças offline na faixa **já dumpada** (`_id ≥ fronteira`) não são reconciliadas nesse caminho (stream reabre fresh, não por token) — só um `--full` cobre.
 
-Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (31 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido, dump retomável por fronteira). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
+Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (40 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido, dump retomável por fronteira, e stream único roteando várias collections / token global). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
 
 ### Dump inicial (`core/sync/dumpEvent.ts`)
 

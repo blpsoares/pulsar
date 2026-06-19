@@ -8,7 +8,7 @@ import {
 } from "bun:test";
 import type { Db, MongoClient } from "mongodb";
 import { SyncEngine } from "../src/core/sync/engine";
-import { loadSyncState } from "../src/core/sync/syncState";
+import { loadDbResumeToken, loadSyncState } from "../src/core/sync/syncState";
 import { setLogConfig } from "../src/utils/logConfig";
 import {
 	connect,
@@ -84,7 +84,7 @@ describe("SyncEngine — dump inicial (cold)", () => {
 
 		await engine.stop();
 
-		const st2 = await loadSyncState(dstDb, "colA");
-		expect(st2.resumeToken).toBeDefined();
+		// O token agora é GLOBAL (do db.watch), não mais por collection.
+		expect(await loadDbResumeToken(dstDb)).toBeDefined();
 	});
 });

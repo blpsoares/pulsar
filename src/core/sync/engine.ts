@@ -9,7 +9,7 @@ import type {
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { logger } from "../../utils/customLog";
-import { transformFilterForChangeStream } from "../../utils/mongo";
+import { buildDbWatchPipeline } from "./dbWatchPipeline";
 import { watchDeleteEvent } from "./deleteEvent";
 import { dumpCollections } from "./dumpEvent";
 import { watchInsertEvent } from "./insertEvent";
@@ -17,9 +17,10 @@ import { watchReplaceEvent } from "./replaceEvent";
 import { decideStartupAction, isHistoryLostError } from "./restartDecision";
 import { ResumeTokenCheckpointer } from "./resumeCheckpointer";
 import {
-	clearDumpCompleted,
+	loadDbResumeToken,
 	loadSyncState,
 	markDumpCompleted,
+	saveDbResumeToken,
 	saveDumpProgress,
 } from "./syncState";
 import { watchUpdateEvent } from "./updateEvent";
@@ -44,21 +45,7 @@ export type SyncEngineOptions = {
 	resumeProbeMs?: number;
 };
 
-type ColRuntime = {
-	name: string;
-	filter?: Document;
-	srcCol: Collection;
-	destCol: Collection;
-	pipeline: Document[];
-	stream: ChangeStream | null;
-	checkpointer: ResumeTokenCheckpointer;
-	lastToken: ResumeToken | undefined;
-	closed: boolean;
-	/** Fronteira pra retomar um dump incompleto (do __sync); undefined = do zero. */
-	dumpResumeFromId?: unknown;
-	/** Throttle do checkpoint de progresso do dump. */
-	lastDumpSaveAt: number;
-};
+type Route = { srcCol: Collection; destCol: Collection; filter?: Document };
 
 /**
  * Determina se um erro de um stream em modo RESUME torna o resume impossível
@@ -75,32 +62,27 @@ function isResumeImpossibleError(err: unknown): boolean {
 	);
 }
 
-function buildPipeline(filter?: Document): Document[] {
-	if (!filter) return [];
-	return [
-		{
-			$match: {
-				$or: [
-					{ operationType: "delete" },
-					transformFilterForChangeStream(filter),
-				],
-			},
-		},
-	];
-}
-
 /**
- * Orquestra o `sync` de um conjunto de collections com restart incremental:
- * cada collection decide entre RETOMAR pelo resume token (pula o dump) ou
- * refazer o DUMP. Instância isolada (sem estado global) — pode ser parada e
- * recriada no mesmo processo (essencial pra testes de restart).
+ * Orquestra o `sync` com UM ÚNICO change stream no banco (`db.watch`) — uma
+ * conexão escuta todas as collections configuradas (em vez de 1 por collection),
+ * matando a saturação de conexões. Cada evento é roteado por `ns.coll` pro
+ * destino certo. O dump de cada collection decide entre RETOMAR (pula o dump,
+ * o stream já cobre as mudanças) ou DUMPAR (do zero ou da fronteira salva).
+ *
+ * Instância isolada (sem estado global) — pode ser parada e recriada no mesmo
+ * processo (essencial pros testes de restart).
  */
 export class SyncEngine {
 	private readonly opts: Required<Omit<SyncEngineOptions, "collections">> & {
 		collections: EngineCollection[];
 	};
-	private readonly runtimes: ColRuntime[] = [];
+	private readonly routes = new Map<string, Route>();
 	private readonly deletedIds: string[] = [];
+	private readonly lastDumpSaveAt = new Map<string, number>();
+	private stream: ChangeStream | null = null;
+	private checkpointer: ResumeTokenCheckpointer | null = null;
+	private lastToken: ResumeToken | undefined;
+	private closed = false;
 
 	constructor(options: SyncEngineOptions) {
 		this.opts = {
@@ -114,191 +96,202 @@ export class SyncEngine {
 				options.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
 		};
+		for (const col of this.opts.collections) {
+			this.routes.set(col.name, {
+				srcCol: this.opts.sourceDb.collection(col.name),
+				destCol: this.opts.destDb.collection(col.name),
+				filter: col.filter,
+			});
+		}
 	}
 
 	/**
-	 * Abre os watches (paralelo) e roda/decide os dumps (estrangulado por
-	 * `parallel`), sem barreira global. Resolve quando todas as collections
-	 * concluíram a ação inicial (dump feito ou resume decidido). Os change
-	 * streams seguem ativos até `stop()`.
+	 * Abre o stream único, decide por collection (resume vs dump) e roda os dumps
+	 * (estrangulado por `parallel`). Resolve quando os dumps iniciais terminam; o
+	 * stream segue ativo até `stop()`.
 	 */
 	async start(): Promise<void> {
-		const dumpLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
-		const watchLimiter = new Bottleneck({ maxConcurrent: 8 });
+		const globalToken = this.opts.full
+			? undefined
+			: await loadDbResumeToken(this.opts.destDb);
 
-		const jobs = this.opts.collections.map((col) =>
-			watchLimiter
-				.schedule(() => this.openInitial(col))
-				.then((rt) => dumpLimiter.schedule(() => this.finishStartup(rt))),
-		);
+		// 1) abre o stream ÚNICO (resume pelo token global, ou fresh). Se o token
+		//    expirou (286), forceDumpAll: re-dumpa tudo pra não perder mudanças.
+		const forceDumpAll = await this.openStream(globalToken);
 
-		await Promise.all(jobs);
-	}
-
-	/** Fecha os streams e faz o flush final dos checkpoints. */
-	async stop(): Promise<void> {
-		for (const rt of this.runtimes) rt.closed = true;
-		await Promise.all(
-			this.runtimes.map(async (rt) => {
-				await rt.checkpointer.stop();
-				if (rt.stream) await rt.stream.close().catch(() => {});
-			}),
-		);
-	}
-
-	/** FASE 1 — decide ação, abre o stream (resume ou fresh). */
-	private async openInitial(col: EngineCollection): Promise<ColRuntime> {
-		const srcCol = this.opts.sourceDb.collection(col.name);
-		const destCol = this.opts.destDb.collection(col.name);
-		const rt: ColRuntime = {
-			name: col.name,
-			filter: col.filter,
-			srcCol,
-			destCol,
-			pipeline: buildPipeline(col.filter),
-			stream: null,
-			lastToken: undefined,
-			closed: false,
-			lastDumpSaveAt: 0,
-			checkpointer: null as unknown as ResumeTokenCheckpointer,
-		};
-		rt.checkpointer = new ResumeTokenCheckpointer(
-			this.opts.destDb,
-			col.name,
-			() => rt.stream?.resumeToken ?? rt.lastToken ?? null,
+		// 2) checkpoint do token global a cada ~5s.
+		this.checkpointer = new ResumeTokenCheckpointer(
+			() => this.stream?.resumeToken ?? this.lastToken ?? null,
+			(t) => saveDbResumeToken(this.opts.destDb, t),
 			this.opts.checkpointIntervalMs,
 		);
-		this.runtimes.push(rt);
+		this.checkpointer.start();
 
-		const state = await loadSyncState(this.opts.destDb, col.name);
-		const action = decideStartupAction(state, { full: this.opts.full });
-		// Dump incompleto com fronteira salva → retoma dali (a não ser com --full).
-		rt.dumpResumeFromId = this.opts.full ? undefined : state.dumpCursorId;
-
-		if (action === "resume") {
-			const outcome = await this.openResume(rt, state.resumeToken);
-			rt.checkpointer.start();
-			(rt as ColRuntime & { _needsDump?: boolean })._needsDump =
-				outcome === "fallback";
-			return rt;
-		}
-
-		// dump path: freeze antes de abrir (protege o dump), stream fresh
-		await freezeCollection(destCol);
-		this.openFresh(rt);
-		rt.checkpointer.start();
-		(rt as ColRuntime & { _needsDump?: boolean })._needsDump = true;
-		return rt;
-	}
-
-	/** FASE 2 — roda o dump se necessário e carimba a conclusão. */
-	private async finishStartup(rt: ColRuntime): Promise<void> {
-		const needsDump = (rt as ColRuntime & { _needsDump?: boolean })._needsDump;
-		if (needsDump) {
-			const ok = await dumpCollections(rt.srcCol, rt.destCol, this.deletedIds, {
-				filter: rt.filter,
-				batchSize: this.opts.batchSize,
-				resumeFromId: rt.dumpResumeFromId,
-				onProgress: (lastId) => this.checkpointDumpProgress(rt, lastId),
-			});
-			// markDumpCompleted carimba a conclusão E limpa a fronteira (dumpCursorId).
-			if (ok) await markDumpCompleted(this.opts.destDb, rt.name);
-		}
-		// Garante um token persistido assim que possível (não só no tick de 5s).
-		await this.waitForToken(rt, this.opts.resumeProbeMs);
-		await rt.checkpointer.flush().catch(() => {});
-	}
-
-	/**
-	 * Salva a fronteira do dump no __sync, com throttle (~checkpointIntervalMs),
-	 * pra um restart de dump incompleto continuar de onde parou. Fire-and-forget:
-	 * não bloqueia o loop do dump.
-	 */
-	private checkpointDumpProgress(rt: ColRuntime, lastId: unknown): void {
-		const now = Date.now();
-		if (now - rt.lastDumpSaveAt < this.opts.checkpointIntervalMs) return;
-		rt.lastDumpSaveAt = now;
-		void saveDumpProgress(this.opts.destDb, rt.name, lastId).catch(() => {});
-	}
-
-	/** Abre stream fresh (sem token) e liga os handlers. */
-	private openFresh(rt: ColRuntime): void {
-		this.attach(
-			rt,
-			rt.srcCol.watch(rt.pipeline, { fullDocument: "updateLookup" }),
+		// 3) decide dump por collection (o stream já cobre o tempo real de todas).
+		const effectiveToken = forceDumpAll ? undefined : globalToken;
+		const plans = await Promise.all(
+			this.opts.collections.map(async (col) => {
+				const state = await loadSyncState(this.opts.destDb, col.name);
+				const needsDump =
+					forceDumpAll ||
+					decideStartupAction(
+						{
+							dumpCompletedAt: state.dumpCompletedAt,
+							resumeToken: effectiveToken,
+						},
+						{ full: this.opts.full },
+					) === "dump";
+				const resumeFromId =
+					this.opts.full || forceDumpAll ? undefined : state.dumpCursorId;
+				return { col, needsDump, resumeFromId };
+			}),
 		);
+
+		// 4) roda os dumps necessários, throttled por -p.
+		const dumpLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
+		await Promise.all(
+			plans
+				.filter((p) => p.needsDump)
+				.map((p) =>
+					dumpLimiter.schedule(() => this.runDump(p.col, p.resumeFromId)),
+				),
+		);
+
+		// 5) garante o token global persistido (não só no tick de 5s).
+		await this.waitForToken(this.opts.resumeProbeMs);
+		await this.checkpointer.flush().catch(() => {});
+	}
+
+	/** Fecha o stream e faz o flush final do checkpoint. */
+	async stop(): Promise<void> {
+		this.closed = true;
+		if (this.checkpointer) await this.checkpointer.stop();
+		if (this.stream) await this.stream.close().catch(() => {});
+	}
+
+	/** Dump de uma collection: freeze (limpa hot velho) → dump → carimba. */
+	private async runDump(
+		col: EngineCollection,
+		resumeFromId: unknown,
+	): Promise<void> {
+		const route = this.routes.get(col.name);
+		if (!route) return;
+		await freezeCollection(route.destCol);
+		const ok = await dumpCollections(
+			route.srcCol,
+			route.destCol,
+			this.deletedIds,
+			{
+				filter: col.filter,
+				batchSize: this.opts.batchSize,
+				resumeFromId,
+				onProgress: (lastId) => this.checkpointDumpProgress(col.name, lastId),
+			},
+		);
+		if (ok) await markDumpCompleted(this.opts.destDb, col.name);
+	}
+
+	/** Salva a fronteira do dump (throttle ~checkpointIntervalMs), fire-and-forget. */
+	private checkpointDumpProgress(name: string, lastId: unknown): void {
+		const now = Date.now();
+		if (
+			now - (this.lastDumpSaveAt.get(name) ?? 0) <
+			this.opts.checkpointIntervalMs
+		)
+			return;
+		this.lastDumpSaveAt.set(name, now);
+		void saveDumpProgress(this.opts.destDb, name, lastId).catch(() => {});
 	}
 
 	/**
-	 * Abre stream em modo RESUME (startAfter token). Resolve "resumed" se o
-	 * stream estabelece sem erro fatal, ou "fallback" se o resume é impossível
-	 * (286/token inválido) — nesse caso limpamos o carimbo pra forçar o dump.
+	 * Abre o stream único. Com token global, tenta `startAfter`; se o resume for
+	 * impossível (286/token inválido), reabre fresh e devolve `true` (forceDumpAll
+	 * — re-dumpa tudo, já que perdemos a posição de todas as collections).
 	 */
-	private async openResume(
-		rt: ColRuntime,
-		token: ResumeToken | undefined,
-	): Promise<"resumed" | "fallback"> {
-		const stream = rt.srcCol.watch(rt.pipeline, {
+	private async openStream(
+		globalToken: ResumeToken | undefined,
+	): Promise<boolean> {
+		const pipeline = buildDbWatchPipeline(this.opts.collections);
+		if (!globalToken) {
+			this.openFresh(pipeline);
+			return false;
+		}
+		const stream = this.opts.sourceDb.watch(pipeline, {
 			fullDocument: "updateLookup",
-			startAfter: token,
+			startAfter: globalToken,
 		});
-		this.attach(rt, stream, { resumeMode: true });
+		this.attach(stream, { resumeMode: true });
 
-		return new Promise<"resumed" | "fallback">((resolve) => {
+		return new Promise<boolean>((resolve) => {
 			let settled = false;
-			const done = (r: "resumed" | "fallback") => {
+			const done = (force: boolean) => {
 				if (settled) return;
 				settled = true;
 				clearInterval(poll);
 				clearTimeout(grace);
-				resolve(r);
+				resolve(force);
 			};
 			stream.on("error", async (err) => {
 				if (isResumeImpossibleError(err)) {
 					logger.error(
-						`RESUME:${rt.name} token inválido/expirado — fallback p/ dump`,
+						"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
 					);
-					await clearDumpCompleted(this.opts.destDb, rt.name);
 					await stream.close().catch(() => {});
-					await freezeCollection(rt.destCol);
-					this.openFresh(rt);
-					done("fallback");
+					this.openFresh(pipeline);
+					done(true);
 				}
 			});
 			const poll = setInterval(() => {
-				if (stream.resumeToken) done("resumed");
+				if (stream.resumeToken) done(false);
 			}, 50);
-			const grace = setTimeout(() => done("resumed"), this.opts.resumeProbeMs);
+			const grace = setTimeout(() => done(false), this.opts.resumeProbeMs);
 		});
 	}
 
+	private openFresh(pipeline: Document[]): void {
+		this.attach(
+			this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
+		);
+	}
+
 	private attach(
-		rt: ColRuntime,
 		stream: ChangeStream,
 		{ resumeMode = false }: { resumeMode?: boolean } = {},
 	): void {
-		rt.stream = stream;
+		this.stream = stream;
 		stream.on("change", (change) => {
-			rt.lastToken = change._id;
-			this.applyEvent(change, rt.destCol);
+			this.lastToken = change._id;
+			this.route(change);
 		});
 		stream.on("error", (err) => {
-			if (rt.closed) return;
-			// O fallback do resume é tratado no openResume; aqui é reabertura
-			// por erro transitório (queda de conexão etc.).
+			if (this.closed) return;
+			// só o stream ATUAL reabre (um stream substituído não deve ressuscitar).
+			if (this.stream !== stream) return;
+			// o fallback do 286 no resume é tratado no openStream.
 			if (resumeMode && isResumeImpossibleError(err)) return;
 			const message = err instanceof Error ? err.message : String(err);
-			logger.error(`WATCH:${rt.name} ${message}. Reabrindo em 5s...`);
+			logger.error(`WATCH:db.watch ${message}. Reabrindo em 5s...`);
 			stream.close().catch(() => {});
 			setTimeout(() => {
-				if (rt.closed) return;
-				const next = rt.srcCol.watch(rt.pipeline, {
+				if (this.closed || this.stream !== stream) return;
+				const pipeline = buildDbWatchPipeline(this.opts.collections);
+				const next = this.opts.sourceDb.watch(pipeline, {
 					fullDocument: "updateLookup",
-					...(rt.lastToken ? { startAfter: rt.lastToken } : {}),
+					...(this.lastToken ? { startAfter: this.lastToken } : {}),
 				});
-				this.attach(rt, next, { resumeMode });
+				this.attach(next, { resumeMode });
 			}, RESUME_REOPEN_MS);
 		});
+	}
+
+	/** Roteia o evento pela ns.coll pra collection de destino correspondente. */
+	private route(change: ChangeStreamDocument): void {
+		const ns = (change as { ns?: { coll?: string } }).ns;
+		const coll = ns?.coll;
+		if (!coll) return;
+		const route = this.routes.get(coll);
+		if (!route) return;
+		this.applyEvent(change, route.destCol);
 	}
 
 	private applyEvent(change: ChangeStreamDocument, destCol: Collection): void {
@@ -324,9 +317,9 @@ export class SyncEngine {
 		}
 	}
 
-	private async waitForToken(rt: ColRuntime, timeoutMs: number): Promise<void> {
+	private async waitForToken(timeoutMs: number): Promise<void> {
 		const start = performance.now();
-		while (!rt.stream?.resumeToken && !rt.lastToken) {
+		while (!this.stream?.resumeToken && !this.lastToken) {
 			if (performance.now() - start > timeoutMs) return;
 			await new Promise((r) => setTimeout(r, 50));
 		}

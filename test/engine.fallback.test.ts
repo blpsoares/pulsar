@@ -75,9 +75,10 @@ describe("SyncEngine — fallback de resume impossível (286/token inválido)", 
 				{ $set: { v: "CORROMPIDO", "__sync.hash": "BOGUS" } },
 			);
 
-		// Substitui o token salvo por um inválido → resume vai falhar.
+		// Substitui o token GLOBAL (do db.watch) por um inválido → o resume do
+		// stream único falha (286) → forceDumpAll → re-dumpa tudo.
 		await dstDb.collection("__sync").updateOne(
-			{ id: "colA" },
+			{ id: "__pulsar_db__" },
 			{
 				$set: {
 					resumeToken: {

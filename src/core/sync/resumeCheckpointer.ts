@@ -1,15 +1,14 @@
-import type { Db, ResumeToken } from "mongodb";
-import { saveResumeToken } from "./syncState";
+import type { ResumeToken } from "mongodb";
 
 const DEFAULT_INTERVAL_MS = 5000;
 
 type GetToken = () => ResumeToken | null | undefined;
+type SaveToken = (token: ResumeToken) => Promise<void>;
 
 /**
- * Persiste periodicamente o resume token de um change stream no `__sync` do
- * destino. Lê o token via callback `getToken` — que aponta pro
- * `changeStream.resumeToken` (PBRT): ele fica válido mesmo numa collection
- * parada (sem eventos), garantindo que o restart consiga retomar.
+ * Persiste periodicamente o resume token de um change stream. Lê o token via
+ * `getToken` (aponta pro `changeStream.resumeToken` / PBRT, válido mesmo numa
+ * collection parada) e grava via `save` (per-collection ou global do db.watch).
  *
  * Desenho pensado pra teste: `flush()` é quem escreve, e só se o token mudou
  * desde o último flush e não é null. `start()/stop()` ligam o timer.
@@ -19,9 +18,8 @@ export class ResumeTokenCheckpointer {
 	private timer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
-		private readonly destDb: Db,
-		private readonly collectionName: string,
 		private readonly getToken: GetToken,
+		private readonly save: SaveToken,
 		private readonly intervalMs: number = DEFAULT_INTERVAL_MS,
 	) {}
 
@@ -35,7 +33,7 @@ export class ResumeTokenCheckpointer {
 		const serialized = JSON.stringify(token);
 		if (serialized === this.lastPersisted) return false;
 		this.lastPersisted = serialized;
-		await saveResumeToken(this.destDb, this.collectionName, token);
+		await this.save(token);
 		return true;
 	}
 
