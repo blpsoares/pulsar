@@ -79,7 +79,9 @@ Estado guardado no `__sync` do destino (1 doc por collection): `{ id, dumpComple
 - `resumeToken` é o PBRT (`changeStream.resumeToken`), persistido a cada ~5s pelo `ResumeTokenCheckpointer` (avança mesmo em collection parada). Um `kill -9` perde no máximo ~5s; SIGINT/SIGTERM fazem flush final do token antes de sair.
 - `--full` (`-f`) ignora os carimbos e força dump completo de tudo (reconciliação total).
 
-Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (24 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido no restart). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
+**Dump retomável (`dumpCursorId`):** se um dump **não termina** (interrompido, timeout de conexão), o cursor (que varre `_id:-1`) carimba a fronteira — o menor `_id` já processado — no `__sync` a cada ~5s (`saveDumpProgress`). No restart, um dump incompleto **continua de `find({ _id: { $lt: dumpCursorId } })`** em vez de recomeçar do zero. `markDumpCompleted` limpa a fronteira ao concluir; `--full` a ignora. Limitação: mudanças offline na faixa **já dumpada** (`_id ≥ fronteira`) não são reconciliadas nesse caminho (stream reabre fresh, não por token) — só um `--full` cobre.
+
+Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (31 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido, dump retomável por fronteira). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
 
 ### Dump inicial (`core/sync/dumpEvent.ts`)
 

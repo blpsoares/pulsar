@@ -9,23 +9,41 @@ import { watcher } from "./watcherEvents";
 const DEFAULT_BATCH_SIZE = 500;
 const LOG_EVERY = 2000;
 
+export type DumpOptions = {
+	filter?: Document;
+	batchSize?: number;
+	/** Retoma um dump incompleto: só varre docs com `_id < resumeFromId`. */
+	resumeFromId?: unknown;
+	/** Chamado após cada lote com o menor `_id` já processado (a fronteira). */
+	onProgress?: (lastId: unknown) => void;
+};
+
 export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
 	deletedIds: string[],
-	filter?: Document,
-	batchSize: number = DEFAULT_BATCH_SIZE,
+	opts: DumpOptions = {},
 ): Promise<boolean> {
+	const { filter, resumeFromId, onProgress } = opts;
+	const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
 	const { collectionName } = destCollection;
 	const { progress } = getLogConfig();
 	let bar: ReturnType<typeof createBar> | null = null;
 
+	// Query do cursor: filtro do usuário + (se retomando) recorte `_id < fronteira`.
+	const baseFilter = filter ?? {};
+	const query =
+		resumeFromId != null
+			? { $and: [baseFilter, { _id: { $lt: resumeFromId } }] }
+			: baseFilter;
+
 	try {
-		// Sem filtro usamos estimatedDocumentCount (metadados, instantâneo); com
-		// filtro precisamos do countDocuments (scan real) para o total correto.
-		const total = filter
-			? await sourceCollection.countDocuments(filter)
-			: await sourceCollection.estimatedDocumentCount();
+		// Sem filtro nem retomada, estimatedDocumentCount (metadados, instantâneo);
+		// caso contrário countDocuments (scan real) para o total correto do recorte.
+		const total =
+			!filter && resumeFromId == null
+				? await sourceCollection.estimatedDocumentCount()
+				: await sourceCollection.countDocuments(query);
 		const stats = { skipped: 0, updated: 0, inserted: 0 };
 
 		bar = progress ? createBar(collectionName, total) : null;
@@ -35,16 +53,23 @@ export async function dumpCollections(
 		let processed = 0;
 		let lastLogged = 0;
 		if (!bar) {
-			customLog("info", `dump:start | collection: ${collectionName} | total: ${total}`);
+			const resumeMsg =
+				resumeFromId != null ? ` (retomando de _id<${resumeFromId})` : "";
+			customLog(
+				"info",
+				`dump:start | collection: ${collectionName} | total: ${total}${resumeMsg}`,
+			);
 		}
 
-		const cursor = sourceCollection.find(filter ?? {}).sort({ _id: -1 });
+		const cursor = sourceCollection.find(query).sort({ _id: -1 });
 		let page: Document[] = [];
 
 		const flush = async () => {
 			if (page.length === 0) return;
 			await processBatch(page, destCollection, deletedIds, stats);
 			processed += page.length;
+			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
+			const frontier = page[page.length - 1]._id;
 			bar?.increment(page.length, {
 				skip: stats.skipped,
 				upd: stats.updated,
@@ -58,6 +83,7 @@ export async function dumpCollections(
 				);
 			}
 			page = [];
+			onProgress?.(frontier);
 		};
 
 		for await (const coldDocument of cursor) {
@@ -101,7 +127,10 @@ async function processBatch(
 
 	const ids = docs.map((d) => d._id);
 	const existing = await destCollection
-		.find({ _id: { $in: ids } }, { projection: { "__sync.hot": 1, "__sync.hash": 1 } })
+		.find(
+			{ _id: { $in: ids } },
+			{ projection: { "__sync.hot": 1, "__sync.hash": 1 } },
+		)
 		.toArray();
 	const destMap = new Map(existing.map((d) => [d._id.toString(), d]));
 

@@ -3,6 +3,8 @@ import type { ResumeToken } from "mongodb";
 export type SyncStateDoc = {
 	dumpCompletedAt?: number;
 	resumeToken?: ResumeToken;
+	/** Fronteira do cursor de um dump incompleto (menor _id já processado). */
+	dumpCursorId?: unknown;
 };
 
 /**

@@ -20,6 +20,7 @@ import {
 	clearDumpCompleted,
 	loadSyncState,
 	markDumpCompleted,
+	saveDumpProgress,
 } from "./syncState";
 import { watchUpdateEvent } from "./updateEvent";
 
@@ -53,6 +54,10 @@ type ColRuntime = {
 	checkpointer: ResumeTokenCheckpointer;
 	lastToken: ResumeToken | undefined;
 	closed: boolean;
+	/** Fronteira pra retomar um dump incompleto (do __sync); undefined = do zero. */
+	dumpResumeFromId?: unknown;
+	/** Throttle do checkpoint de progresso do dump. */
+	lastDumpSaveAt: number;
 };
 
 /**
@@ -154,6 +159,7 @@ export class SyncEngine {
 			stream: null,
 			lastToken: undefined,
 			closed: false,
+			lastDumpSaveAt: 0,
 			checkpointer: null as unknown as ResumeTokenCheckpointer,
 		};
 		rt.checkpointer = new ResumeTokenCheckpointer(
@@ -166,6 +172,8 @@ export class SyncEngine {
 
 		const state = await loadSyncState(this.opts.destDb, col.name);
 		const action = decideStartupAction(state, { full: this.opts.full });
+		// Dump incompleto com fronteira salva → retoma dali (a não ser com --full).
+		rt.dumpResumeFromId = this.opts.full ? undefined : state.dumpCursorId;
 
 		if (action === "resume") {
 			const outcome = await this.openResume(rt, state.resumeToken);
@@ -187,18 +195,30 @@ export class SyncEngine {
 	private async finishStartup(rt: ColRuntime): Promise<void> {
 		const needsDump = (rt as ColRuntime & { _needsDump?: boolean })._needsDump;
 		if (needsDump) {
-			const ok = await dumpCollections(
-				rt.srcCol,
-				rt.destCol,
-				this.deletedIds,
-				rt.filter,
-				this.opts.batchSize,
-			);
+			const ok = await dumpCollections(rt.srcCol, rt.destCol, this.deletedIds, {
+				filter: rt.filter,
+				batchSize: this.opts.batchSize,
+				resumeFromId: rt.dumpResumeFromId,
+				onProgress: (lastId) => this.checkpointDumpProgress(rt, lastId),
+			});
+			// markDumpCompleted carimba a conclusão E limpa a fronteira (dumpCursorId).
 			if (ok) await markDumpCompleted(this.opts.destDb, rt.name);
 		}
 		// Garante um token persistido assim que possível (não só no tick de 5s).
 		await this.waitForToken(rt, this.opts.resumeProbeMs);
 		await rt.checkpointer.flush().catch(() => {});
+	}
+
+	/**
+	 * Salva a fronteira do dump no __sync, com throttle (~checkpointIntervalMs),
+	 * pra um restart de dump incompleto continuar de onde parou. Fire-and-forget:
+	 * não bloqueia o loop do dump.
+	 */
+	private checkpointDumpProgress(rt: ColRuntime, lastId: unknown): void {
+		const now = Date.now();
+		if (now - rt.lastDumpSaveAt < this.opts.checkpointIntervalMs) return;
+		rt.lastDumpSaveAt = now;
+		void saveDumpProgress(this.opts.destDb, rt.name, lastId).catch(() => {});
 	}
 
 	/** Abre stream fresh (sem token) e liga os handlers. */
