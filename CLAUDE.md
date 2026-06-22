@@ -205,3 +205,17 @@ bun run src/cli.ts sync configs/test-sync.yml --verbose
 - `configs/dump.yml` e `configs/sync.yml` ficam no `.gitignore` pois contêm credenciais. Usar `configs/test-sync.yml` como referência.
 - Deleções offline (com watch desligado) **são propagadas** no restart quando a collection retoma pelo resume token (via oplog). Só ficam de fora se a collection cair no caminho de dump (token expirado/`--full`), pois o cursor não enxerga o que já foi apagado na origem.
 - `filterFile` paths são relativos ao CWD, não ao arquivo yml.
+
+## Produção: rodar 24/7 em VM (`docker-compose-limit.yml`)
+
+Pra rodar o `sync` em VM por longos períodos sem derrubar a máquina, use o `docker-compose-limit.yml` — um container com **cerca de recursos** (cgroups) e logs rotacionados. **É contenção, não conserta os bugs de consumo** (backpressure ausente no `engine.ts` e evento de change stream >16MB), só impede que derrubem a VM.
+
+```sh
+docker compose -f docker-compose-limit.yml up -d --build
+docker stats pulsar-sync     # ver RAM/CPU batendo no teto
+```
+
+- **Teto de RAM/CPU:** `mem_limit` + `memswap_limit` (== mem_limit, p/ proibir swap) + `cpus`. No estouro o kernel faz OOM kill **do container** (não da VM); `restart: unless-stopped` sobe de novo. `nice`/`taskset` não limitam RAM — por isso a cerca é via cgroup. O arquivo documenta unidades e dimensionamento.
+- **Shutdown gracioso (`commands/sync.ts`):** handlers de SIGINT/SIGTERM registrados **antes** do dump fecham o stream, flushiam resume token + fronteiras de dump (`engine.stop()`) e fecham as conexões. Teto via `PULSAR_SHUTDOWN_TIMEOUT_MS` (default 30s) garante saída mesmo se o close pendurar. SIGKILL/OOM não são interceptáveis, mas o kernel fecha os sockets do processo morto → o Atlas derruba a escuta.
+- **Preempção ACPI (spot/preemptible):** o sinal que chega é SIGTERM (via systemd) → cai no shutdown gracioso → restart **RETOMA** pelo token. `stop_grace_period` dá a folga. No desligamento do host vale subir `shutdown-timeout` no `/etc/docker/daemon.json` e `systemctl enable docker` (volta sozinho na realocação).
+- **Rotação de logs (`utils/customLog.ts`):** transports do winston com `maxsize`/`maxFiles`/`tailable`, via env `LOG_MAX_SIZE` (bytes) e `LOG_MAX_FILES`. Teto de disco ≈ `LOG_MAX_SIZE × LOG_MAX_FILES` por nível. O compose também capa os logs do **container** (json-file `max-size`/`max-file`) — fluxo separado da pasta `./logs`.

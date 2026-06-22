@@ -79,6 +79,8 @@ export class SyncEngine {
 	private readonly routes = new Map<string, Route>();
 	private readonly deletedIds: string[] = [];
 	private readonly lastDumpSaveAt = new Map<string, number>();
+	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
+	private readonly lastFrontier = new Map<string, unknown>();
 	private stream: ChangeStream | null = null;
 	private checkpointer: ResumeTokenCheckpointer | null = null;
 	private lastToken: ResumeToken | undefined;
@@ -166,6 +168,16 @@ export class SyncEngine {
 	async stop(): Promise<void> {
 		this.closed = true;
 		if (this.checkpointer) await this.checkpointer.stop();
+		// Flush final das fronteiras de dumps AINDA incompletos: na preempção
+		// (ACPI/SIGTERM) no meio de um dump, o restart retoma de onde parou em vez
+		// de re-escanear o último intervalo de checkpoint. Dumps concluídos já
+		// limparam a fronteira (lastFrontier.delete em runDump), então não voltam
+		// a ser marcados como incompletos aqui.
+		await Promise.all(
+			[...this.lastFrontier.entries()].map(([name, id]) =>
+				saveDumpProgress(this.opts.destDb, name, id).catch(() => {}),
+			),
+		);
 		if (this.stream) await this.stream.close().catch(() => {});
 	}
 
@@ -188,11 +200,18 @@ export class SyncEngine {
 				onProgress: (lastId) => this.checkpointDumpProgress(col.name, lastId),
 			},
 		);
-		if (ok) await markDumpCompleted(this.opts.destDb, col.name);
+		if (ok) {
+			await markDumpCompleted(this.opts.destDb, col.name);
+			// dump concluído: não deve ressuscitar como incompleto no flush do stop.
+			this.lastFrontier.delete(col.name);
+		}
 	}
 
 	/** Salva a fronteira do dump (throttle ~checkpointIntervalMs), fire-and-forget. */
 	private checkpointDumpProgress(name: string, lastId: unknown): void {
+		// guarda SEMPRE a última fronteira (p/ o flush final no stop); a ESCRITA
+		// no Atlas é que fica throttled p/ não martelar o cluster.
+		this.lastFrontier.set(name, lastId);
 		const now = Date.now();
 		if (
 			now - (this.lastDumpSaveAt.get(name) ?? 0) <

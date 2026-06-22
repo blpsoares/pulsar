@@ -84,10 +84,18 @@ export async function syncCollections(
 			`Recebido ${signal} — encerrando e salvando checkpoints...`,
 			true,
 		);
+		// Teto do shutdown: generoso o bastante p/ o flush concluir mesmo com rede
+		// degradada na preempção (ACPI dá ~2 min), mas bounded p/ nunca pendurar
+		// (ex.: stream travado no loop do evento >16MB). Configurável por env.
+		const shutdownMs = Number(process.env.PULSAR_SHUTDOWN_TIMEOUT_MS) || 30000;
 		const forced = setTimeout(() => {
-			customLog("error", "Shutdown excedeu 5s — saída forçada.", true);
+			customLog(
+				"error",
+				`Shutdown excedeu ${shutdownMs}ms — saída forçada.`,
+				true,
+			);
 			process.exit(1);
-		}, 5000);
+		}, shutdownMs);
 		forced.unref?.();
 		try {
 			await engine?.stop();

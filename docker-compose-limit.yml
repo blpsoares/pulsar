@@ -19,10 +19,18 @@ services:
     container_name: pulsar-sync
     restart: unless-stopped   # sobe de novo após OOM/crash. Use 'no' p/ depurar 1 execução.
 
-    # No `docker stop`/`compose down`, o Docker manda SIGTERM e ESPERA este tempo
-    # antes de partir pro SIGKILL. Dá folga pro shutdown gracioso fechar o stream,
-    # salvar o checkpoint e fechar as conexões do Mongo (que tem teto interno de 5s).
-    stop_grace_period: 20s
+    # Preempção de VM spot/preemptible: o hypervisor dispara ACPI → systemd manda
+    # SIGTERM (até ~2 min de cortesia). O Docker repassa o SIGTERM e ESPERA este
+    # tempo antes do SIGKILL — dá folga pro shutdown gracioso flushar checkpoint +
+    # fronteiras de dump e fechar as conexões. Cobre o PULSAR_SHUTDOWN_TIMEOUT_MS
+    # (abaixo) com margem; o flush real leva segundos.
+    # ⚠️ No desligamento do HOST (não `docker stop`), quem limita é o
+    # `shutdown-timeout` do daemon (/etc/docker/daemon.json, default 15s). Pra
+    # garantir a mesma folga no reboot da VM, suba lá: {"shutdown-timeout": 60}.
+    # ⚠️ Habilite o Docker no boot p/ o container voltar sozinho na realocação:
+    #    sudo systemctl enable docker
+    # UNIDADE: duração com sufixo us/ms/s/m/h (ex.: 45s, 1m30s, 2m). Sem sufixo = ns.
+    stop_grace_period: 45s
 
     # Roda o sync de fato. O CMD do Dockerfile é só `tail -f /dev/null` (idle),
     # então sobrescrevemos aqui. Não precisa de taskset/nice: os limites de
@@ -31,8 +39,29 @@ services:
     # fica no .gitignore). Ajuste o -p (paralelismo) conforme o caso.
     command: ["pulsar", "sync", "-p", "3", "configs/sync.yml"]
 
+    # Logs do CONTAINER (stdout/stderr capturado pelo Docker — SEPARADO da pasta
+    # ./logs do winston). Sem isto o json-file cresce sem teto e enche o disco da
+    # VM num run longo. Rotaciona e mantém só os N arquivos mais recentes.
+    logging:
+      driver: json-file
+      options:
+        # max-size UNIDADE: tamanho com sufixo k/m/g (base 1024). Ex.: 20m ≈ 20 MB.
+        max-size: "20m"   # tamanho máx por arquivo de log do Docker antes de rotacionar
+        # max-file UNIDADE: contagem (inteiro puro). Teto ≈ max-size × max-file.
+        max-file: "5"     # nº de arquivos rotacionados mantidos (~100MB no total)
+
+    # ⚠️ Estas env vars são lidas pelo CÓDIGO (não pelo Docker), então a UNIDADE é
+    # a "crua": milissegundos e BYTES — sem sufixo k/m/g. Não confunda com os
+    # campos do Docker acima (mem_limit, max-size), que aceitam sufixo.
     environment:
-      - UV_THREADPOOL_SIZE=2   # menos threads de I/O do libuv (igual ao script sync:vm)
+      - UV_THREADPOOL_SIZE=2   # UNIDADE: contagem de threads. Menos I/O do libuv (igual ao sync:vm).
+      # UNIDADE: milissegundos. Teto do shutdown gracioso. DEVE ser < stop_grace_period.
+      - PULSAR_SHUTDOWN_TIMEOUT_MS=30000   # 30000 ms = 30 s
+      # Rotação dos logs em ARQUIVO (pasta ./logs do winston). Teto de disco por
+      # nível ≈ LOG_MAX_SIZE × LOG_MAX_FILES (debug e error contam separado).
+      # Ex.: 20 MB × 5 = ~100 MB por nível → ~200 MB no total. Ajuste à vontade.
+      - LOG_MAX_SIZE=20971520   # UNIDADE: BYTES (sem sufixo). 20971520 = 20 × 1024² = 20 MB.
+      - LOG_MAX_FILES=5         # UNIDADE: contagem (inteiro). Nº de arquivos mantidos por nível.
 
     volumes:
       - ./logs:/app/logs                            # logs persistem fora do container
@@ -41,8 +70,24 @@ services:
     # ══════════════════════════════════════════════════════════════════════
     #  COMO CONFIGURAR OS RECURSOS
     # ══════════════════════════════════════════════════════════════════════
+    #
+    #  ┌─ UNIDADES DE MEDIDA (LEIA ANTES DE MEXER) ──────────────────────────┐
+    #  │ MEMÓRIA (mem_limit / memswap_limit / mem_reservation):              │
+    #  │   sufixo no valor — SEM espaço. base 1024 (NÃO 1000):               │
+    #  │     b  = bytes          512000b                                     │
+    #  │     k  = kibibytes      262144k   (= 256 MB)                        │
+    #  │     m  = mebibytes      1500m     (= 1500 × 1024² ≈ 1,57 GB)        │
+    #  │     g  = gibibytes      2g        (= 2 × 1024³ ≈ 2,15 GB)           │
+    #  │   ⚠️ `m` é MEBIByte (1024²), não 1.000.000. 1024m = 1g.             │
+    #  │                                                                     │
+    #  │ CPU (cpus): número PURO de núcleos, SEM sufixo. Aceita fração.      │
+    #  │     1     = 1 núcleo inteiro                                        │
+    #  │     1.5   = um núcleo e meio                                        │
+    #  │     0.5   = meio núcleo                                             │
+    #  └─────────────────────────────────────────────────────────────────────┘
+    #
     #  Descubra o tamanho da VM antes de definir os números:
-    #     nproc            → nº de núcleos de CPU
+    #     nproc            → nº de núcleos de CPU (vira o teto do `cpus`)
     #     free -h          → RAM total (coluna "total" da linha Mem)
     #
     #  Regra de bolso: deixe FOLGA pra VM (SO, ssh, monitoramento).
@@ -59,20 +104,24 @@ services:
     # mem_limit: TETO DURO de memória. É O QUE SALVA A VM. Ao bater nesse valor,
     # o kernel dispara o OOM killer DENTRO do container (mata o processo do
     # pulsar) em vez de deixar a RAM da VM acabar. Ajuste pro tamanho da VM.
+    # UNIDADE: bytes com sufixo b/k/m/g (base 1024). 1500m ≈ 1,57 GB.
     mem_limit: 1500m
 
     # memswap_limit: memória + swap. DEIXE IGUAL ao mem_limit p/ PROIBIR swap.
     # ⚠️ NÃO OMITA. Se for maior (ou ausente), a RAM "estourada" vaza pro swap
     # em disco e trava a VM por I/O — o teto de RAM vira inútil. Igual = sem swap.
+    # UNIDADE: mesma do mem_limit (b/k/m/g, base 1024). Mantenha == mem_limit.
     memswap_limit: 1500m
 
     # mem_reservation: alvo MACIO (não é teto). Sob disputa de memória na VM, o
     # kernel tenta manter o container perto desse valor. Defina abaixo do mem_limit.
+    # UNIDADE: mesma do mem_limit (b/k/m/g, base 1024). 768m ≈ 805 MB.
     mem_reservation: 768m
 
     # ── CPU ──────────────────────────────────────────────────────────────────
     # cpus: nº máximo de núcleos que o container pode usar (aceita fração).
     # Substitui o `taskset -c 0,1 nice -n 19` — o cgroup limita melhor que o nice.
+    # UNIDADE: número puro de núcleos, SEM sufixo. 1.5 = um núcleo e meio.
     cpus: 1.5
 
     # oom_kill_disable: MANTENHA false. Matar no OOM é justamente o que protege a
