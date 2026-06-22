@@ -206,9 +206,29 @@ bun run src/cli.ts sync configs/test-sync.yml --verbose
 - Deleções offline (com watch desligado) **são propagadas** no restart quando a collection retoma pelo resume token (via oplog). Só ficam de fora se a collection cair no caminho de dump (token expirado/`--full`), pois o cursor não enxerga o que já foi apagado na origem.
 - `filterFile` paths são relativos ao CWD, não ao arquivo yml.
 
+## Shutdown gracioso e preempção (`commands/sync.ts`)
+
+**Isto é do CÓDIGO, não do Docker.** Vale rodando de qualquer jeito — `bun src/cli.ts sync`, binário, systemd ou container. O Docker/compose só oferecem botões *opcionais* de ajuste fino (ver a seção do compose abaixo); nada do mecanismo depende deles.
+
+**Como funciona — a cadeia do sinal:**
+
+1. Algo pede pro processo encerrar e o SO entrega um sinal **capturável**:
+   - `Ctrl+C` → SIGINT
+   - `kill <pid>`, `docker stop`, ou `systemctl stop` → SIGTERM
+   - **Preempção de VM** (spot/preemptible) ou desligamento da máquina → o hypervisor dispara um evento **ACPI** (power/reset), o `systemd`/`acpid` da VM intercepta e inicia o shutdown ordenado, que **manda SIGTERM** pros processos antes de cortar a energia (cortesia de ~30s a 2 min, depende do provedor).
+2. `sync.ts` registra `process.once("SIGINT" | "SIGTERM", shutdown)` **antes** do dump começar — então um sinal no meio da conexão/listagem também é tratado.
+3. `shutdown()` faz, em ordem: `engine.stop()` → **flush do resume token global + flush das fronteiras de dump incompletas** (pra retomar tight) → fecha o change stream → fecha as 2 conexões Mongo.
+4. `process.exit()`. No próximo boot, cada collection **RETOMA pelo token** em vez de re-dumpar.
+
+**Garantia de saída:** o `shutdown()` corre contra um timer (`PULSAR_SHUTDOWN_TIMEOUT_MS`, default 30s) — se `close()` pendurar (ex.: stream travado no loop do evento >16MB), o processo força o exit mesmo assim. O flush do checkpoint acontece *primeiro*, então é salvo mesmo no caminho forçado.
+
+**O que NÃO dá pra tratar:** SIGKILL (`kill -9`), o **OOM killer** e morte abrupta da VM (queda de energia/rede) **não são interceptáveis** — é design do kernel. Mas não há vazamento de conexão: ao morrer o processo, o kernel fecha os sockets (manda RST) e o Atlas derruba a escuta. Só uma morte *instantânea* da VM (sem ACPI) deixa a conexão pendurada — e aí quem reapeia é o keepalive/timeout do lado do Atlas, nada que o pulsar possa fazer.
+
+> ⚠️ ACPI ≠ config. O `stop_grace_period` do compose **não** "liga o ACPI" — ele só diz *quanto o Docker espera* o SIGTERM ser tratado antes de mandar SIGKILL. Fora do Docker, quem dá esse tempo é o `DefaultTimeoutStopSec` do systemd (se rodar como serviço) ou o próprio provedor da VM.
+
 ## Produção: rodar 24/7 em VM (`docker-compose-limit.yml`)
 
-Pra rodar o `sync` em VM por longos períodos sem derrubar a máquina, use o `docker-compose-limit.yml` — um container com **cerca de recursos** (cgroups) e logs rotacionados. **É contenção, não conserta os bugs de consumo** (backpressure ausente no `engine.ts` e evento de change stream >16MB), só impede que derrubem a VM.
+Opção **recomendada mas não obrigatória** pra VM de longa duração: roda o `sync` num container com **cerca de recursos** (cgroups) e logs rotacionados. **É contenção, não conserta os bugs de consumo** (backpressure ausente no `engine.ts` e evento de change stream >16MB), só impede que derrubem a VM. Sem Docker, o sync roda igual — você só perde a cerca de RAM/CPU automática.
 
 ```sh
 docker compose -f docker-compose-limit.yml up -d --build
@@ -216,6 +236,5 @@ docker stats pulsar-sync     # ver RAM/CPU batendo no teto
 ```
 
 - **Teto de RAM/CPU:** `mem_limit` + `memswap_limit` (== mem_limit, p/ proibir swap) + `cpus`. No estouro o kernel faz OOM kill **do container** (não da VM); `restart: unless-stopped` sobe de novo. `nice`/`taskset` não limitam RAM — por isso a cerca é via cgroup. O arquivo documenta unidades e dimensionamento.
-- **Shutdown gracioso (`commands/sync.ts`):** handlers de SIGINT/SIGTERM registrados **antes** do dump fecham o stream, flushiam resume token + fronteiras de dump (`engine.stop()`) e fecham as conexões. Teto via `PULSAR_SHUTDOWN_TIMEOUT_MS` (default 30s) garante saída mesmo se o close pendurar. SIGKILL/OOM não são interceptáveis, mas o kernel fecha os sockets do processo morto → o Atlas derruba a escuta.
-- **Preempção ACPI (spot/preemptible):** o sinal que chega é SIGTERM (via systemd) → cai no shutdown gracioso → restart **RETOMA** pelo token. `stop_grace_period` dá a folga. No desligamento do host vale subir `shutdown-timeout` no `/etc/docker/daemon.json` e `systemctl enable docker` (volta sozinho na realocação).
-- **Rotação de logs (`utils/customLog.ts`):** transports do winston com `maxsize`/`maxFiles`/`tailable`, via env `LOG_MAX_SIZE` (bytes) e `LOG_MAX_FILES`. Teto de disco ≈ `LOG_MAX_SIZE × LOG_MAX_FILES` por nível. O compose também capa os logs do **container** (json-file `max-size`/`max-file`) — fluxo separado da pasta `./logs`.
+- **Botões do shutdown (opcionais, Docker-only):** `stop_grace_period` = quanto o Docker espera o SIGTERM ser tratado; `PULSAR_SHUTDOWN_TIMEOUT_MS` (env) = teto interno do `shutdown()` — mantenha-o **< `stop_grace_period`**. No desligamento do *host* quem manda é o `shutdown-timeout` do daemon (`/etc/docker/daemon.json`, default 15s); e `systemctl enable docker` faz o container voltar sozinho na realocação.
+- **Rotação de logs (`utils/customLog.ts`):** transports do winston com `maxsize`/`maxFiles`/`tailable`, via env `LOG_MAX_SIZE` (bytes) e `LOG_MAX_FILES`. Teto de disco ≈ `LOG_MAX_SIZE × LOG_MAX_FILES` por nível. **Independe do Docker** (os defaults valem rodando bare). O compose adicionalmente capa os logs do **container** (json-file `max-size`/`max-file`) — fluxo separado da pasta `./logs`.
