@@ -8,6 +8,7 @@
 	},
 	"scripts": {
 		"test": "bun test",
+		"sys:info": "bun run scripts/sysinfo.ts",
 		"test:up": "docker compose -f docker-compose-test.yml up -d",
 		"bin:dev": "bun build --compile src/cli.ts --outfile dist/pulsar && cp ./dist/pulsar ~/.local/bin",
 		"sync:vm": "UV_THREADPOOL_SIZE=2 taskset -c 0,1 nice -n 19 bun src/cli.ts sync -p 3 ads-staging.yml",

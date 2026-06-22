@@ -18,6 +18,7 @@ CLI em Bun/TypeScript para sincronização de dados entre bancos MongoDB. Dois m
 ```sh
 bun run bin:dev        # compila e instala o binário em ~/.local/bin/pulsar
 bun run bin:prod       # compila para dist/pulsar sem instalar
+bun run sys:info       # mostra CPU/RAM/swap/disco + valores sugeridos pro compose-limit
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
