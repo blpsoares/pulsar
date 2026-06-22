@@ -59,6 +59,12 @@ services:
       - PULSAR_SHUTDOWN_TIMEOUT_MS=30000   # 30000 ms = 30 s
       # Intervalo do bloco de STATUS no docker logs (progresso dos dumps ativos).
       - STATUS_INTERVAL_MS=10000   # UNIDADE: milissegundos. 0 desliga o heartbeat.
+      # Resiliência do dump a quedas de conexão (ECONNREFUSED/failover do Atlas).
+      # Na falha, reabre o cursor da fronteira (sem re-escanear) com backoff
+      # exponencial até 30s. Crítico p/ collections enormes (215M) rodando de
+      # madrugada — sem isto, um blip aborta o dump e ele só retoma num restart.
+      - DUMP_MAX_RETRIES=30        # UNIDADE: nº de tentativas por dump. ~14min de cobertura.
+      - DUMP_RETRY_BASE_MS=2000    # UNIDADE: ms. Base do backoff (2s, 4s, 8s… até 30s).
       # Rotação dos logs em ARQUIVO (pasta ./logs do winston). Teto de disco por
       # nível ≈ LOG_MAX_SIZE × LOG_MAX_FILES (debug e error contam separado).
       # Ex.: 20 MB × 5 = ~100 MB por nível → ~200 MB no total. Ajuste à vontade.

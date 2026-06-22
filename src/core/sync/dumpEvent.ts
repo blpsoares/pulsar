@@ -14,6 +14,30 @@ import { watcher } from "./watcherEvents";
 
 const DEFAULT_BATCH_SIZE = 500;
 const LOG_EVERY = 2000;
+const DEFAULT_MAX_RETRIES = 30;
+const DEFAULT_RETRY_BASE_MS = 2000;
+const MAX_BACKOFF_MS = 30000;
+
+/**
+ * Erro de dump que vale RETENTAR (conexão/rede/failover) — vs. erro lógico que
+ * não melhora repetindo. Cobre o ECONNREFUSED de um nó do Atlas que cai, reset
+ * de socket, server selection, cursor morto no getMore, etc.
+ */
+function isTransientDumpError(err: unknown): boolean {
+	if (!err || typeof err !== "object") return false;
+	const e = err as { name?: string; code?: number | string; message?: string };
+	const name = String(e.name ?? "");
+	const msg = String(e.message ?? "");
+	if (/Mongo(Network|ServerSelection|PoolCleared|NotPrimary)/i.test(name))
+		return true;
+	if (e.code === "ECONNREFUSED" || e.code === "ECONNRESET" || e.code === "ETIMEDOUT")
+		return true;
+	return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|connection|socket|topology|server selection|not primary|getMore|CursorNotFound|connection pool/i.test(
+		msg,
+	);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type DumpOptions = {
 	filter?: Document;
@@ -34,51 +58,51 @@ export async function dumpCollections(
 	const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
 	const { collectionName } = destCollection;
 	const { progress } = getLogConfig();
+	const maxRetries = Number(process.env.DUMP_MAX_RETRIES) || DEFAULT_MAX_RETRIES;
+	const retryBaseMs =
+		Number(process.env.DUMP_RETRY_BASE_MS) || DEFAULT_RETRY_BASE_MS;
 	let bar: ReturnType<typeof createBar> | null = null;
 
-	// Query do cursor: filtro do usuário + (se retomando) recorte `_id < fronteira`.
 	const baseFilter = filter ?? {};
-	const query =
-		resumeFromId != null
-			? { $and: [baseFilter, { _id: { $lt: resumeFromId } }] }
-			: baseFilter;
+	const stats = { skipped: 0, updated: 0, inserted: 0 };
+	let processed = 0;
+	let lastLogged = 0;
+	// Fronteira VIVA: menor _id já processado. Avança a cada lote e é o ponto de
+	// retomada tanto entre restarts quanto entre RETRIES dentro do mesmo run.
+	let frontier: unknown = resumeFromId ?? null;
 
 	try {
+		const countQuery =
+			frontier != null
+				? { $and: [baseFilter, { _id: { $lt: frontier } }] }
+				: baseFilter;
 		// Sem filtro nem retomada, estimatedDocumentCount (metadados, instantâneo);
 		// caso contrário countDocuments (scan real) para o total correto do recorte.
 		const total =
-			!filter && resumeFromId == null
+			!filter && frontier == null
 				? await sourceCollection.estimatedDocumentCount()
-				: await sourceCollection.countDocuments(query);
-		const stats = { skipped: 0, updated: 0, inserted: 0 };
+				: await sourceCollection.countDocuments(countQuery);
 
 		bar = progress ? createBar(collectionName, total) : null;
 		// alimenta o STATUS heartbeat (visível no docker logs em não-TTY)
 		trackDumpStart(collectionName, total);
 
-		// Sem barra (não-TTY/pm2) não há feedback durante o dump; logamos
-		// progresso a cada LOG_EVERY docs para dar visibilidade.
-		let processed = 0;
-		let lastLogged = 0;
 		if (!bar) {
 			const resumeMsg =
-				resumeFromId != null ? ` (retomando de _id<${resumeFromId})` : "";
+				frontier != null ? ` (retomando de _id<${frontier})` : "";
 			customLog(
 				"info",
 				`dump:start | collection: ${collectionName} | total: ${total}${resumeMsg}`,
 			);
 		}
 
-		const cursor = sourceCollection.find(query).sort({ _id: -1 });
-		let page: Document[] = [];
-
-		const flush = async () => {
+		const flush = async (page: Document[]) => {
 			if (page.length === 0) return;
 			await processBatch(page, destCollection, deletedIds, stats);
 			processed += page.length;
 			trackDumpProgress(collectionName, processed, total);
 			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
-			const frontier = page[page.length - 1]._id;
+			frontier = page[page.length - 1]._id;
 			bar?.increment(page.length, {
 				skip: stats.skipped,
 				upd: stats.updated,
@@ -91,17 +115,44 @@ export async function dumpCollections(
 					`dump:progress | collection: ${collectionName} | ${processed}/${total} | skip ${stats.skipped} upd ${stats.updated} ins ${stats.inserted}`,
 				);
 			}
-			page = [];
 			onProgress?.(frontier);
 		};
 
-		for await (const coldDocument of cursor) {
-			// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
-			if (coldDocument?._id == null) continue;
-			page.push(coldDocument);
-			if (page.length >= batchSize) await flush();
+		// Loop de RETRY: cada tentativa reabre o cursor a partir da fronteira viva.
+		// Numa falha transitória (ECONNREFUSED/failover) NÃO desistimos — esperamos
+		// (backoff) e continuamos de onde parou, sem re-escanear o que já passou.
+		let attempt = 0;
+		while (true) {
+			try {
+				const query =
+					frontier != null
+						? { $and: [baseFilter, { _id: { $lt: frontier } }] }
+						: baseFilter;
+				const cursor = sourceCollection.find(query).sort({ _id: -1 });
+				let page: Document[] = [];
+				for await (const coldDocument of cursor) {
+					// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
+					if (coldDocument?._id == null) continue;
+					page.push(coldDocument);
+					if (page.length >= batchSize) {
+						await flush(page);
+						page = [];
+					}
+				}
+				await flush(page);
+				break; // varredura completa → sai do loop de retry
+			} catch (err) {
+				if (!isTransientDumpError(err) || attempt >= maxRetries) throw err;
+				attempt++;
+				const wait = Math.min(MAX_BACKOFF_MS, retryBaseMs * 2 ** (attempt - 1));
+				const reason = err instanceof Error ? err.message : String(err);
+				customLog(
+					"warn",
+					`dump:retry | collection: ${collectionName} | tentativa ${attempt}/${maxRetries} | retomando de _id<${frontier} | aguardando ${wait}ms | causa: ${reason}`,
+				);
+				await sleep(wait);
+			}
 		}
-		await flush();
 
 		watcher.emit("finishDump", collectionName, total, stats);
 		return true;

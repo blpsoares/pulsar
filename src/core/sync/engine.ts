@@ -78,6 +78,8 @@ export class SyncEngine {
 	};
 	private readonly routes = new Map<string, Route>();
 	private readonly deletedIds: string[] = [];
+	/** Collections cujo dump inicial FALHOU (após esgotar retries). */
+	readonly failedDumps: string[] = [];
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
@@ -204,6 +206,10 @@ export class SyncEngine {
 			await markDumpCompleted(this.opts.destDb, col.name);
 			// dump concluído: não deve ressuscitar como incompleto no flush do stop.
 			this.lastFrontier.delete(col.name);
+		} else {
+			// falhou mesmo após os retries: fica sem dumpCompletedAt (re-dumpa no
+			// próximo restart, retomando da fronteira salva) e entra no relatório.
+			this.failedDumps.push(col.name);
 		}
 	}
 

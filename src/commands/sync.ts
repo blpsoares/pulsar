@@ -147,11 +147,20 @@ export async function syncCollections(
 		stopStatusReporter();
 		finishProgress();
 
-		customLog(
-			"info",
-			`Dump inicial concluído em ${collections.length} collection(s). Watch contínuo seguindo.`,
-			true,
-		);
+		const falharam = engine.failedDumps;
+		if (falharam.length > 0) {
+			customLog(
+				"warn",
+				`Dump inicial: ${falharam.length} collection(s) FALHARAM mesmo após retries e serão RETOMADAS da fronteira no próximo restart: ${falharam.join(", ")}. As demais estão OK (concluídas ou retomadas). Watch contínuo seguindo.`,
+				true,
+			);
+		} else {
+			customLog(
+				"info",
+				`Dump inicial concluído em ${collections.length} collection(s). Watch contínuo seguindo.`,
+				true,
+			);
+		}
 		if (!(wantProgress && isTTY)) {
 			logAboveBars(
 				"Watch contínuo ativo. Ctrl+C para encerrar (checkpoints serão salvos).",
