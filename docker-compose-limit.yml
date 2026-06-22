@@ -1,0 +1,75 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  PULSAR — sync com CERCA DE RECURSOS (cgroups)                            ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║  Objetivo: rodar o `sync` num container com TETO de RAM e CPU. Se o        ║
+# ║  pulsar estourar a memória, o kernel mata SÓ o container (e o restart      ║
+# ║  sobe de novo) — a VM continua de pé. É uma CERCA DE CONTENÇÃO, não        ║
+# ║  conserta os bugs de consumo; só impede que eles derrubem a máquina.       ║
+# ║                                                                            ║
+# ║  Subir:    docker compose -f docker-compose-limit.yml up -d --build        ║
+# ║  Logs:     docker logs -f pulsar-sync                                       ║
+# ║  Recursos: docker stats pulsar-sync   (vê RAM/CPU batendo no teto)          ║
+# ║  Parar:    docker compose -f docker-compose-limit.yml down                  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+version: '3.3'
+
+services:
+  pulsar-sync:
+    build: .
+    container_name: pulsar-sync
+    restart: unless-stopped   # sobe de novo após OOM/crash. Use 'no' p/ depurar 1 execução.
+
+    # Roda o sync de fato. O CMD do Dockerfile é só `tail -f /dev/null` (idle),
+    # então sobrescrevemos aqui. Não precisa de taskset/nice: os limites de
+    # cgroup abaixo cuidam de CPU e RAM.
+    # ⚠️ Troque `configs/sync.yml` pelo SEU yml de config (com credenciais — esse
+    # fica no .gitignore). Ajuste o -p (paralelismo) conforme o caso.
+    command: ["pulsar", "sync", "-p", "3", "configs/sync.yml"]
+
+    environment:
+      - UV_THREADPOOL_SIZE=2   # menos threads de I/O do libuv (igual ao script sync:vm)
+
+    volumes:
+      - ./logs:/app/logs                            # logs persistem fora do container
+      - ./configs/sync.yml:/app/configs/sync.yml:ro # monta SUA config sem rebuildar a imagem
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  COMO CONFIGURAR OS RECURSOS
+    # ══════════════════════════════════════════════════════════════════════
+    #  Descubra o tamanho da VM antes de definir os números:
+    #     nproc            → nº de núcleos de CPU
+    #     free -h          → RAM total (coluna "total" da linha Mem)
+    #
+    #  Regra de bolso: deixe FOLGA pra VM (SO, ssh, monitoramento).
+    #     - RAM do container  ≈ 60-70% da RAM total da VM
+    #     - CPU do container  ≈ (nproc - 1), deixando ao menos 1 núcleo livre
+    #
+    #  Exemplos de dimensionamento:
+    #     VM 2 GB / 2 vCPU  →  mem_limit: 1200m   memswap_limit: 1200m   cpus: 1.5
+    #     VM 4 GB / 2 vCPU  →  mem_limit: 2500m   memswap_limit: 2500m   cpus: 1.5
+    #     VM 8 GB / 4 vCPU  →  mem_limit: 5g      memswap_limit: 5g      cpus: 3
+    # ══════════════════════════════════════════════════════════════════════
+
+    # ── RAM ────────────────────────────────────────────────────────────────
+    # mem_limit: TETO DURO de memória. É O QUE SALVA A VM. Ao bater nesse valor,
+    # o kernel dispara o OOM killer DENTRO do container (mata o processo do
+    # pulsar) em vez de deixar a RAM da VM acabar. Ajuste pro tamanho da VM.
+    mem_limit: 1500m
+
+    # memswap_limit: memória + swap. DEIXE IGUAL ao mem_limit p/ PROIBIR swap.
+    # ⚠️ NÃO OMITA. Se for maior (ou ausente), a RAM "estourada" vaza pro swap
+    # em disco e trava a VM por I/O — o teto de RAM vira inútil. Igual = sem swap.
+    memswap_limit: 1500m
+
+    # mem_reservation: alvo MACIO (não é teto). Sob disputa de memória na VM, o
+    # kernel tenta manter o container perto desse valor. Defina abaixo do mem_limit.
+    mem_reservation: 768m
+
+    # ── CPU ──────────────────────────────────────────────────────────────────
+    # cpus: nº máximo de núcleos que o container pode usar (aceita fração).
+    # Substitui o `taskset -c 0,1 nice -n 19` — o cgroup limita melhor que o nice.
+    cpus: 1.5
+
+    # oom_kill_disable: MANTENHA false. Matar no OOM é justamente o que protege a
+    # VM. Se true, o container congela em vez de morrer e segura a RAM travada.
+    oom_kill_disable: false
