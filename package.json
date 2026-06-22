@@ -8,7 +8,7 @@
 	},
 	"scripts": {
 		"test": "bun test",
-                "compose:limit":"docker compose -f docker-compose-limit.yml up -d",
+		"compose:limit": "docker compose -f docker-compose-limit.yml up -d --build",
 		"sys:info": "bun run scripts/sysinfo.ts",
 		"test:up": "docker compose -f docker-compose-test.yml up -d",
 		"bin:dev": "bun build --compile src/cli.ts --outfile dist/pulsar && cp ./dist/pulsar ~/.local/bin",
