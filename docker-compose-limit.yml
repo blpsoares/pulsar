@@ -57,6 +57,8 @@ services:
       - UV_THREADPOOL_SIZE=2   # UNIDADE: contagem de threads. Menos I/O do libuv (igual ao sync:vm).
       # UNIDADE: milissegundos. Teto do shutdown gracioso. DEVE ser < stop_grace_period.
       - PULSAR_SHUTDOWN_TIMEOUT_MS=30000   # 30000 ms = 30 s
+      # Intervalo do bloco de STATUS no docker logs (progresso dos dumps ativos).
+      - STATUS_INTERVAL_MS=10000   # UNIDADE: milissegundos. 0 desliga o heartbeat.
       # Rotação dos logs em ARQUIVO (pasta ./logs do winston). Teto de disco por
       # nível ≈ LOG_MAX_SIZE × LOG_MAX_FILES (debug e error contam separado).
       # Ex.: 20 MB × 5 = ~100 MB por nível → ~200 MB no total. Ajuste à vontade.

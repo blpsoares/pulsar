@@ -3,7 +3,13 @@ import type { AnyBulkWriteOperation, Collection, Document } from "mongodb";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { customLog } from "../../utils/customLog";
 import { getLogConfig } from "../../utils/logConfig";
-import { createBar, markDone } from "../../utils/progressManager";
+import {
+	createBar,
+	markDone,
+	trackDumpDone,
+	trackDumpProgress,
+	trackDumpStart,
+} from "../../utils/progressManager";
 import { watcher } from "./watcherEvents";
 
 const DEFAULT_BATCH_SIZE = 500;
@@ -47,6 +53,8 @@ export async function dumpCollections(
 		const stats = { skipped: 0, updated: 0, inserted: 0 };
 
 		bar = progress ? createBar(collectionName, total) : null;
+		// alimenta o STATUS heartbeat (visível no docker logs em não-TTY)
+		trackDumpStart(collectionName, total);
 
 		// Sem barra (não-TTY/pm2) não há feedback durante o dump; logamos
 		// progresso a cada LOG_EVERY docs para dar visibilidade.
@@ -68,6 +76,7 @@ export async function dumpCollections(
 			if (page.length === 0) return;
 			await processBatch(page, destCollection, deletedIds, stats);
 			processed += page.length;
+			trackDumpProgress(collectionName, processed, total);
 			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
 			const frontier = page[page.length - 1]._id;
 			bar?.increment(page.length, {
@@ -101,6 +110,7 @@ export async function dumpCollections(
 		return false;
 	} finally {
 		markDone();
+		trackDumpDone(collectionName);
 	}
 }
 

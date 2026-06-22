@@ -108,3 +108,86 @@ export function multiLog(message: string) {
 		console.log(message);
 	}
 }
+
+// ─── STATUS heartbeat (modo NÃO-TTY: container/pm2/systemd) ───────────────────
+// Sem barras, o operador fica cego no `docker logs`. Este reporter imprime a cada
+// N segundos um bloco consolidado: barra de texto + % + docs de cada dump ativo
+// (até `-p`), mais contadores. Legível mesmo SEM cor (chalk desliga cor fora de
+// TTY) graças aos blocos █░ e à régua ━.
+type ActiveDump = { processed: number; total: number };
+const _activeDumps = new Map<string, ActiveDump>();
+let _statusTimer: ReturnType<typeof setInterval> | null = null;
+let _dumpsDone = 0;
+let _collsTotal = 0;
+
+/** Registra/atualiza um dump em andamento (chamado pelo dumpEvent). */
+export function trackDumpStart(collection: string, total: number) {
+	_activeDumps.set(collection, { processed: 0, total });
+}
+export function trackDumpProgress(
+	collection: string,
+	processed: number,
+	total: number,
+) {
+	_activeDumps.set(collection, { processed, total });
+}
+export function trackDumpDone(collection: string) {
+	if (_activeDumps.delete(collection)) _dumpsDone++;
+}
+
+/** 12000 → "12.0k", 1500000 → "1.5M". */
+function fmtNum(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+	return String(n);
+}
+
+/** Barra de texto █░ de `width` chars a partir de um %. */
+function textBar(pct: number, width = 22): string {
+	const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
+	return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+function printStatus() {
+	if (_activeDumps.size === 0) return;
+	const W = 64;
+	const out: string[] = [];
+	out.push(chalk.cyan("━".repeat(W)));
+	out.push(chalk.bold.cyan("  SYNC · DUMP INICIAL"));
+	for (const [name, { processed, total }] of _activeDumps) {
+		const pct =
+			total > 0 ? Math.min(100, Math.floor((processed / total) * 100)) : 0;
+		const label =
+			name.length > 24 ? `${name.slice(0, 23)}…` : name.padEnd(24);
+		const counts = `${fmtNum(processed)}/${fmtNum(total)}`;
+		out.push(
+			`  ${chalk.white(label)} ${chalk.green(textBar(pct))} ` +
+				`${chalk.yellowBright(`${String(pct).padStart(3)}%`)}  ${chalk.gray(counts)}`,
+		);
+	}
+	out.push(
+		chalk.gray(
+			`  concluídos: ${_dumpsDone}  ·  em andamento: ${_activeDumps.size}  ·  total de collections: ${_collsTotal}`,
+		),
+	);
+	out.push(chalk.cyan("━".repeat(W)));
+	console.log(out.join("\n"));
+}
+
+/** Liga o heartbeat (só faz sentido em não-TTY). intervalMs<=0 desliga. */
+export function startStatusReporter(totalCollections: number, intervalMs: number) {
+	_collsTotal = totalCollections;
+	_dumpsDone = 0;
+	if (_statusTimer || intervalMs <= 0) return;
+	_statusTimer = setInterval(printStatus, intervalMs);
+	_statusTimer.unref?.();
+}
+
+/** Desliga o heartbeat e limpa o estado (fim do dump inicial ou shutdown). */
+export function stopStatusReporter() {
+	if (_statusTimer) {
+		clearInterval(_statusTimer);
+		_statusTimer = null;
+	}
+	_activeDumps.clear();
+}

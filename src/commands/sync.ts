@@ -13,6 +13,8 @@ import {
 	finishProgress,
 	initProgress,
 	logAboveBars,
+	startStatusReporter,
+	stopStatusReporter,
 } from "../utils/progressManager";
 
 export async function syncCollections(
@@ -98,6 +100,7 @@ export async function syncCollections(
 		}, shutdownMs);
 		forced.unref?.();
 		try {
+			stopStatusReporter();
 			await engine?.stop();
 			await client.close().catch(() => {});
 			await destClient.close().catch(() => {});
@@ -134,7 +137,14 @@ export async function syncCollections(
 			full,
 		});
 
+		// Sem barra (não-TTY/container): liga o STATUS heartbeat no docker logs.
+		// Configurável: STATUS_INTERVAL_MS (default 10s; 0 desliga).
+		const barsActive = wantProgress && isTTY;
+		const statusIntervalMs = Number(process.env.STATUS_INTERVAL_MS) || 10000;
+		if (!barsActive) startStatusReporter(collections.length, statusIntervalMs);
+
 		await engine.start();
+		stopStatusReporter();
 		finishProgress();
 
 		customLog(
