@@ -87,6 +87,8 @@ export class SyncEngine {
 	private checkpointer: ResumeTokenCheckpointer | null = null;
 	private lastToken: ResumeToken | undefined;
 	private closed = false;
+	/** Sinaliza ao probe do openStream que o resume caiu no 286 (→ re-dump). */
+	private resumeLost = false;
 
 	constructor(options: SyncEngineOptions) {
 		this.opts = {
@@ -238,16 +240,23 @@ export class SyncEngine {
 	): Promise<boolean> {
 		const pipeline = buildDbWatchPipeline(this.opts.collections);
 		if (!globalToken) {
-			this.openFresh(pipeline);
+			this.runStream(
+				this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
+				false,
+			);
 			return false;
 		}
+		this.resumeLost = false;
 		const stream = this.opts.sourceDb.watch(pipeline, {
 			fullDocument: "updateLookup",
 			startAfter: globalToken,
 		});
-		this.attach(stream, { resumeMode: true });
-
-		return new Promise<boolean>((resolve) => {
+		// O pump (for await) começa a consumir JÁ: isso dirige o aggregate (popula
+		// o resumeToken rápido, na 1ª resposta do servidor) e aplica eventos com
+		// backpressure. Aqui é só PROBE, sem bloquear: resolve assim que o token
+		// aparece (resume ok) ou quando o pump sinaliza 286 (resumeLost → re-dump).
+		this.runStream(stream, true);
+		return await new Promise<boolean>((resolve) => {
 			let settled = false;
 			const done = (force: boolean) => {
 				if (settled) return;
@@ -256,82 +265,91 @@ export class SyncEngine {
 				clearTimeout(grace);
 				resolve(force);
 			};
-			stream.on("error", async (err) => {
-				if (isResumeImpossibleError(err)) {
-					logger.error(
-						"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
-					);
-					await stream.close().catch(() => {});
-					this.openFresh(pipeline);
-					done(true);
-				}
-			});
 			const poll = setInterval(() => {
-				if (stream.resumeToken) done(false);
+				if (this.resumeLost) done(true);
+				else if (this.stream?.resumeToken) done(false);
 			}, 50);
-			const grace = setTimeout(() => done(false), this.opts.resumeProbeMs);
+			const grace = setTimeout(() => done(this.resumeLost), this.opts.resumeProbeMs);
 		});
 	}
 
-	private openFresh(pipeline: Document[]): void {
-		this.attach(
-			this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
-		);
-	}
-
-	private attach(
-		stream: ChangeStream,
-		{ resumeMode = false }: { resumeMode?: boolean } = {},
-	): void {
+	/** Inicia o consumo do stream (roda até stop()). */
+	private runStream(stream: ChangeStream, resumeMode: boolean): void {
 		this.stream = stream;
-		stream.on("change", (change) => {
-			this.lastToken = change._id;
-			this.route(change);
-		});
-		stream.on("error", (err) => {
-			if (this.closed) return;
-			// só o stream ATUAL reabre (um stream substituído não deve ressuscitar).
-			if (this.stream !== stream) return;
-			// o fallback do 286 no resume é tratado no openStream.
-			if (resumeMode && isResumeImpossibleError(err)) return;
+		void this.pump(stream, resumeMode);
+	}
+
+	/**
+	 * Consome o stream com BACKPRESSURE. O `for await` não puxa o próximo lote do
+	 * change stream enquanto o apply do evento atual não terminar (`await`). Troca
+	 * o antigo `.on('change')` fire-and-forget — que disparava escritas concorrentes
+	 * ILIMITADAS e estourava a RAM no replay de backlog — por aplicação serializada
+	 * e ORDENADA, com memória presa a ~1 lote. Numa falha transitória reabre com
+	 * `startAfter: lastToken` em 5s; no 286 do resume, sinaliza resumeLost e reabre
+	 * fresh (o openStream lê isso e força o re-dump de tudo).
+	 */
+	private async pump(stream: ChangeStream, resumeMode: boolean): Promise<void> {
+		try {
+			for await (const change of stream) {
+				if (this.closed || this.stream !== stream) break;
+				this.lastToken = change._id;
+				await this.route(change);
+			}
+		} catch (err) {
+			if (this.closed || this.stream !== stream) return;
+			const pipeline = buildDbWatchPipeline(this.opts.collections);
+			if (resumeMode && isResumeImpossibleError(err)) {
+				logger.error(
+					"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
+				);
+				this.resumeLost = true;
+				await stream.close().catch(() => {});
+				this.runStream(
+					this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
+					false,
+				);
+				return;
+			}
 			const message = err instanceof Error ? err.message : String(err);
 			logger.error(`WATCH:db.watch ${message}. Reabrindo em 5s...`);
-			stream.close().catch(() => {});
+			await stream.close().catch(() => {});
 			setTimeout(() => {
 				if (this.closed || this.stream !== stream) return;
-				const pipeline = buildDbWatchPipeline(this.opts.collections);
 				const next = this.opts.sourceDb.watch(pipeline, {
 					fullDocument: "updateLookup",
 					...(this.lastToken ? { startAfter: this.lastToken } : {}),
 				});
-				this.attach(next, { resumeMode });
+				this.runStream(next, resumeMode);
 			}, RESUME_REOPEN_MS);
-		});
+		}
 	}
 
 	/** Roteia o evento pela ns.coll pra collection de destino correspondente. */
-	private route(change: ChangeStreamDocument): void {
+	private async route(change: ChangeStreamDocument): Promise<void> {
 		const ns = (change as { ns?: { coll?: string } }).ns;
 		const coll = ns?.coll;
 		if (!coll) return;
 		const route = this.routes.get(coll);
 		if (!route) return;
-		this.applyEvent(change, route.destCol);
+		await this.applyEvent(change, route.destCol);
 	}
 
-	private applyEvent(change: ChangeStreamDocument, destCol: Collection): void {
+	private async applyEvent(
+		change: ChangeStreamDocument,
+		destCol: Collection,
+	): Promise<void> {
 		switch (change.operationType) {
 			case "insert":
-				watchInsertEvent(destCol, change.fullDocument);
+				await watchInsertEvent(destCol, change.fullDocument);
 				break;
 			case "update":
-				watchUpdateEvent(destCol, change.fullDocument);
+				await watchUpdateEvent(destCol, change.fullDocument);
 				break;
 			case "replace":
-				watchReplaceEvent(destCol, change.fullDocument);
+				await watchReplaceEvent(destCol, change.fullDocument);
 				break;
 			case "delete":
-				watchDeleteEvent(
+				await watchDeleteEvent(
 					change.documentKey._id as never,
 					destCol,
 					this.deletedIds,

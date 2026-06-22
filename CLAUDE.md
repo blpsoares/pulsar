@@ -73,6 +73,8 @@ src/
 
 **Crítico p/ não saturar o Atlas.** O `sync` abre **UM único change stream no banco** (`sourceDb.watch`), recortado nas X collections via `$match` em `ns.coll` (`dbWatchPipeline.ts`), e **roteia cada evento pela `ns.coll`** pra collection de destino. Antes era 1 `collection.watch()` por collection → 55 conexões presas (cada change stream é um long-poll que prende 1 conexão pra vida toda) → 400-950 conexões no Atlas, derrubando o cluster compartilhado. Agora: **1 conexão de escuta** + ~`parallel` conexões de dump que giram. Por isso `maxPoolSize` é baixo (30) em `db/conn.ts`.
 
+**Consumo com backpressure (`engine.ts` `pump`)**: o stream é consumido via `for await`, **aguardando** cada escrita no destino antes de puxar o próximo evento. Isso prende a memória a ~1 lote do change stream e aplica os eventos **em ordem**. Substituiu o antigo `.on('change')` fire-and-forget, que disparava escritas concorrentes ILIMITADAS — no replay de um backlog grande (resume após downtime) isso empilhava milhares de `updateOne` + fullDocuments em memória e estourava a RAM da VM (era a causa raiz do OOM). O probe do resume (detecção do token válido vs 286) é por **polling do `resumeToken`** enquanto o `pump` dirige o stream — não bloqueia, mantém o resume rápido.
+
 ### Restart incremental — resume token (`core/sync/engine.ts`)
 
 No restart, **cada collection decide entre RETOMAR ou re-DUMPAR**:
