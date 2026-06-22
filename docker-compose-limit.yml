@@ -1,15 +1,15 @@
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  PULSAR — sync com CERCA DE RECURSOS (cgroups)                            ║
+# ║  PULSAR — sync com CERCA DE RECURSOS (cgroups)                           ║
 # ╠══════════════════════════════════════════════════════════════════════════╣
-# ║  Objetivo: rodar o `sync` num container com TETO de RAM e CPU. Se o        ║
-# ║  pulsar estourar a memória, o kernel mata SÓ o container (e o restart      ║
-# ║  sobe de novo) — a VM continua de pé. É uma CERCA DE CONTENÇÃO, não        ║
-# ║  conserta os bugs de consumo; só impede que eles derrubem a máquina.       ║
-# ║                                                                            ║
-# ║  Subir:    docker compose -f docker-compose-limit.yml up -d --build        ║
-# ║  Logs:     docker logs -f pulsar-sync                                       ║
-# ║  Recursos: docker stats pulsar-sync   (vê RAM/CPU batendo no teto)          ║
-# ║  Parar:    docker compose -f docker-compose-limit.yml down                  ║
+# ║  Objetivo: rodar o `sync` num container com TETO de RAM e CPU. Se o      ║
+# ║  pulsar estourar a memória, o kernel mata SÓ o container (e o restart    ║
+# ║  sobe de novo) — a VM continua de pé. É uma CERCA DE CONTENÇÃO, não      ║
+# ║  conserta os bugs de consumo; só impede que eles derrubem a máquina      ║
+# ║                                                                          ║
+# ║  Subir:    docker compose -f docker-compose-limit.yml up -d --build      ║
+# ║  Logs:     docker logs -f pulsar-sync                                    ║
+# ║  Recursos: docker stats pulsar-sync   (vê RAM/CPU batendo no teto)       ║
+# ║  Parar:    docker compose -f docker-compose-limit.yml down               ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 version: '3.3'
 
