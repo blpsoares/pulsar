@@ -19,6 +19,11 @@ services:
     container_name: pulsar-sync
     restart: unless-stopped   # sobe de novo após OOM/crash. Use 'no' p/ depurar 1 execução.
 
+    # No `docker stop`/`compose down`, o Docker manda SIGTERM e ESPERA este tempo
+    # antes de partir pro SIGKILL. Dá folga pro shutdown gracioso fechar o stream,
+    # salvar o checkpoint e fechar as conexões do Mongo (que tem teto interno de 5s).
+    stop_grace_period: 20s
+
     # Roda o sync de fato. O CMD do Dockerfile é só `tail -f /dev/null` (idle),
     # então sobrescrevemos aqui. Não precisa de taskset/nice: os limites de
     # cgroup abaixo cuidam de CPU e RAM.

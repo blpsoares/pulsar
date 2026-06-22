@@ -67,6 +67,40 @@ export async function syncCollections(
 	);
 	const destDb = destClient.db(options.command.sync.destination.db);
 
+	// Shutdown gracioso — registrado ANTES do getCollections/dump, pra que um
+	// sinal no meio da listagem/conexão também feche os clients. Faz o flush
+	// final do resume token (o próximo restart RETOMA em vez de re-dumpar) e
+	// GARANTE a saída: se stop()/close() pendurar (ex.: stream travado no loop
+	// do evento >16MB), o timer força o exit. SIGKILL/OOM não passam por aqui
+	// (kernel não deixa interceptar), mas aí o próprio kernel fecha os sockets
+	// do processo morto → o Atlas recebe RST e derruba a escuta de qualquer jeito.
+	let engine: SyncEngine | null = null;
+	let stopping = false;
+	const shutdown = async (signal: string) => {
+		if (stopping) return;
+		stopping = true;
+		customLog(
+			"warn",
+			`Recebido ${signal} — encerrando e salvando checkpoints...`,
+			true,
+		);
+		const forced = setTimeout(() => {
+			customLog("error", "Shutdown excedeu 5s — saída forçada.", true);
+			process.exit(1);
+		}, 5000);
+		forced.unref?.();
+		try {
+			await engine?.stop();
+			await client.close().catch(() => {});
+			await destClient.close().catch(() => {});
+		} finally {
+			clearTimeout(forced);
+			process.exit(0);
+		}
+	};
+	process.once("SIGINT", () => void shutdown("SIGINT"));
+	process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
 	try {
 		const collections = await getCollections(
 			db,
@@ -83,7 +117,7 @@ export async function syncCollections(
 			true,
 		);
 
-		const engine = new SyncEngine({
+		engine = new SyncEngine({
 			sourceDb: db,
 			destDb,
 			collections,
@@ -91,25 +125,6 @@ export async function syncCollections(
 			batchSize,
 			full,
 		});
-
-		// Shutdown gracioso: faz o flush final do resume token de cada collection
-		// antes de sair, pra que o próximo restart consiga RETOMAR (e não re-dumpar).
-		let stopping = false;
-		const shutdown = async (signal: string) => {
-			if (stopping) return;
-			stopping = true;
-			customLog(
-				"warn",
-				`Recebido ${signal} — encerrando e salvando checkpoints...`,
-				true,
-			);
-			await engine.stop();
-			await client.close().catch(() => {});
-			await destClient.close().catch(() => {});
-			process.exit(0);
-		};
-		process.once("SIGINT", () => void shutdown("SIGINT"));
-		process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 		await engine.start();
 		finishProgress();
