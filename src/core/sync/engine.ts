@@ -81,6 +81,9 @@ export class SyncEngine {
 	private readonly deletedIds: string[] = [];
 	/** Collections cujo dump inicial FALHOU (após esgotar retries). */
 	readonly failedDumps: string[] = [];
+	/** Quantas resumiram (pularam dump) e quantas precisaram de dump neste run. */
+	resumedCount = 0;
+	dumpsPlanned = 0;
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
@@ -155,8 +158,9 @@ export class SyncEngine {
 		);
 
 		// 4) roda os dumps necessários, throttled por -p.
-		const dumpsPlanned = plans.filter((p) => p.needsDump).length;
-		setSyncPlan(this.opts.collections.length - dumpsPlanned, dumpsPlanned);
+		this.dumpsPlanned = plans.filter((p) => p.needsDump).length;
+		this.resumedCount = this.opts.collections.length - this.dumpsPlanned;
+		setSyncPlan(this.resumedCount, this.dumpsPlanned);
 		const dumpLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
 		await Promise.all(
 			plans

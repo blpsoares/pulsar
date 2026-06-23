@@ -12,7 +12,6 @@ import { customLog } from "../utils/customLog";
 import {
 	finishProgress,
 	initProgress,
-	logAboveBars,
 	startStatusReporter,
 	stopStatusReporter,
 } from "../utils/progressManager";
@@ -156,36 +155,34 @@ export async function syncCollections(
 		stopStatusReporter();
 		finishProgress();
 
-		const falharam = engine.failedDumps;
-		if (falharam.length > 0) {
-			customLog(
-				"warn",
-				`Dump inicial: ${falharam.length} collection(s) FALHARAM mesmo após retries e serão RETOMADAS da fronteira no próximo restart: ${falharam.join(", ")}. As demais estão OK (concluídas ou retomadas). Watch contínuo seguindo.`,
-				true,
-			);
-		} else {
-			customLog(
-				"info",
-				`Dump inicial concluído em ${collections.length} collection(s). Watch contínuo seguindo.`,
-				true,
-			);
-		}
-		// Mensagem do estado contínuo, adequada ao contexto: num terminal o Ctrl+C
-		// faz sentido; num container/daemon (não-TTY) Ctrl+C confunde (induz a parar
-		// o container) — lá a forma certa de encerrar é SIGTERM (docker stop /
-		// systemctl stop), que dispara o shutdown gracioso. NÃO é pra parar nada:
-		// é o regime normal de operação 24/7.
-		if (isTTY) {
-			logAboveBars(
-				"Watch contínuo ativo — sincronizando em tempo real. Ctrl+C encerra (checkpoints são salvos).",
-			);
-		} else {
-			customLog(
-				"info",
-				"Watch contínuo ativo — sincronizando em tempo real (regime normal 24/7, sem novo dump). Deixe rodando. Para encerrar com segurança: docker stop / systemctl stop (SIGTERM) — o checkpoint é salvo no shutdown gracioso.",
-				true,
-			);
-		}
+		// Relatório final OBJETIVO: estado (quantas em dia), por que não dumpou tudo
+		// (as que resumiram já tinham cópia → só o delta via change stream), e o que
+		// está acontecendo agora (tempo real). Ctrl+C só no terminal; em container a
+		// forma de parar é SIGTERM (docker stop).
+		const total = collections.length;
+		const falhas = engine.failedDumps;
+		const dumpOk = engine.dumpsPlanned - falhas.length;
+		const emDia = total - falhas.length;
+		const comoParar = isTTY
+			? "Ctrl+C encerra (salva o checkpoint)."
+			: "Encerrar (só se precisar): `docker stop` — salva o checkpoint antes de sair. NÃO remova o container.";
+
+		const linha1 =
+			falhas.length > 0
+				? `SYNC PRONTO: ${emDia}/${total} collections em dia · ${falhas.length} FALHARAM e re-dumpam no próximo restart → ${falhas.join(", ")}`
+				: `SYNC PRONTO: ${total}/${total} collections em dia.`;
+
+		customLog(
+			falhas.length > 0 ? "warn" : "info",
+			[
+				linha1,
+				`  • ${engine.resumedCount} retomadas SEM dump: já estavam copiadas de antes → aplicamos só o que mudou enquanto o pulsar esteve off (via change stream), em vez de recopiar tudo.`,
+				`  • ${dumpOk} copiadas com dump completo nesta execução.`,
+				`  AGORA: tempo real — cada insert/update/delete na origem cai no destino na hora. Deixe rodando 24/7.`,
+				`  ${comoParar}`,
+			].join("\n"),
+			true,
+		);
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");
 	}
