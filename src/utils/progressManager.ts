@@ -119,6 +119,17 @@ const _activeDumps = new Map<string, ActiveDump>();
 let _statusTimer: ReturnType<typeof setInterval> | null = null;
 let _dumpsDone = 0;
 let _collsTotal = 0;
+// Plano do run: quantas RESUMIRAM (pularam dump, mantidas pelo watch) vs quantas
+// precisam de dump. Sem isto o STATUS mostrava "concluídos: 1 / 54" e parecia que
+// 53 estavam paradas — quando na verdade resumiram pelo token.
+let _resuming = 0;
+let _dumpsPlanned = 0;
+
+/** Informado pelo engine após decidir resume-vs-dump por collection. */
+export function setSyncPlan(resuming: number, dumpsPlanned: number) {
+	_resuming = resuming;
+	_dumpsPlanned = dumpsPlanned;
+}
 
 /** Registra/atualiza um dump em andamento (chamado pelo dumpEvent). */
 export function trackDumpStart(collection: string, total: number) {
@@ -167,7 +178,9 @@ function printStatus() {
 	}
 	out.push(
 		chalk.gray(
-			`  concluídos: ${_dumpsDone}  ·  em andamento: ${_activeDumps.size}  ·  total de collections: ${_collsTotal}`,
+			`  resumidas (sem dump, mantidas pelo watch): ${_resuming}  ·  ` +
+				`dump concluído: ${_dumpsDone}/${_dumpsPlanned}  ·  ` +
+				`em andamento: ${_activeDumps.size}  ·  total: ${_collsTotal}`,
 		),
 	);
 	out.push(chalk.cyan("━".repeat(W)));

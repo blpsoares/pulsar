@@ -36,8 +36,9 @@ services:
     # então sobrescrevemos aqui. Não precisa de taskset/nice: os limites de
     # cgroup abaixo cuidam de CPU e RAM.
     # ⚠️ Troque `configs/sync.yml` pelo SEU yml de config (com credenciais — esse
-    # fica no .gitignore). Ajuste o -p (paralelismo) conforme o caso.
-    command: ["pulsar", "sync", "-p", "3", "configs/sync.yml"]
+    # fica no .gitignore). Paralelismo e batch vêm dos env PULSAR_PARALLEL /
+    # PULSAR_BATCH_SIZE abaixo. (Se puser `-p N` aqui, a flag CLI vence o env.)
+    command: ["pulsar", "sync", "configs/sync.yml"]
 
     # Logs do CONTAINER (stdout/stderr capturado pelo Docker — SEPARADO da pasta
     # ./logs do winston). Sem isto o json-file cresce sem teto e enche o disco da
@@ -65,6 +66,9 @@ services:
       # madrugada — sem isto, um blip aborta o dump e ele só retoma num restart.
       - DUMP_MAX_RETRIES=30        # UNIDADE: nº de tentativas por dump. ~14min de cobertura.
       - DUMP_RETRY_BASE_MS=2000    # UNIDADE: ms. Base do backoff (2s, 4s, 8s… até 30s).
+      # Performance do dump (precedência: flag CLI no command > estes env > yml > default).
+      - PULSAR_BATCH_SIZE=500      # UNIDADE: docs por lote do cursor de dump. ↑ = menos round-trips, mais RAM/lote.
+      - PULSAR_PARALLEL=5          # UNIDADE: nº de dumps simultâneos (mesmo que -p). Cuidado p/ não saturar a origem.
       # Rotação dos logs em ARQUIVO (pasta ./logs do winston). Teto de disco por
       # nível ≈ LOG_MAX_SIZE × LOG_MAX_FILES (debug e error contam separado).
       # Ex.: 20 MB × 5 = ~100 MB por nível → ~200 MB no total. Ajuste à vontade.

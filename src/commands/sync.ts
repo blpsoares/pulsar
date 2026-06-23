@@ -51,8 +51,17 @@ export async function syncCollections(
 		const n = Number(v);
 		return Number.isFinite(n) && n > 0 ? n : undefined;
 	};
-	const parallel = toNum(cliParams.parallel) ?? ymlPerf.parallel ?? 3;
-	const batchSize = toNum(cliParams.batch) ?? ymlPerf.batchSize ?? 500;
+	// Precedência: flag CLI > env (compose) > yml > default.
+	const parallel =
+		toNum(cliParams.parallel) ??
+		toNum(process.env.PULSAR_PARALLEL) ??
+		ymlPerf.parallel ??
+		3;
+	const batchSize =
+		toNum(cliParams.batch) ??
+		toNum(process.env.PULSAR_BATCH_SIZE) ??
+		ymlPerf.batchSize ??
+		500;
 	const full = Boolean(cliParams.full);
 
 	customLog(

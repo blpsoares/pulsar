@@ -9,6 +9,7 @@ import type {
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { logger } from "../../utils/customLog";
+import { setSyncPlan } from "../../utils/progressManager";
 import { buildDbWatchPipeline } from "./dbWatchPipeline";
 import { watchDeleteEvent } from "./deleteEvent";
 import { dumpCollections } from "./dumpEvent";
@@ -154,6 +155,8 @@ export class SyncEngine {
 		);
 
 		// 4) roda os dumps necessários, throttled por -p.
+		const dumpsPlanned = plans.filter((p) => p.needsDump).length;
+		setSyncPlan(this.opts.collections.length - dumpsPlanned, dumpsPlanned);
 		const dumpLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
 		await Promise.all(
 			plans
