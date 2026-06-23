@@ -253,6 +253,64 @@ export function renderClosingPanel(d: {
 	return lines.join("\n");
 }
 
+// ─── Heartbeat do WATCH contínuo (24/7, não-TTY) ─────────────────────────────
+// Depois do dump, o log fica mudo. Este heartbeat imprime a cada N segundos um
+// bloco esparso com uptime + eventos (total/por tipo/top collections), provando
+// que está vivo sem poluir. Quieto = 1 linha só.
+export type WatchSnapshot = {
+	uptimeMs: number;
+	totals: { insert: number; update: number; replace: number; delete: number };
+	perColl: Array<[string, number]>; // já ordenado desc
+};
+
+let _watchTimer: ReturnType<typeof setInterval> | null = null;
+
+function fmtUptime(ms: number): string {
+	const s = Math.floor(ms / 1000);
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	if (h > 0) return `${h}h ${m}m`;
+	if (m > 0) return `${m}m ${s % 60}s`;
+	return `${s}s`;
+}
+
+function renderWatchBlock(s: WatchSnapshot): string {
+	const total =
+		s.totals.insert + s.totals.update + s.totals.replace + s.totals.delete;
+	const num = (n: number) => n.toLocaleString("pt-BR");
+	const head = `──── PULSAR · WATCH ATIVO ──── uptime ${fmtUptime(s.uptimeMs)}`;
+	if (total === 0) {
+		return `${head} · 0 eventos (origem quieta)`;
+	}
+	const TOP = 8;
+	const top = s.perColl.slice(0, TOP).map(([c, n]) => `${c} ${num(n)}`);
+	const rest = s.perColl.length - TOP;
+	const topLine =
+		`   mais ativas: ${top.join(" · ")}` + (rest > 0 ? `  (+${rest})` : "");
+	return [
+		head,
+		` eventos: ${num(total)}  (ins ${num(s.totals.insert)} · upd ${num(s.totals.update)} · rep ${num(s.totals.replace)} · del ${num(s.totals.delete)})`,
+		topLine,
+	].join("\n");
+}
+
+/** Liga o heartbeat do watch (não-TTY). intervalMs<=0 desliga. */
+export function startWatchHeartbeat(
+	intervalMs: number,
+	snapshot: () => WatchSnapshot,
+) {
+	if (_watchTimer || intervalMs <= 0) return;
+	_watchTimer = setInterval(() => console.log(renderWatchBlock(snapshot())), intervalMs);
+	_watchTimer.unref?.();
+}
+
+export function stopWatchHeartbeat() {
+	if (_watchTimer) {
+		clearInterval(_watchTimer);
+		_watchTimer = null;
+	}
+}
+
 /** Desliga o heartbeat e limpa o estado (fim do dump inicial ou shutdown). */
 export function stopStatusReporter() {
 	if (_statusTimer) {

@@ -87,6 +87,9 @@ export class SyncEngine {
 	/** Total de docs escritos no dump (insert+update) e nomes dumpados — p/ o painel. */
 	docsDumped = 0;
 	readonly dumpedNames: string[] = [];
+	/** Contadores de eventos do watch (p/ o heartbeat): por collection e por tipo. */
+	readonly eventCounts = new Map<string, number>();
+	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
@@ -348,21 +351,35 @@ export class SyncEngine {
 		await this.applyEvent(change, route.destCol);
 	}
 
+	/** Conta o evento (por collection + por tipo) p/ o heartbeat do watch. */
+	private countEvent(
+		coll: string,
+		op: "insert" | "update" | "replace" | "delete",
+	): void {
+		this.eventTotals[op]++;
+		this.eventCounts.set(coll, (this.eventCounts.get(coll) ?? 0) + 1);
+	}
+
 	private async applyEvent(
 		change: ChangeStreamDocument,
 		destCol: Collection,
 	): Promise<void> {
+		const coll = destCol.collectionName;
 		switch (change.operationType) {
 			case "insert":
+				this.countEvent(coll, "insert");
 				await watchInsertEvent(destCol, change.fullDocument);
 				break;
 			case "update":
+				this.countEvent(coll, "update");
 				await watchUpdateEvent(destCol, change.fullDocument);
 				break;
 			case "replace":
+				this.countEvent(coll, "replace");
 				await watchReplaceEvent(destCol, change.fullDocument);
 				break;
 			case "delete":
+				this.countEvent(coll, "delete");
 				await watchDeleteEvent(
 					change.documentKey._id as never,
 					destCol,

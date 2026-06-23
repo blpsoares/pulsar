@@ -14,7 +14,9 @@ import {
 	initProgress,
 	renderClosingPanel,
 	startStatusReporter,
+	startWatchHeartbeat,
 	stopStatusReporter,
+	stopWatchHeartbeat,
 } from "../utils/progressManager";
 
 export async function syncCollections(
@@ -110,6 +112,7 @@ export async function syncCollections(
 		forced.unref?.();
 		try {
 			stopStatusReporter();
+			stopWatchHeartbeat();
 			await engine?.stop();
 			await client.close().catch(() => {});
 			await destClient.close().catch(() => {});
@@ -178,6 +181,27 @@ export async function syncCollections(
 		logger.info(
 			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}`,
 		);
+
+		// Em container (não-TTY): nota do "não remova" + heartbeat do watch 24/7.
+		if (!barsActive) {
+			console.log(
+				[
+					"# enquanto este container roda, a réplica fica em TEMPO REAL.",
+					"# o estado (resume token + fronteiras) vive no Mongo de DESTINO, não no",
+					"# container — então `docker stop` e subir de novo RETOMA de onde parou,",
+					"# sem perder nada. Por isso NÃO precisa remover/recriar o container; e",
+					"# evite `kill -9`/OOM (aí o checkpoint final não é salvo: perde ~5s,",
+					"# re-aplicados idempotente no próximo start).",
+				].join("\n"),
+			);
+			const eng = engine;
+			const heartbeatMs = Number(process.env.WATCH_HEARTBEAT_MS) || 60000;
+			startWatchHeartbeat(heartbeatMs, () => ({
+				uptimeMs: performance.now() - t0,
+				totals: eng.eventTotals,
+				perColl: [...eng.eventCounts.entries()].sort((a, b) => b[1] - a[1]),
+			}));
+		}
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");
 	}
