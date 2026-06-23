@@ -90,6 +90,10 @@ export class SyncEngine {
 	/** Contadores de eventos do watch (p/ o heartbeat): por collection e por tipo. */
 	readonly eventCounts = new Map<string, number>();
 	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
+	/** `deletedIds` só serve durante o dump (corrida). Após os dumps vira false e
+	 * paramos de acumular — senão a lista cresceria 1 entrada por delete pra
+	 * sempre no watch 24/7 (vazamento lento). */
+	private dumpsActive = true;
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
@@ -175,6 +179,11 @@ export class SyncEngine {
 					dumpLimiter.schedule(() => this.runDump(p.col, p.resumeFromId)),
 				),
 		);
+
+		// dumps concluídos: a lista de deletes-durante-dump não serve mais. Limpa a
+		// memória acumulada e desliga o acúmulo (no watch ela só cresceria à toa).
+		this.deletedIds.length = 0;
+		this.dumpsActive = false;
 
 		// 5) garante o token global persistido (não só no tick de 5s).
 		await this.waitForToken(this.opts.resumeProbeMs);
@@ -380,10 +389,12 @@ export class SyncEngine {
 				break;
 			case "delete":
 				this.countEvent(coll, "delete");
+				// Durante o dump, registra o delete (evita re-inserir na corrida). No
+				// watch, passa um array descartável → nada acumula (sem vazamento).
 				await watchDeleteEvent(
 					change.documentKey._id as never,
 					destCol,
-					this.deletedIds,
+					this.dumpsActive ? this.deletedIds : [],
 				);
 				break;
 			default:
