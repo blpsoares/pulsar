@@ -196,6 +196,63 @@ export function startStatusReporter(totalCollections: number, intervalMs: number
 	_statusTimer.unref?.();
 }
 
+/**
+ * Painel de fechamento (1×) impresso na transição dump→watch. Texto puro (sem
+ * cor) p/ alinhar igual em TTY e no docker logs; os caracteres de caixa e ↳/·
+ * renderizam em qualquer terminal. Largura fixa, conteúdo padded por code point.
+ */
+export function renderClosingPanel(d: {
+	total: number;
+	resumed: number;
+	dumped: number;
+	dumpedNames: string[];
+	failed: string[];
+	docsDumped: number;
+	durationMs: number;
+	stopHint: string;
+}): string {
+	const W = 54;
+	const num = (n: number) => n.toLocaleString("pt-BR");
+	const dur = (ms: number) => {
+		const s = Math.round(ms / 1000);
+		if (s < 60) return `${s}s`;
+		const m = Math.floor(s / 60);
+		return `${m}m ${s % 60}s`;
+	};
+	const row = (s: string) => {
+		let content = ` ${s}`;
+		const cps = [...content];
+		// trunca p/ a borda nunca estourar (listas de nomes longas, hint, etc.)
+		if (cps.length > W) content = `${cps.slice(0, W - 1).join("")}…`;
+		const len = [...content].length;
+		return `║${content}${" ".repeat(Math.max(0, W - len))}║`;
+	};
+	const dumpedLabel =
+		d.dumpedNames.length > 0 ? `  (${d.dumpedNames.join(", ")})` : "";
+	const lines = [
+		`╔${"═".repeat(W)}╗`,
+		row("PULSAR · SINCRONIZAÇÃO INICIAL CONCLUÍDA"),
+		`╠${"═".repeat(W)}╣`,
+		row(`Collections em dia ........ ${d.total - d.failed.length}/${d.total}`),
+		row(`  ↳ retomadas (delta) ..... ${d.resumed}`),
+		row(`  ↳ dump completo ......... ${d.dumped}${dumpedLabel}`),
+	];
+	if (d.failed.length > 0) {
+		lines.push(
+			row(`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`),
+		);
+	}
+	lines.push(
+		row(`Docs copiados no dump ..... ${num(d.docsDumped)}`),
+		row(`Duração ................... ${dur(d.durationMs)}`),
+		`║${"─".repeat(W)}║`,
+		row("MODO: tempo real · replicando mudanças ao vivo"),
+		row(d.stopHint),
+		`╚${"═".repeat(W)}╝`,
+	);
+	return lines.join("\n");
+}
+
 /** Desliga o heartbeat e limpa o estado (fim do dump inicial ou shutdown). */
 export function stopStatusReporter() {
 	if (_statusTimer) {

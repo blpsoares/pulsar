@@ -46,6 +46,13 @@ export type DumpOptions = {
 	resumeFromId?: unknown;
 	/** Chamado após cada lote com o menor `_id` já processado (a fronteira). */
 	onProgress?: (lastId: unknown) => void;
+	/** Chamado ao concluir o dump com as stats finais (p/ o painel de fechamento). */
+	onDone?: (info: {
+		total: number;
+		inserted: number;
+		updated: number;
+		skipped: number;
+	}) => void;
 };
 
 export async function dumpCollections(
@@ -154,6 +161,12 @@ export async function dumpCollections(
 			}
 		}
 
+		opts.onDone?.({
+			total,
+			inserted: stats.inserted,
+			updated: stats.updated,
+			skipped: stats.skipped,
+		});
 		watcher.emit("finishDump", collectionName, total, stats);
 		return true;
 	} catch (error) {

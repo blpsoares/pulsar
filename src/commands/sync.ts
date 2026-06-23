@@ -8,10 +8,11 @@ import type { SyncOptionsCli } from "../types/cliOptions";
 import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
 import { setLogConfig } from "../utils/logConfig";
-import { customLog } from "../utils/customLog";
+import { customLog, logger } from "../utils/customLog";
 import {
 	finishProgress,
 	initProgress,
+	renderClosingPanel,
 	startStatusReporter,
 	stopStatusReporter,
 } from "../utils/progressManager";
@@ -151,37 +152,31 @@ export async function syncCollections(
 		const statusIntervalMs = Number(process.env.STATUS_INTERVAL_MS) || 10000;
 		if (!barsActive) startStatusReporter(collections.length, statusIntervalMs);
 
+		const t0 = performance.now();
 		await engine.start();
 		stopStatusReporter();
 		finishProgress();
 
-		// Relatório final OBJETIVO: estado (quantas em dia), por que não dumpou tudo
-		// (as que resumiram já tinham cópia → só o delta via change stream), e o que
-		// está acontecendo agora (tempo real). Ctrl+C só no terminal; em container a
-		// forma de parar é SIGTERM (docker stop).
+		// Painel de fechamento (1×): estado, por que não dumpou tudo (as que
+		// resumiram só aplicam o delta), docs/tempo, e o que acontece agora.
 		const total = collections.length;
 		const falhas = engine.failedDumps;
-		const dumpOk = engine.dumpsPlanned - falhas.length;
-		const emDia = total - falhas.length;
-		const comoParar = isTTY
-			? "Ctrl+C encerra (salva o checkpoint)."
-			: "Encerrar (só se precisar): `docker stop` — salva o checkpoint antes de sair. NÃO remova o container.";
-
-		const linha1 =
-			falhas.length > 0
-				? `SYNC PRONTO: ${emDia}/${total} collections em dia · ${falhas.length} FALHARAM e re-dumpam no próximo restart → ${falhas.join(", ")}`
-				: `SYNC PRONTO: ${total}/${total} collections em dia.`;
-
-		customLog(
-			falhas.length > 0 ? "warn" : "info",
-			[
-				linha1,
-				`  • ${engine.resumedCount} retomadas SEM dump: já estavam copiadas de antes → aplicamos só o que mudou enquanto o pulsar esteve off (via change stream), em vez de recopiar tudo.`,
-				`  • ${dumpOk} copiadas com dump completo nesta execução.`,
-				`  AGORA: tempo real — cada insert/update/delete na origem cai no destino na hora. Deixe rodando 24/7.`,
-				`  ${comoParar}`,
-			].join("\n"),
-			true,
+		const stopHint = isTTY
+			? "parar: Ctrl+C (salva o checkpoint)"
+			: "parar: docker stop (salva o checkpoint, não remova)";
+		const panel = renderClosingPanel({
+			total,
+			resumed: engine.resumedCount,
+			dumped: engine.dumpsPlanned - falhas.length,
+			dumpedNames: engine.dumpedNames,
+			failed: falhas,
+			docsDumped: engine.docsDumped,
+			durationMs: performance.now() - t0,
+			stopHint,
+		});
+		console.log(`\n${panel}\n`);
+		logger.info(
+			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}`,
 		);
 	} catch (error) {
 		throw errorHandler(error, "WATCH:COLL");

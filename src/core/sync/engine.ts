@@ -84,6 +84,9 @@ export class SyncEngine {
 	/** Quantas resumiram (pularam dump) e quantas precisaram de dump neste run. */
 	resumedCount = 0;
 	dumpsPlanned = 0;
+	/** Total de docs escritos no dump (insert+update) e nomes dumpados — p/ o painel. */
+	docsDumped = 0;
+	readonly dumpedNames: string[] = [];
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
@@ -209,6 +212,10 @@ export class SyncEngine {
 				batchSize: this.opts.batchSize,
 				resumeFromId,
 				onProgress: (lastId) => this.checkpointDumpProgress(col.name, lastId),
+				onDone: (info) => {
+					this.docsDumped += info.inserted + info.updated;
+					this.dumpedNames.push(col.name);
+				},
 			},
 		);
 		if (ok) {
