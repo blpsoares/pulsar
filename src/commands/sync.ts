@@ -170,9 +170,20 @@ export async function syncCollections(
 				true,
 			);
 		}
-		if (!(wantProgress && isTTY)) {
+		// Mensagem do estado contínuo, adequada ao contexto: num terminal o Ctrl+C
+		// faz sentido; num container/daemon (não-TTY) Ctrl+C confunde (induz a parar
+		// o container) — lá a forma certa de encerrar é SIGTERM (docker stop /
+		// systemctl stop), que dispara o shutdown gracioso. NÃO é pra parar nada:
+		// é o regime normal de operação 24/7.
+		if (isTTY) {
 			logAboveBars(
-				"Watch contínuo ativo. Ctrl+C para encerrar (checkpoints serão salvos).",
+				"Watch contínuo ativo — sincronizando em tempo real. Ctrl+C encerra (checkpoints são salvos).",
+			);
+		} else {
+			customLog(
+				"info",
+				"Watch contínuo ativo — sincronizando em tempo real (regime normal 24/7, sem novo dump). Deixe rodando. Para encerrar com segurança: docker stop / systemctl stop (SIGTERM) — o checkpoint é salvo no shutdown gracioso.",
+				true,
 			);
 		}
 	} catch (error) {
