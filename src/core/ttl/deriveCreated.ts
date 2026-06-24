@@ -14,8 +14,10 @@ export async function deriveCreated(
 	collection: string,
 	field: string = DERIVED_FIELD,
 ): Promise<number> {
-	const res = await db.collection(collection).updateMany({ [field]: { $exists: false } }, [
-		{ $set: { [field]: { $toDate: "$_id" } } },
-	]);
+	const res = await db
+		.collection(collection)
+		.updateMany({ [field]: { $exists: false } }, [
+			{ $set: { [field]: { $toDate: "$_id" } } },
+		]);
 	return res.modifiedCount;
 }

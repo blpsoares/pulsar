@@ -14,7 +14,10 @@ export type TtlResult = {
  * Aplica o TTL numa collection já resolvida: se deriveFromId, materializa o
  * campo _created a partir do _id; depois cria o índice TTL no campo.
  */
-export async function applyTtl(db: Db, resolved: ResolvedTtl): Promise<TtlResult> {
+export async function applyTtl(
+	db: Db,
+	resolved: ResolvedTtl,
+): Promise<TtlResult> {
 	let derivedCount: number | undefined;
 	if (resolved.deriveFromId) {
 		derivedCount = await deriveCreated(db, resolved.name, resolved.field);
@@ -22,7 +25,10 @@ export async function applyTtl(db: Db, resolved: ResolvedTtl): Promise<TtlResult
 
 	const indexName = await db
 		.collection(resolved.name)
-		.createIndex({ [resolved.field]: 1 }, { expireAfterSeconds: resolved.expireAfterSeconds });
+		.createIndex(
+			{ [resolved.field]: 1 },
+			{ expireAfterSeconds: resolved.expireAfterSeconds },
+		);
 
 	return {
 		name: resolved.name,

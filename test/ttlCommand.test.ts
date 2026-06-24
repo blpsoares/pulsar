@@ -12,7 +12,9 @@ beforeAll(async () => {
 	dbName = uniqueDbName("ttlcmd");
 	db = client.db(dbName);
 	await db.collection("orders").insertOne({ _id: new ObjectId(), x: 1 });
-	await db.collection("sessions").insertOne({ lastActivity: new Date("2020-01-01"), x: 1 });
+	await db
+		.collection("sessions")
+		.insertOne({ lastActivity: new Date("2020-01-01"), x: 1 });
 });
 
 afterAll(async () => {

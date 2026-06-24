@@ -28,7 +28,9 @@ describe("deriveCreated", () => {
 
 		const doc = await db.collection("c1").findOne({ _id: oid });
 		expect(doc?._created).toBeInstanceOf(Date);
-		expect((doc?._created as Date).getTime()).toBe(oid.getTimestamp().getTime());
+		expect((doc?._created as Date).getTime()).toBe(
+			oid.getTimestamp().getTime(),
+		);
 
 		// rodar de novo não modifica (filtro $exists:false)
 		const again = await deriveCreated(db, "c1");

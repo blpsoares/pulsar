@@ -20,7 +20,9 @@ afterAll(async () => {
 
 async function ttlIndex(db: Db, coll: string, field: string) {
 	const idx = await db.collection(coll).indexes();
-	return idx.find((i) => i.key?.[field] === 1 && i.expireAfterSeconds !== undefined);
+	return idx.find(
+		(i) => i.key?.[field] === 1 && i.expireAfterSeconds !== undefined,
+	);
 }
 
 describe("applyTtl", () => {

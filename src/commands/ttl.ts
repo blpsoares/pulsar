@@ -1,17 +1,17 @@
+import { applyTtl, type TtlResult } from "../core/ttl/applyTtl";
+import { type ResolvedTtl, resolveTtlEntry } from "../core/ttl/resolveTtlEntry";
 import { conn } from "../db/conn";
-import parseYml from "../utils/parseYml";
-import { customLog } from "../utils/customLog";
 import { errorHandler } from "../errors/errorHandler";
 import { getCollections } from "../functions/getCollections";
-import { applyTtl, type TtlResult } from "../core/ttl/applyTtl";
-import { resolveTtlEntry, type ResolvedTtl } from "../core/ttl/resolveTtlEntry";
+import type { TtlOptionsCli } from "../types/cliOptions";
 import {
-	ttlYmlSchema,
-	type TtlYmlOptions,
 	type TtlCollectionEntry,
 	type TtlDefaults,
+	type TtlYmlOptions,
+	ttlYmlSchema,
 } from "../types/parseYml";
-import type { TtlOptionsCli } from "../types/cliOptions";
+import { customLog } from "../utils/customLog";
+import parseYml from "../utils/parseYml";
 
 type Plan = {
 	uri: string;
@@ -40,10 +40,12 @@ function buildPlan(file: string | undefined, cli: TtlOptionsCli): Plan {
 	if (!cli.expire) throw new Error("Modo CLI exige --expire");
 	if (cli.field && cli.deriveFromId)
 		throw new Error("--field e --derive-from-id são mutuamente exclusivos");
-	if (!cli.field && !cli.deriveFromId) throw new Error("Modo CLI exige --field ou --derive-from-id");
+	if (!cli.field && !cli.deriveFromId)
+		throw new Error("Modo CLI exige --field ou --derive-from-id");
 	if (cli.collections && cli.all)
 		throw new Error("--collections e --all são mutuamente exclusivos");
-	if (!cli.collections && !cli.all) throw new Error("Modo CLI exige --collections ou --all");
+	if (!cli.collections && !cli.all)
+		throw new Error("Modo CLI exige --collections ou --all");
 
 	const defaults: TtlDefaults = {
 		field: cli.field,
@@ -79,7 +81,9 @@ export async function ttlCommand(
 
 		// pra cada nome, casa com a entry original (pra herdar field/expire) e resolve
 		const resolved: ResolvedTtl[] = collectionEntries.map(({ name }) => {
-			const original = plan.entries.find((e) => (typeof e === "string" ? e : e.name) === name);
+			const original = plan.entries.find(
+				(e) => (typeof e === "string" ? e : e.name) === name,
+			);
 			return resolveTtlEntry(original ?? name, plan.defaults);
 		});
 
@@ -88,7 +92,9 @@ export async function ttlCommand(
 			const out = await applyTtl(db, r);
 			results.push(out);
 			const derived =
-				out.derivedCount !== undefined ? ` (_created em ${out.derivedCount} docs)` : "";
+				out.derivedCount !== undefined
+					? ` (_created em ${out.derivedCount} docs)`
+					: "";
 			customLog(
 				"success",
 				`TTL em ${out.name}: ${out.field} expira em ${out.expireAfterSeconds}s${derived}`,

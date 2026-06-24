@@ -31,7 +31,9 @@ export function parseDuration(input: string | number): number {
 
 	const match = input
 		.trim()
-		.match(/^(\d+)(s|sec|seconds|min|minutes|h|hours|d|days|w|weeks|mo|months|y|years)$/);
+		.match(
+			/^(\d+)(s|sec|seconds|min|minutes|h|hours|d|days|w|weeks|mo|months|y|years)$/,
+		);
 	if (!match) {
 		throw new Error(
 			`Duração inválida: "${input}". Use <número><unidade>, ex.: 30d, 1h, 3mo. ` +

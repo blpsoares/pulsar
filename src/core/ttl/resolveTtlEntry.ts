@@ -1,5 +1,5 @@
-import { parseDuration } from "./parseDuration";
 import type { TtlCollectionEntry, TtlDefaults } from "../../types/parseYml";
+import { parseDuration } from "./parseDuration";
 
 export type ResolvedTtl = {
 	name: string;
@@ -16,7 +16,10 @@ export const DERIVED_FIELD = "_created";
  * o que a collection define ganha; senão herda do default. Lança erro quando
  * não dá pra resolver um campo de TTL (nada implícito).
  */
-export function resolveTtlEntry(entry: TtlCollectionEntry, defaults?: TtlDefaults): ResolvedTtl {
+export function resolveTtlEntry(
+	entry: TtlCollectionEntry,
+	defaults?: TtlDefaults,
+): ResolvedTtl {
 	const obj = typeof entry === "string" ? { name: entry } : entry;
 	const d = defaults ?? {};
 
@@ -55,9 +58,12 @@ export function resolveTtlEntry(entry: TtlCollectionEntry, defaults?: TtlDefault
 		);
 	}
 
-	const rawExpire = obj.expire ?? obj.expireAfterSeconds ?? d.expire ?? d.expireAfterSeconds;
+	const rawExpire =
+		obj.expire ?? obj.expireAfterSeconds ?? d.expire ?? d.expireAfterSeconds;
 	if (rawExpire === undefined) {
-		throw new Error(`Collection "${obj.name}" sem "expire"/"expireAfterSeconds" definido`);
+		throw new Error(
+			`Collection "${obj.name}" sem "expire"/"expireAfterSeconds" definido`,
+		);
 	}
 
 	return {

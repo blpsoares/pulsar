@@ -26,21 +26,31 @@ describe("resolveTtlEntry", () => {
 	});
 
 	test("expireAfterSeconds cru também funciona", () => {
-		const r = resolveTtlEntry({ name: "x", field: "ts", expireAfterSeconds: 10 }, undefined);
+		const r = resolveTtlEntry(
+			{ name: "x", field: "ts", expireAfterSeconds: 10 },
+			undefined,
+		);
 		expect(r.expireAfterSeconds).toBe(10);
 	});
 
 	test("erro quando não há field nem deriveFromId", () => {
-		expect(() => resolveTtlEntry({ name: "x", expire: "1d" }, undefined)).toThrow(/sem campo de TTL/);
+		expect(() =>
+			resolveTtlEntry({ name: "x", expire: "1d" }, undefined),
+		).toThrow(/sem campo de TTL/);
 	});
 
 	test("erro quando field e deriveFromId colidem", () => {
 		expect(() =>
-			resolveTtlEntry({ name: "x", field: "ts", deriveFromId: true, expire: "1d" }, undefined),
+			resolveTtlEntry(
+				{ name: "x", field: "ts", deriveFromId: true, expire: "1d" },
+				undefined,
+			),
 		).toThrow(/mutuamente exclusivos|field.*deriveFromId/);
 	});
 
 	test("erro quando falta expire", () => {
-		expect(() => resolveTtlEntry({ name: "x", field: "ts" }, undefined)).toThrow(/expire/);
+		expect(() =>
+			resolveTtlEntry({ name: "x", field: "ts" }, undefined),
+		).toThrow(/expire/);
 	});
 });
