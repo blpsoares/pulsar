@@ -1,9 +1,11 @@
 command:
   sync:
     source:
-      uri: "mongodb+srv://odontofarialima:REDACTED@olivaras.npjhxdt.mongodb.net/?retryWrites=true&w=majority&appName=Olivaras"
-      db: "consultorio"
+      # Mongo local de teste (docker-compose-test.yml: mongo-a, replica set rs0).
+      # NUNCA coloque credenciais reais aqui — este arquivo é versionado.
+      uri: "mongodb://127.0.0.1:27020/?replicaSet=rs0&directConnection=true"
+      db: "source-db"
     destination:
-      uri: "mongodb+srv://odontofarialima:REDACTED@olivaras.npjhxdt.mongodb.net/?retryWrites=true&w=majority&appName=Olivaras"
-      db: "consultorio-dev"
+      uri: "mongodb://127.0.0.1:27021"
+      db: "dest-db"
     collections: []
