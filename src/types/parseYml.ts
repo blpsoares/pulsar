@@ -60,6 +60,44 @@ export const syncYmlSchema = z.object({
 	}),
 });
 
+const ttlCollectionEntrySchema = z.union([
+	z.string(),
+	z
+		.object({
+			name: z.string(),
+			field: z.string().optional(),
+			deriveFromId: z.boolean().optional(),
+			expire: z.union([z.string(), z.number()]).optional(),
+			expireAfterSeconds: z.number().int().positive().optional(),
+		})
+		.refine((d) => !(d.field && d.deriveFromId), {
+			message: 'Use "field" ou "deriveFromId", não os dois',
+		}),
+]);
+
+const ttlDefaultsSchema = z.object({
+	field: z.string().optional(),
+	deriveFromId: z.boolean().optional(),
+	expire: z.union([z.string(), z.number()]).optional(),
+	expireAfterSeconds: z.number().int().positive().optional(),
+});
+
+export const ttlYmlSchema = z.object({
+	command: z.object({
+		ttl: z.object({
+			source: z.object({
+				uri: z.string(),
+				db: z.string(),
+			}),
+			defaults: ttlDefaultsSchema.optional(),
+			collections: z.array(ttlCollectionEntrySchema).optional(),
+		}),
+	}),
+});
+
 export type SyncCollectionEntry = z.infer<typeof syncCollectionEntrySchema>;
 export type MigrateYmlOptions = z.infer<typeof migrateYmlSchema>;
 export type SyncYmlOptions = z.infer<typeof syncYmlSchema>;
+export type TtlCollectionEntry = z.infer<typeof ttlCollectionEntrySchema>;
+export type TtlDefaults = z.infer<typeof ttlDefaultsSchema>;
+export type TtlYmlOptions = z.infer<typeof ttlYmlSchema>;
