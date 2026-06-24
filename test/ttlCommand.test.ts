@@ -75,4 +75,28 @@ describe("ttlCommand (modo CLI)", () => {
 			}),
 		).rejects.toThrow(/expire/i);
 	});
+
+	test("paralelo: aplica TTL em várias collections concorrentes", async () => {
+		const names = ["par_a", "par_b", "par_c", "par_d", "par_e"];
+		for (const n of names) {
+			await db.collection(n).insertOne({ _id: new ObjectId(), x: 1 });
+		}
+
+		const out = await ttlCommand(undefined, {
+			uri: DST_URI,
+			db: dbName,
+			collections: names.join(","),
+			deriveFromId: true,
+			expire: "30d",
+			parallel: 3,
+		});
+
+		expect(out).toHaveLength(5);
+		for (const n of names) {
+			const idx = (await db.collection(n).indexes()).find(
+				(i) => i.key?._created === 1 && i.expireAfterSeconds === 2592000,
+			);
+			expect(idx).toBeTruthy();
+		}
+	});
 });

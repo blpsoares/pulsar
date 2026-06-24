@@ -78,6 +78,10 @@ program
 		"materializa _created a partir do _id (explícito)",
 	)
 	.option("--expire <dur>", "duração: 30d, 1h, 3mo, 90d... (mês=30d, ano=365d)")
+	.option(
+		"-p --parallel <number>",
+		"quantas collections recebem TTL em paralelo. Padrão: 4.",
+	)
 	.action((file, opts) =>
 		ttlCommand(file, {
 			uri: opts.uri,
@@ -87,6 +91,7 @@ program
 			field: opts.field,
 			deriveFromId: opts.deriveFromId,
 			expire: opts.expire,
+			parallel: opts.parallel,
 		}),
 	);
 

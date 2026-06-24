@@ -1,3 +1,4 @@
+import Bottleneck from "bottleneck";
 import { applyTtl, type TtlResult } from "../core/ttl/applyTtl";
 import { type ResolvedTtl, resolveTtlEntry } from "../core/ttl/resolveTtlEntry";
 import { conn } from "../db/conn";
@@ -13,13 +14,26 @@ import {
 import { customLog } from "../utils/customLog";
 import parseYml from "../utils/parseYml";
 
+/** Concorrência padrão: modesto por ser cluster (possivelmente compartilhado). */
+const DEFAULT_PARALLEL = 4;
+
 type Plan = {
 	uri: string;
 	db: string;
 	entries: TtlCollectionEntry[];
 	defaults?: TtlDefaults;
 	all: boolean;
+	parallel: number;
 };
+
+/** Resolve a concorrência: CLI (-p) vence yml (performance.parallel), senão default. */
+function resolveParallel(cli: TtlOptionsCli, ymlParallel?: number): number {
+	const fromCli = cli.parallel !== undefined ? Number(cli.parallel) : undefined;
+	const chosen = fromCli ?? ymlParallel ?? DEFAULT_PARALLEL;
+	return Number.isFinite(chosen) && chosen > 0
+		? Math.floor(chosen)
+		: DEFAULT_PARALLEL;
+}
 
 /** Monta o plano a partir do yml (se houver arquivo) ou das flags CLI. */
 function buildPlan(file: string | undefined, cli: TtlOptionsCli): Plan {
@@ -32,6 +46,7 @@ function buildPlan(file: string | undefined, cli: TtlOptionsCli): Plan {
 			entries: ttl.collections ?? [],
 			defaults: ttl.defaults,
 			all: false,
+			parallel: resolveParallel(cli, ttl.performance?.parallel),
 		};
 	}
 
@@ -59,7 +74,14 @@ function buildPlan(file: string | undefined, cli: TtlOptionsCli): Plan {
 				.filter(Boolean)
 		: [];
 
-	return { uri: cli.uri, db: cli.db, entries, defaults, all: Boolean(cli.all) };
+	return {
+		uri: cli.uri,
+		db: cli.db,
+		entries,
+		defaults,
+		all: Boolean(cli.all),
+		parallel: resolveParallel(cli),
+	};
 }
 
 export async function ttlCommand(
@@ -87,21 +109,51 @@ export async function ttlCommand(
 			return resolveTtlEntry(original ?? name, plan.defaults);
 		});
 
-		const results: TtlResult[] = [];
-		for (const r of resolved) {
-			const out = await applyTtl(db, r);
-			results.push(out);
-			const derived =
-				out.derivedCount !== undefined
-					? ` (_created em ${out.derivedCount} docs)`
-					: "";
-			customLog(
-				"success",
-				`TTL em ${out.name}: ${out.field} expira em ${out.expireAfterSeconds}s${derived}`,
-			);
-		}
+		// Paralelismo no nível de collection (Bottleneck), com teto configurável.
+		// allSettled: uma collection que falha NÃO derruba as outras (relatório honesto).
+		const limiter = new Bottleneck({ maxConcurrent: plan.parallel });
+		customLog(
+			"info",
+			`Aplicando TTL em ${resolved.length} collection(s) com paralelismo ${plan.parallel}...`,
+		);
 
-		customLog("info", `TTL aplicado em ${results.length} collection(s).`);
+		const settled = await Promise.allSettled(
+			resolved.map((r) =>
+				limiter.schedule(async () => {
+					const out = await applyTtl(db, r);
+					const derived =
+						out.derivedCount !== undefined
+							? ` (_created em ${out.derivedCount} docs)`
+							: "";
+					customLog(
+						"success",
+						`TTL em ${out.name}: ${out.field} expira em ${out.expireAfterSeconds}s${derived}`,
+					);
+					return out;
+				}),
+			),
+		);
+
+		const results: TtlResult[] = [];
+		const failures: { name: string; error: string }[] = [];
+		settled.forEach((s, i) => {
+			if (s.status === "fulfilled") results.push(s.value);
+			else
+				failures.push({
+					name: resolved[i].name,
+					error:
+						s.reason instanceof Error ? s.reason.message : String(s.reason),
+				});
+		});
+
+		for (const f of failures)
+			customLog("error", `TTL FALHOU em ${f.name}: ${f.error}`);
+		customLog(
+			failures.length ? "error" : "info",
+			`TTL aplicado em ${results.length}/${resolved.length} collection(s)${
+				failures.length ? ` — ${failures.length} FALHARAM` : "."
+			}`,
+		);
 		return results;
 	} catch (error) {
 		throw errorHandler(error, "TTL:COMMAND");

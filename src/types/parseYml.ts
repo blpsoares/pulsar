@@ -91,6 +91,12 @@ export const ttlYmlSchema = z.object({
 			}),
 			defaults: ttlDefaultsSchema.optional(),
 			collections: z.array(ttlCollectionEntrySchema).optional(),
+			performance: z
+				.object({
+					// quantas collections recebem TTL em paralelo
+					parallel: z.number().int().positive().optional(),
+				})
+				.optional(),
 		}),
 	}),
 });

@@ -19,4 +19,5 @@ export type TtlOptionsCli = {
 	field?: string;
 	deriveFromId?: boolean;
 	expire?: string;
+	parallel?: number | string;
 };
