@@ -4,6 +4,7 @@ import { showTitle } from "./utils/showCliTitle";
 import { Command } from "commander";
 import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
+import { ttlCommand } from "./commands/ttl";
 import { logger } from "./utils/customLog";
 
 // Rede de segurança: um erro não tratado (ex.: blip de rede num handler async)
@@ -54,5 +55,29 @@ program
 		"força o dump completo de todas as collections, ignorando os carimbos de conclusão (reconciliação total).",
 	)
 	.action(syncCollections);
+
+program
+	.command("ttl [file]")
+	.description(
+		"cria índices TTL em massa. Com [file] usa yml granular; sem arquivo, usa as flags abaixo (config uniforme).",
+	)
+	.option("--uri <uri>", "URI do Mongo (modo CLI)")
+	.option("--db <db>", "banco alvo (modo CLI)")
+	.option("--collections <list>", "collections separadas por vírgula, ex.: orders,logs,posts")
+	.option("-a --all", "aplica em todas as collections do banco")
+	.option("--field <field>", "campo Date existente como base do TTL")
+	.option("--derive-from-id", "materializa _created a partir do _id (explícito)")
+	.option("--expire <dur>", "duração: 30d, 1h, 3mo, 90d... (mês=30d, ano=365d)")
+	.action((file, opts) =>
+		ttlCommand(file, {
+			uri: opts.uri,
+			db: opts.db,
+			collections: opts.collections,
+			all: opts.all,
+			field: opts.field,
+			deriveFromId: opts.deriveFromId,
+			expire: opts.expire,
+		}),
+	);
 
 program.parse(process.argv);
