@@ -23,6 +23,8 @@ bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compo
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
+bun run src/cli.ts ttl configs/ttl-example.yml                                       # TTL em massa via yml
+bun run src/cli.ts ttl --uri '...' --db x --all --derive-from-id --expire 30d        # TTL em massa via CLI
 ```
 
 ## Estrutura
@@ -33,6 +35,7 @@ src/
   commands/
     migrate.ts            # orquestra o fluxo completo de dump/restore
     sync.ts               # orquestra o fluxo de watch; inicializa logConfig
+    ttl.ts                # comando standalone: cria índices TTL em massa (yml ou CLI)
   core/
     dump/
       dump.ts             # exporta collections via mongodump (com resume se temp-dump existir)
@@ -53,6 +56,11 @@ src/
       updateEvent.ts      # loga [collection] update | _id quando verbose
       deleteEvent.ts      # loga [collection] delete | _id quando verbose
       replaceEvent.ts     # loga [collection] replace | _id quando verbose
+    ttl/
+      parseDuration.ts      # "30d"/"1h"/"3mo" -> segundos (mês=30d, ano=365d; 'm' proibido)
+      resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
+      deriveCreated.ts      # updateMany pipeline { $toDate: "$_id" } -> campo _created (idempotente)
+      applyTtl.ts           # materializa (se preciso) + createIndex TTL por collection
   functions/
     getCollections.ts     # resolve lista de collections; carrega filter/filterFile
     freeze.ts             # chamado no início do sync (operação no destino)
@@ -193,6 +201,24 @@ command:
     collections: []
     queryString: ''   # opcional, formato JSON.stringify
 ```
+
+## Comando `ttl` — TTL em massa
+
+Comando **standalone** (sem relação com sync). Cria índices TTL em várias collections de uma vez.
+
+**Restrição crítica:** TTL só funciona em campo BSON `Date`. **`_id` direto é impossível** — o Mongo recusa o índice (`The field 'expireAfterSeconds' is not valid for an _id index specification`) e um campo do tipo `ObjectId` não expira (o monitor de TTL só lê `Date`). Quando a collection não tem campo de data, o pulsar **materializa** um campo `_created` a partir do `_id` via `updateMany` com pipeline (`{ $toDate: "$_id" }`), **só nos docs existentes** (`$exists:false` → idempotente). Inserts futuros não são cobertos — é one-shot; quem insere é responsável.
+
+**Nome `_created`** (não `_ttl`): o campo guarda data de criação, não um "tempo pra expirar".
+
+Dois modos:
+- **YAML** (`pulsar ttl arquivo.yml`): granular, `defaults` + override por collection. Ver `configs/ttl-example.yml`.
+- **CLI** (`pulsar ttl` + flags): config **uniforme** pra um conjunto de collections.
+
+Derivar do `_id` é **sempre explícito** (`deriveFromId: true` / `--derive-from-id`) — nada implícito. Sem `field` nem `deriveFromId` resolvidos → erro, não executa. `field` e `deriveFromId` são mutuamente exclusivos. Precedência por collection: o que a collection define vence; senão herda do `defaults` (um `field` explícito na collection suprime um `deriveFromId` herdado e vice-versa).
+
+**Duração** (`expire`): `30d`, `1h`, `3mo`... convertida pra `expireAfterSeconds`. Unidades: `s/sec/seconds`, `min/minutes`, `h/hours`, `d/days`, `w/weeks`, `mo/months` (30d), `y/years` (365d). **`m` sozinho é proibido** (ambíguo minuto/mês): use `min` ou `mo`. Mês=30d, ano=365d. Aceita `expireAfterSeconds` cru também.
+
+Flags CLI: `--uri`, `--db`, `--collections a,b,c` (ou `--all`), `--field <campo>` (ou `--derive-from-id`), `--expire <dur>`. Reusa `db/conn.ts`, `functions/getCollections.ts` (incl. `--all`) e `utils/parseYml.ts`. Não exige Replica Set (TTL não usa Change Stream). Testado em `test/` (parseDuration, resolveTtlEntry, deriveCreated, applyTtl, ttlCommand). Desenho em `docs/superpowers/specs/2026-06-24-ttl-command-design.md`.
 
 ## Ambiente de teste local
 
