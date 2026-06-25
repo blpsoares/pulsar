@@ -163,6 +163,10 @@ O filtro é aplicado em:
 
 O hash é calculado do documento **original** (sem `__sync`/`origin`), então a comparação funciona mesmo com os metadados presentes no destino.
 
+### Cópia de índices (`copyIndexes`)
+
+O copy doc-a-doc do sync **não** traz os índices secundários da origem (só os dados; `migrate` via mongorestore traz). Com `copyIndexes: true` no yml, o sync replica os índices da origem no destino: faz um **diff por assinatura** (key+opções) e cria **só os que faltam** — num banco já migrado, a maioria das collections nem recebe escrita. Collection que dumpa cria o índice **depois** do dump (build em lote, igual mongorestore); collection que resume completa no startup. Falha de `createIndex` (ex.: conflito de nome) é **contida** (loga, não aborta o sync) e re-tentada no próximo startup. Nunca remove índices que existem só no destino. Painel final mostra `Índices · criados/já existiam/falhados`. Lógica em `core/sync/copyIndexes.ts`, testes em `test/copyIndexes.test.ts` e `test/engine.copyIndexes.test.ts`.
+
 ### Logging
 
 Controlado pelo singleton `logConfig.ts`:
@@ -192,6 +196,7 @@ command:
     logging:
       verbose: false    # default false
       progress: true    # default true
+    copyIndexes: false   # default false; true replica índices secundários da origem no destino
     collections:
       - simple-collection
       - name: filtered-collection
