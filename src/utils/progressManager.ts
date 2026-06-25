@@ -168,8 +168,7 @@ function printStatus() {
 	for (const [name, { processed, total }] of _activeDumps) {
 		const pct =
 			total > 0 ? Math.min(100, Math.floor((processed / total) * 100)) : 0;
-		const label =
-			name.length > 24 ? `${name.slice(0, 23)}…` : name.padEnd(24);
+		const label = name.length > 24 ? `${name.slice(0, 23)}…` : name.padEnd(24);
 		const counts = `${fmtNum(processed)}/${fmtNum(total)}`;
 		out.push(
 			`  ${chalk.white(label)} ${chalk.green(textBar(pct))} ` +
@@ -188,7 +187,10 @@ function printStatus() {
 }
 
 /** Liga o heartbeat (só faz sentido em não-TTY). intervalMs<=0 desliga. */
-export function startStatusReporter(totalCollections: number, intervalMs: number) {
+export function startStatusReporter(
+	totalCollections: number,
+	intervalMs: number,
+) {
 	_collsTotal = totalCollections;
 	_dumpsDone = 0;
 	if (_statusTimer || intervalMs <= 0) return;
@@ -210,6 +212,11 @@ export function renderClosingPanel(d: {
 	docsDumped: number;
 	durationMs: number;
 	stopHint: string;
+	indexes?: {
+		created: number;
+		skipped: number;
+		failed: { coll: string; name: string }[];
+	};
 }): string {
 	const W = 54;
 	const num = (n: number) => n.toLocaleString("pt-BR");
@@ -239,12 +246,28 @@ export function renderClosingPanel(d: {
 	];
 	if (d.failed.length > 0) {
 		lines.push(
-			row(`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`),
+			row(
+				`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`,
+			),
 		);
 	}
 	lines.push(
 		row(`Docs copiados no dump ..... ${num(d.docsDumped)}`),
 		row(`Duração ................... ${dur(d.durationMs)}`),
+	);
+	if (d.indexes) {
+		const f = d.indexes.failed;
+		const fLabel =
+			f.length > 0
+				? ` · falharam: ${f.length} (${[...new Set(f.map((x) => x.coll))].join(", ")})`
+				: "";
+		lines.push(
+			row(
+				`Índices ... criados: ${d.indexes.created} · já existiam: ${d.indexes.skipped}${fLabel}`,
+			),
+		);
+	}
+	lines.push(
 		`║${"─".repeat(W)}║`,
 		row("MODO: tempo real · replicando mudanças ao vivo"),
 		row(d.stopHint),
@@ -300,7 +323,10 @@ export function startWatchHeartbeat(
 	snapshot: () => WatchSnapshot,
 ) {
 	if (_watchTimer || intervalMs <= 0) return;
-	_watchTimer = setInterval(() => console.log(renderWatchBlock(snapshot())), intervalMs);
+	_watchTimer = setInterval(
+		() => console.log(renderWatchBlock(snapshot())),
+		intervalMs,
+	);
 	_watchTimer.unref?.();
 }
 

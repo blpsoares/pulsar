@@ -65,10 +65,11 @@ export async function syncCollections(
 		ymlPerf.batchSize ??
 		500;
 	const full = Boolean(cliParams.full);
+	const copyIndexes = Boolean(options.command.sync.copyIndexes ?? false);
 
 	customLog(
 		"info",
-		`Performance: parallel=${parallel} | batchSize=${batchSize}${full ? " | --full (re-dump forçado)" : ""}`,
+		`Performance: parallel=${parallel} | batchSize=${batchSize}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}`,
 	);
 
 	const client = await conn(options.command.sync.source.uri, "source");
@@ -147,6 +148,7 @@ export async function syncCollections(
 			parallel,
 			batchSize,
 			full,
+			copyIndexes,
 		});
 
 		// Sem barra (não-TTY/container): liga o STATUS heartbeat no docker logs.
@@ -176,10 +178,19 @@ export async function syncCollections(
 			docsDumped: engine.docsDumped,
 			durationMs: performance.now() - t0,
 			stopHint,
+			...(copyIndexes
+				? {
+						indexes: {
+							created: engine.indexesCreated,
+							skipped: engine.indexesSkipped,
+							failed: engine.indexFailures,
+						},
+					}
+				: {}),
 		});
 		console.log(`\n${panel}\n`);
 		logger.info(
-			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}`,
+			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}${copyIndexes ? ` | índices: +${engine.indexesCreated} (${engine.indexesSkipped} já existiam, ${engine.indexFailures.length} falhas)` : ""}`,
 		);
 
 		// Em container (não-TTY): nota do "não remova" + heartbeat do watch 24/7.

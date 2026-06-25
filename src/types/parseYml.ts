@@ -42,6 +42,7 @@ export const syncYmlSchema = z.object({
 				db: z.string(),
 			}),
 			collections: z.array(syncCollectionEntrySchema).optional(),
+			copyIndexes: z.boolean().optional(),
 			logging: z
 				.object({
 					verbose: z.boolean().optional(),

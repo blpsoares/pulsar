@@ -9,3 +9,4 @@ command:
       uri: "mongodb://127.0.0.1:27021"
       db: "dest-db"
     collections: []
+    copyIndexes: true
