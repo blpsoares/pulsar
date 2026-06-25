@@ -118,19 +118,8 @@ export async function composeUp(): Promise<void> {
 		console.log();
 	}
 
-	const suffix = (
-		prompt(
-			chalk.cyan("Sufixo da instância") +
-				chalk.gray(" (ex.: 2 → pulsar-sync-2):"),
-			nextSuffix(committed.names),
-		) ?? ""
-	).trim();
-	if (!suffix) {
-		console.log(chalk.red("Sufixo obrigatório. Abortado."));
-		process.exit(1);
-	}
-
-	const def = syncs.length ? syncs[0].file : `configs/sync${suffix}.yml`;
+	// ── 1º: escolhe a config (logo após a lista, casando com a numeração) ────
+	const def = syncs.length ? syncs[0].file : "configs/sync.yml";
 	const pick = (
 		prompt(
 			chalk.cyan("Config (nº da lista ou caminho)") +
@@ -150,6 +139,19 @@ export async function composeUp(): Promise<void> {
 				`⚠ ${configPath} ainda não existe — crie antes de subir (URI/destino próprios).`,
 			),
 		);
+	}
+
+	// ── 2º: nome/sufixo do container da nova instância ───────────────────────
+	const suffix = (
+		prompt(
+			chalk.cyan("Sufixo da instância") +
+				chalk.gray(" (ex.: 2 → pulsar-sync-2):"),
+			nextSuffix(committed.names),
+		) ?? ""
+	).trim();
+	if (!suffix) {
+		console.log(chalk.red("Sufixo obrigatório. Abortado."));
+		process.exit(1);
 	}
 
 	// ── recursos recomendados (com base no que já está comprometido) ─────────
