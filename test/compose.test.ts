@@ -90,7 +90,7 @@ describe("buildInstanceCompose", () => {
 		expect(out).not.toContain("NaN");
 	});
 
-	// Regressão: base com config na RAIZ (ads-staging.yml, sem prefixo configs/).
+	// Regressão: base com config na RAIZ (root-config.yml, sem prefixo configs/).
 	// O replace precisa trocar command + volume independente do caminho do base —
 	// senão a nova instância clona a config do base (bug real visto em prod).
 	test("troca config quando o base aponta pra um yml na raiz (não-configs/)", () => {
@@ -98,10 +98,10 @@ describe("buildInstanceCompose", () => {
 			"services:",
 			"  pulsar-sync:",
 			"    container_name: pulsar-sync",
-			'    command: ["pulsar", "sync", "ads-staging.yml"]',
+			'    command: ["pulsar", "sync", "root-config.yml"]',
 			"    volumes:",
 			"      - ./logs:/app/logs",
-			"      - ./ads-staging.yml:/app/ads-staging.yml:ro # monta a config",
+			"      - ./root-config.yml:/app/root-config.yml:ro # monta a config",
 			"    mem_limit: 256m",
 			"    memswap_limit: 256m",
 			"    mem_reservation: 128m",
@@ -117,7 +117,7 @@ describe("buildInstanceCompose", () => {
 		expect(built).toContain('"pulsar", "sync", "configs/outro.yml"');
 		expect(built).toContain("./configs/outro.yml:/app/configs/outro.yml:ro");
 		// não pode sobrar nenhum vestígio da config do base
-		expect(built).not.toContain("ads-staging.yml");
+		expect(built).not.toContain("root-config.yml");
 		// logs e nome continuam corretos
 		expect(built).toContain("./logs-3:/app/logs");
 		expect(built).toContain("  pulsar-sync-3:");
