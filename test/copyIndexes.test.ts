@@ -176,4 +176,34 @@ describe("ensureCollectionIndexes", () => {
 		expect(res.created).toBe(0);
 		expect(res.skipped).toBe(0);
 	});
+
+	test("collection inexistente no destino (vazia na origem): cria o índice (NamespaceNotFound)", async () => {
+		// origem tem índice secundário mas o destino NUNCA foi materializado (0 docs
+		// na origem → dump não insere nada). listIndexes(dest) estoura code 26 →
+		// deve tratar como "nenhum índice lá" e criar (createIndex cria a collection).
+		await srcDb
+			.collection("vazia")
+			.createIndex(
+				{ ref: 1 },
+				{ name: "ref_1", partialFilterExpression: { ref: { $exists: true } } },
+			);
+		// garante que o destino NÃO tem a collection
+		await dstDb
+			.collection("vazia")
+			.drop()
+			.catch(() => {});
+
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("vazia"),
+			dstDb.collection("vazia"),
+		);
+
+		expect(res.created).toBe(1);
+		expect(res.failed).toHaveLength(0);
+		const idx = (await dstDb.collection("vazia").indexes()).find(
+			(i) => i.key?.ref === 1,
+		);
+		expect(idx).toBeDefined();
+		expect(idx?.partialFilterExpression).toEqual({ ref: { $exists: true } });
+	});
 });

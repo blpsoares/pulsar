@@ -77,15 +77,23 @@ export async function ensureCollectionIndexes(
 	);
 	if (srcIdx.length === 0) return result;
 
-	// Destino: se falhar, não dá pra diferenciar com segurança → não cria nada.
+	// Destino: lista os índices existentes pra montar o diff.
 	let destSigs: Set<string>;
 	try {
 		const destIdx = await destCol.listIndexes().toArray();
 		destSigs = new Set(destIdx.map(signature));
 	} catch (err) {
-		const reason = err instanceof Error ? err.message : String(err);
-		result.failed.push({ name: "*listIndexes(dest)", reason });
-		return result;
+		// NamespaceNotFound (26): a collection ainda NÃO existe no destino (ex.:
+		// vazia na origem → o dump não materializou nada). Não é falha — significa
+		// "nenhum índice lá" → cria todos (o createIndex cria a collection junto).
+		// Qualquer OUTRO erro: não dá pra diferenciar com segurança → não cria nada.
+		if ((err as { code?: number })?.code === 26) {
+			destSigs = new Set();
+		} else {
+			const reason = err instanceof Error ? err.message : String(err);
+			result.failed.push({ name: "*listIndexes(dest)", reason });
+			return result;
+		}
 	}
 
 	for (const idx of srcIdx) {
