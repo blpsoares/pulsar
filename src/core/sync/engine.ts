@@ -8,8 +8,9 @@ import type {
 	ResumeToken,
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
-import { logger } from "../../utils/customLog";
+import { customLog, logger } from "../../utils/customLog";
 import { setSyncPlan } from "../../utils/progressManager";
+import { ensureCollectionIndexes } from "./copyIndexes";
 import { buildDbWatchPipeline } from "./dbWatchPipeline";
 import { watchDeleteEvent } from "./deleteEvent";
 import { dumpCollections } from "./dumpEvent";
@@ -44,6 +45,8 @@ export type SyncEngineOptions = {
 	checkpointIntervalMs?: number;
 	/** Janela máx. p/ considerar um resume estabelecido (e p/ aguardar token). */
 	resumeProbeMs?: number;
+	/** Replicar no destino os índices secundários da origem (default false). */
+	copyIndexes?: boolean;
 };
 
 type Route = { srcCol: Collection; destCol: Collection; filter?: Document };
@@ -87,6 +90,10 @@ export class SyncEngine {
 	/** Total de docs escritos no dump (insert+update) e nomes dumpados — p/ o painel. */
 	docsDumped = 0;
 	readonly dumpedNames: string[] = [];
+	/** Cópia de índices (quando copyIndexes on): agregados p/ o painel final. */
+	indexesCreated = 0;
+	indexesSkipped = 0;
+	readonly indexFailures: { coll: string; name: string }[] = [];
 	/** Contadores de eventos do watch (p/ o heartbeat): por collection e por tipo. */
 	readonly eventCounts = new Map<string, number>();
 	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
@@ -115,6 +122,7 @@ export class SyncEngine {
 			checkpointIntervalMs:
 				options.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
+			copyIndexes: options.copyIndexes ?? false,
 		};
 		for (const col of this.opts.collections) {
 			this.routes.set(col.name, {
@@ -180,6 +188,18 @@ export class SyncEngine {
 				),
 		);
 
+		// collections que RESUMIRAM (dados já no destino): completa índices faltantes
+		// no startup. As que dumparam já trataram índices no runDump.
+		if (this.opts.copyIndexes) {
+			const resumedCols = plans.filter((p) => !p.needsDump).map((p) => p.col);
+			const idxLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
+			await Promise.all(
+				resumedCols.map((c) =>
+					idxLimiter.schedule(() => this.copyIndexesFor(c)),
+				),
+			);
+		}
+
 		// dumps concluídos: a lista de deletes-durante-dump não serve mais. Limpa a
 		// memória acumulada e desliga o acúmulo (no watch ela só cresceria à toa).
 		this.deletedIds.length = 0;
@@ -205,6 +225,36 @@ export class SyncEngine {
 			),
 		);
 		if (this.stream) await this.stream.close().catch(() => {});
+	}
+
+	/** Garante os índices da origem no destino p/ uma collection; agrega e loga. */
+	private async copyIndexesFor(col: EngineCollection): Promise<void> {
+		const route = this.routes.get(col.name);
+		if (!route) return;
+		let res: Awaited<ReturnType<typeof ensureCollectionIndexes>>;
+		try {
+			res = await ensureCollectionIndexes(route.srcCol, route.destCol);
+		} catch (err) {
+			// listIndexes da origem falhou → a collection inteira falha na cópia.
+			const reason = err instanceof Error ? err.message : String(err);
+			this.indexFailures.push({ coll: col.name, name: "*" });
+			customLog("warn", `[${col.name}] cópia de índices falhou: ${reason}`);
+			return;
+		}
+		this.indexesCreated += res.created;
+		this.indexesSkipped += res.skipped;
+		for (const f of res.failed)
+			this.indexFailures.push({ coll: col.name, name: f.name });
+		const parts = [
+			`${res.created} índices criados`,
+			`${res.skipped} já existiam`,
+		];
+		if (res.failed.length > 0) {
+			parts.push(
+				`${res.failed.length} FALHOU (${res.failed.map((f) => f.name).join(", ")})`,
+			);
+		}
+		customLog("info", `[${col.name}] ${parts.join(", ")}`);
 	}
 
 	/** Dump de uma collection: freeze (limpa hot velho) → dump → carimba. */
@@ -234,6 +284,9 @@ export class SyncEngine {
 			await markDumpCompleted(this.opts.destDb, col.name);
 			// dump concluído: não deve ressuscitar como incompleto no flush do stop.
 			this.lastFrontier.delete(col.name);
+			// índices DEPOIS do dump: build em lote único é mais rápido que manter
+			// índice a cada insert (igual ao mongorestore).
+			if (this.opts.copyIndexes) await this.copyIndexesFor(col);
 		} else {
 			// falhou mesmo após os retries: fica sem dumpCompletedAt (re-dumpa no
 			// próximo restart, retomando da fronteira salva) e entra no relatório.
@@ -295,7 +348,10 @@ export class SyncEngine {
 				if (this.resumeLost) done(true);
 				else if (this.stream?.resumeToken) done(false);
 			}, 50);
-			const grace = setTimeout(() => done(this.resumeLost), this.opts.resumeProbeMs);
+			const grace = setTimeout(
+				() => done(this.resumeLost),
+				this.opts.resumeProbeMs,
+			);
 		});
 	}
 
