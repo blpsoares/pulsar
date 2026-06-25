@@ -133,6 +133,37 @@ describe("ensureCollectionIndexes", () => {
 		expect(idx?.expireAfterSeconds).toBe(3600);
 	});
 
+	test("índice composto MESMA ordem no destino: skipped (não duplica)", async () => {
+		await srcDb.collection("c").createIndex({ a: 1, b: 1 });
+		await dstDb.collection("c").createIndex({ a: 1, b: 1 });
+
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("c"),
+			dstDb.collection("c"),
+		);
+
+		expect(res.created).toBe(0);
+		expect(res.skipped).toBe(1);
+	});
+
+	test("índice composto ORDEM DIFERENTE no destino: deve criar (guarda-regressão)", async () => {
+		// {a:1,b:1} na origem vs {b:1,a:1} no destino — são índices diferentes
+		await srcDb.collection("c").createIndex({ a: 1, b: 1 }, { name: "ab" });
+		await dstDb.collection("c").createIndex({ b: 1, a: 1 }, { name: "ba" });
+
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("c"),
+			dstDb.collection("c"),
+		);
+
+		expect(res.created).toBe(1);
+		// o índice {a:1,b:1} deve existir no destino
+		const idx = (await dstDb.collection("c").indexes()).find(
+			(i) => i.key?.a === 1 && i.key?.b === 1 && Object.keys(i.key)[0] === "a",
+		);
+		expect(idx).toBeDefined();
+	});
+
 	test("só _id_ na origem: no-op", async () => {
 		await srcDb.collection("c").insertOne({ _id: 1 as any });
 		await dstDb.collection("c").insertOne({ _id: 1 as any });

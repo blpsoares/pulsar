@@ -70,6 +70,41 @@ describe("SyncEngine — copyIndexes", () => {
 		await engine.stop();
 	});
 
+	test("copyIndexes:true no path de RESUME: cria índice sem re-dumpar", async () => {
+		await seed(srcDb, "colR", 10);
+
+		// 1ª execução SEM copyIndexes — estabelece dumpCompletedAt + resume token
+		const e1 = new SyncEngine({
+			sourceDb: srcDb,
+			destDb: dstDb,
+			collections: [{ name: "colR" }],
+			checkpointIntervalMs: 100,
+		});
+		await e1.start();
+		await e1.stop();
+
+		// Cria índice na origem APÓS o dump inicial
+		await srcDb.collection("colR").createIndex({ v: 1 });
+
+		// 2ª execução COM copyIndexes — deve RETOMAR (não re-dumpar) e copiar o índice
+		const e2 = new SyncEngine({
+			sourceDb: srcDb,
+			destDb: dstDb,
+			collections: [{ name: "colR" }],
+			copyIndexes: true,
+			checkpointIntervalMs: 100,
+		});
+		await e2.start();
+
+		expect(e2.indexesCreated).toBeGreaterThanOrEqual(1);
+		const idx = (await dstDb.collection("colR").indexes()).find(
+			(i) => i.key?.v === 1,
+		);
+		expect(idx).toBeDefined();
+
+		await e2.stop();
+	});
+
 	test("default (sem copyIndexes): NÃO replica índices", async () => {
 		await seed(srcDb, "colA", 10);
 		await srcDb.collection("colA").createIndex({ v: 1 });

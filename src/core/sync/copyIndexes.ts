@@ -45,9 +45,13 @@ function stableStringify(value: unknown): string {
 }
 
 /** Assinatura = key + opções (ignora nome/versões) → equivalentes batem mesmo
- *  com nomes diferentes. */
+ *  com nomes diferentes.
+ *  A ordem dos campos do `key` é SIGNIFICATIVA em índice composto
+ *  ({a:1,b:1} != {b:1,a:1}), então o key é serializado preservando a ordem de
+ *  inserção (JSON.stringify, não stableStringify). As opções são
+ *  order-insensitive → canonicalizadas por stableStringify. */
 function signature(idx: Document): string {
-	return stableStringify({ key: idx.key, ...indexOptions(idx) });
+	return `${JSON.stringify(idx.key)}|${stableStringify(indexOptions(idx))}`;
 }
 
 /**
