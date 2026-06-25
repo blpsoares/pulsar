@@ -29,14 +29,17 @@ export function buildInstanceCompose(
 	src = src.replace(/^ {2}pulsar-sync:$/m, `  ${name}:`);
 	// container_name
 	src = src.replace(/^(\s*container_name:\s*).*$/m, `$1${name}`);
-	// command: troca o configs/*.yml citado
+	// command: troca o caminho da config citado logo após "sync" (qualquer caminho,
+	// não só configs/*.yml — o base pode apontar pra um yml na raiz). Preserva
+	// args extras (ex.: -p N) depois do caminho.
 	src = src.replace(
-		/(command:\s*\[.*?")configs\/[^"]+(".*\])/,
+		/(command:\s*\[[^\]]*?"sync"\s*,\s*")[^"]+(")/,
 		`$1${opts.configPath}$2`,
 	);
-	// volume da config (linha configs/...:ro)
+	// volume da config (a linha de mount terminada em :ro de um .yml — qualquer
+	// caminho, raiz ou configs/). O volume de logs não tem :ro, então não casa.
 	src = src.replace(
-		/^(\s*-\s*)\.\/configs\/[^:]+:\/app\/configs\/[^:]+:ro(.*)$/m,
+		/^(\s*-\s*)\.\/[^:]+\.ya?ml:\/app\/[^:]+\.ya?ml:ro(.*)$/m,
 		`$1./${opts.configPath}:/app/${opts.configPath}:ro$2`,
 	);
 	// volume de logs próprio
