@@ -20,9 +20,13 @@ bun run bin:dev        # compila e instala o binário em ~/.local/bin/pulsar
 bun run bin:prod       # compila para dist/pulsar sem instalar
 bun run sys:info       # mostra CPU/RAM/swap/disco, explica cada limite e sugere valores pro compose-limit
 bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compose-limit.yml
+bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
+pulsar compose up      # idem, via binário instalado (bin:dev)
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
+bun run src/cli.ts ttl configs/ttl-example.yml                                       # TTL em massa via yml
+bun run src/cli.ts ttl --uri '...' --db x --all --derive-from-id --expire 30d        # TTL em massa via CLI
 ```
 
 ## Estrutura
@@ -33,6 +37,8 @@ src/
   commands/
     migrate.ts            # orquestra o fluxo completo de dump/restore
     sync.ts               # orquestra o fluxo de watch; inicializa logConfig
+    ttl.ts                # comando standalone: cria índices TTL em massa (yml ou CLI)
+    compose.ts            # comando interativo `compose up`: gera docker-compose-limit-<N>.yml de uma nova instância
   core/
     dump/
       dump.ts             # exporta collections via mongodump (com resume se temp-dump existir)
@@ -53,6 +59,15 @@ src/
       updateEvent.ts      # loga [collection] update | _id quando verbose
       deleteEvent.ts      # loga [collection] delete | _id quando verbose
       replaceEvent.ts     # loga [collection] replace | _id quando verbose
+    ttl/
+      parseDuration.ts      # "30d"/"1h"/"3mo" -> segundos (mês=30d, ano=365d; 'm' proibido)
+      resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
+      deriveCreated.ts      # updateMany pipeline { $toDate: "$_id" } -> campo _created (idempotente)
+      applyTtl.ts           # materializa (se preciso) + createIndex TTL por collection
+    compose/
+      recommend.ts          # recomenda recursos: orçamento (~65% RAM, ~1 core livre) MENOS o já comprometido pelas instâncias existentes
+      buildCompose.ts       # gera o compose da nova instância a partir do docker-compose-limit.yml base (troca nome/config/volumes/recursos)
+      detectConfigs.ts      # varre *.yml e classifica por command.sync/migrate/ttl (mostra destino)
   functions/
     getCollections.ts     # resolve lista de collections; carrega filter/filterFile
     freeze.ts             # chamado no início do sync (operação no destino)
@@ -194,6 +209,24 @@ command:
     queryString: ''   # opcional, formato JSON.stringify
 ```
 
+## Comando `ttl` — TTL em massa
+
+Comando **standalone** (sem relação com sync). Cria índices TTL em várias collections de uma vez.
+
+**Restrição crítica:** TTL só funciona em campo BSON `Date`. **`_id` direto é impossível** — o Mongo recusa o índice (`The field 'expireAfterSeconds' is not valid for an _id index specification`) e um campo do tipo `ObjectId` não expira (o monitor de TTL só lê `Date`). Quando a collection não tem campo de data, o pulsar **materializa** um campo `_created` a partir do `_id` via `updateMany` com pipeline (`{ $toDate: "$_id" }`), **só nos docs existentes** (`$exists:false` → idempotente). Inserts futuros não são cobertos — é one-shot; quem insere é responsável.
+
+**Nome `_created`** (não `_ttl`): o campo guarda data de criação, não um "tempo pra expirar".
+
+Dois modos:
+- **YAML** (`pulsar ttl arquivo.yml`): granular, `defaults` + override por collection. Ver `configs/ttl-example.yml`.
+- **CLI** (`pulsar ttl` + flags): config **uniforme** pra um conjunto de collections.
+
+Derivar do `_id` é **sempre explícito** (`deriveFromId: true` / `--derive-from-id`) — nada implícito. Sem `field` nem `deriveFromId` resolvidos → erro, não executa. `field` e `deriveFromId` são mutuamente exclusivos. Precedência por collection: o que a collection define vence; senão herda do `defaults` (um `field` explícito na collection suprime um `deriveFromId` herdado e vice-versa).
+
+**Duração** (`expire`): `30d`, `1h`, `3mo`... convertida pra `expireAfterSeconds`. Unidades: `s/sec/seconds`, `min/minutes`, `h/hours`, `d/days`, `w/weeks`, `mo/months` (30d), `y/years` (365d). **`m` sozinho é proibido** (ambíguo minuto/mês): use `min` ou `mo`. Mês=30d, ano=365d. Aceita `expireAfterSeconds` cru também.
+
+Flags CLI: `--uri`, `--db`, `--collections a,b,c` (ou `--all`), `--field <campo>` (ou `--derive-from-id`), `--expire <dur>`. Reusa `db/conn.ts`, `functions/getCollections.ts` (incl. `--all`) e `utils/parseYml.ts`. Não exige Replica Set (TTL não usa Change Stream). Testado em `test/` (parseDuration, resolveTtlEntry, deriveCreated, applyTtl, ttlCommand). Desenho em `docs/superpowers/specs/2026-06-24-ttl-command-design.md`.
+
 ## Ambiente de teste local
 
 `docker-compose-test.yml` sobe mongo-a (27020, replica set rs0) e mongo-b (27021). `configs/test-sync.yml` aponta para eles.
@@ -245,3 +278,14 @@ docker stats pulsar-sync     # ver RAM/CPU batendo no teto
 - **Botões do shutdown (opcionais, Docker-only):** `stop_grace_period` = quanto o Docker espera o SIGTERM ser tratado; `PULSAR_SHUTDOWN_TIMEOUT_MS` (env) = teto interno do `shutdown()` — mantenha-o **< `stop_grace_period`**. No desligamento do *host* quem manda é o `shutdown-timeout` do daemon (`/etc/docker/daemon.json`, default 15s); e `systemctl enable docker` faz o container voltar sozinho na realocação.
 - **Rotação de logs (`utils/customLog.ts`):** transports do winston com `maxsize`/`maxFiles`/`tailable`, via env `LOG_MAX_SIZE` (bytes) e `LOG_MAX_FILES`. Teto de disco ≈ `LOG_MAX_SIZE × LOG_MAX_FILES` por nível. **Independe do Docker** (os defaults valem rodando bare). O compose adicionalmente capa os logs do **container** (json-file `max-size`/`max-file`) — fluxo separado da pasta `./logs`.
 - **STATUS heartbeat (`utils/progressManager.ts`):** sem TTY (container/pm2/systemd) as barras são desligadas; no lugar, um bloco consolidado é impresso a cada `STATUS_INTERVAL_MS` (default 10s; `0` desliga) mostrando, por dump ativo, barra de texto `█░` + % + docs, mais contadores (`concluídos`/`em andamento`/`total`). Legível mesmo sem cor. Só roda durante o dump inicial (`startStatusReporter`/`stopStatusReporter` em `sync.ts`); no modo TTY as barras continuam normais.
+
+### Múltiplas instâncias paralelas — `pulsar compose up` (`commands/compose.ts`)
+
+Pra rodar mais de um `sync` na mesma VM (datasets diferentes), o `docker-compose-limit.yml` sozinho **não serve**: ele fixa `container_name: pulsar-sync`, então `up` de novo é no-op (mexe no mesmo container). O `pulsar compose up` é um comando **interativo** que gera um `docker-compose-limit-<N>.yml` próprio pra cada instância nova:
+
+1. **Lê o `docker-compose-limit.yml` do diretório atual como base** (fonte única — a nova instância herda env/stop_grace/logging que você calibrou) e troca: `container_name`/serviço → `pulsar-sync-<N>`, o `command`+volume da config, e o volume de logs → `./logs-<N>`.
+2. **Detecta as configs do pulsar** na pasta (`detectConfigs.ts` classifica por `command.sync/migrate/ttl`) e oferece as de **sync**, mostrando o **destino** de cada uma (ajuda a não apontar duas pro mesmo destino).
+3. **Recomenda recursos pelo USO atual** (`recommend.ts`): orçamento ~65% da RAM e ~1 núcleo livre, **menos o que as instâncias existentes já comprometeram** (lido via `docker inspect` dos `pulsar-sync*`) — assim o somatório não estoura a VM. Padrão é aplicar o recomendado (Enter); manual é opcional.
+4. Oferece subir na hora (`docker compose -f docker-compose-limit-<N>.yml up -d --build`).
+
+**Crítico:** cada instância DEVE apontar pra um **destino diferente** (db/collections sem sobreposição). Dois `sync` no mesmo destino brigam pelo resume token global (`__sync`) e duplicam escrita. Os `docker-compose-limit-*.yml` e `logs-*/` gerados ficam no `.gitignore`. Lógica pura testada em `test/compose.test.ts`.

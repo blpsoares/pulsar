@@ -11,3 +11,13 @@ export type SyncOptionsCli = {
 	verbose?: boolean;
 	full?: boolean;
 };
+export type TtlOptionsCli = {
+	uri?: string;
+	db?: string;
+	collections?: string;
+	all?: boolean;
+	field?: string;
+	deriveFromId?: boolean;
+	expire?: string;
+	parallel?: number | string;
+};

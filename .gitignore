@@ -143,3 +143,7 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+
+# composes de instâncias geradas pelo `pulsar compose up`
+docker-compose-limit-*.yml
+logs-*/

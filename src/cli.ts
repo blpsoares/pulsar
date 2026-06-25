@@ -1,15 +1,18 @@
 #! /usr/bin/env bun
 
-import { showTitle } from "./utils/showCliTitle";
 import { Command } from "commander";
+import { composeUp } from "./commands/compose";
 import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
+import { ttlCommand } from "./commands/ttl";
 import { logger } from "./utils/customLog";
+import { showTitle } from "./utils/showCliTitle";
 
 // Rede de segurança: um erro não tratado (ex.: blip de rede num handler async)
 // não deve derrubar o daemon de sync. Logamos e seguimos rodando.
 process.on("unhandledRejection", (reason) => {
-	const message = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+	const message =
+		reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
 	logger.error(`unhandledRejection ${message}`);
 	console.error("[ ERROR ] unhandledRejection:", message);
 });
@@ -48,11 +51,61 @@ program
 		"-b --batch <number>",
 		"tamanho do lote (find $in + bulkWrite) no dump inicial. Padrão: 500.",
 	)
-	.option("-v --verbose", "log each watch event (insert, update, delete, replace)")
+	.option(
+		"-v --verbose",
+		"log each watch event (insert, update, delete, replace)",
+	)
 	.option(
 		"-f --full",
 		"força o dump completo de todas as collections, ignorando os carimbos de conclusão (reconciliação total).",
 	)
 	.action(syncCollections);
+
+program
+	.command("ttl [file]")
+	.description(
+		"cria índices TTL em massa. Com [file] usa yml granular; sem arquivo, usa as flags abaixo (config uniforme).",
+	)
+	.option("--uri <uri>", "URI do Mongo (modo CLI)")
+	.option("--db <db>", "banco alvo (modo CLI)")
+	.option(
+		"--collections <list>",
+		"collections separadas por vírgula, ex.: orders,logs,posts",
+	)
+	.option("-a --all", "aplica em todas as collections do banco")
+	.option("--field <field>", "campo Date existente como base do TTL")
+	.option(
+		"--derive-from-id",
+		"materializa _created a partir do _id (explícito)",
+	)
+	.option("--expire <dur>", "duração: 30d, 1h, 3mo, 90d... (mês=30d, ano=365d)")
+	.option(
+		"-p --parallel <number>",
+		"quantas collections recebem TTL em paralelo. Padrão: 4.",
+	)
+	.action((file, opts) =>
+		ttlCommand(file, {
+			uri: opts.uri,
+			db: opts.db,
+			collections: opts.collections,
+			all: opts.all,
+			field: opts.field,
+			deriveFromId: opts.deriveFromId,
+			expire: opts.expire,
+			parallel: opts.parallel,
+		}),
+	);
+
+const compose = program
+	.command("compose")
+	.description(
+		"gerencia instâncias do pulsar-sync com cerca de recursos (cgroups)",
+	);
+compose
+	.command("up")
+	.description(
+		"cria interativamente uma nova instância pulsar-sync ao lado das existentes, com recursos recomendados pelo uso atual da máquina",
+	)
+	.action(composeUp);
 
 program.parse(process.argv);

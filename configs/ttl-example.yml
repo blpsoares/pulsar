@@ -1,0 +1,19 @@
+# Exemplo do comando `pulsar ttl` — cria índices TTL em massa.
+# NUNCA commitar URI/credencial real aqui: use placeholder ou o mongo local.
+command:
+  ttl:
+    source:
+      uri: 'mongodb://127.0.0.1:27021/?directConnection=true'
+      db: 'meu-banco'
+    defaults:
+      deriveFromId: true       # materializa _created a partir do _id (explícito)
+      expire: 30d              # 30 dias
+    collections:
+      - orders                 # herda defaults (deriva _created, 30d)
+      - logs                   # idem
+      - name: sessions         # override
+        field: lastActivity    #   usa campo Date existente
+        expire: 1h             #   expira em 1h
+      - name: trimestral
+        field: createdAt
+        expire: 3mo            # 90 dias
