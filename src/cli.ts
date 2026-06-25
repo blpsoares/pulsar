@@ -1,6 +1,7 @@
 #! /usr/bin/env bun
 
 import { Command } from "commander";
+import { composeUp } from "./commands/compose";
 import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
 import { ttlCommand } from "./commands/ttl";
@@ -94,5 +95,17 @@ program
 			parallel: opts.parallel,
 		}),
 	);
+
+const compose = program
+	.command("compose")
+	.description(
+		"gerencia instâncias do pulsar-sync com cerca de recursos (cgroups)",
+	);
+compose
+	.command("up")
+	.description(
+		"cria interativamente uma nova instância pulsar-sync ao lado das existentes, com recursos recomendados pelo uso atual da máquina",
+	)
+	.action(composeUp);
 
 program.parse(process.argv);

@@ -20,6 +20,7 @@ bun run bin:dev        # compila e instala o binário em ~/.local/bin/pulsar
 bun run bin:prod       # compila para dist/pulsar sem instalar
 bun run sys:info       # mostra CPU/RAM/swap/disco, explica cada limite e sugere valores pro compose-limit
 bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compose-limit.yml
+pulsar compose up      # cria interativamente uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
@@ -36,6 +37,7 @@ src/
     migrate.ts            # orquestra o fluxo completo de dump/restore
     sync.ts               # orquestra o fluxo de watch; inicializa logConfig
     ttl.ts                # comando standalone: cria índices TTL em massa (yml ou CLI)
+    compose.ts            # comando interativo `compose up`: gera docker-compose-limit-<N>.yml de uma nova instância
   core/
     dump/
       dump.ts             # exporta collections via mongodump (com resume se temp-dump existir)
@@ -61,6 +63,10 @@ src/
       resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
       deriveCreated.ts      # updateMany pipeline { $toDate: "$_id" } -> campo _created (idempotente)
       applyTtl.ts           # materializa (se preciso) + createIndex TTL por collection
+    compose/
+      recommend.ts          # recomenda recursos: orçamento (~65% RAM, ~1 core livre) MENOS o já comprometido pelas instâncias existentes
+      buildCompose.ts       # gera o compose da nova instância a partir do docker-compose-limit.yml base (troca nome/config/volumes/recursos)
+      detectConfigs.ts      # varre *.yml e classifica por command.sync/migrate/ttl (mostra destino)
   functions/
     getCollections.ts     # resolve lista de collections; carrega filter/filterFile
     freeze.ts             # chamado no início do sync (operação no destino)
@@ -271,3 +277,14 @@ docker stats pulsar-sync     # ver RAM/CPU batendo no teto
 - **Botões do shutdown (opcionais, Docker-only):** `stop_grace_period` = quanto o Docker espera o SIGTERM ser tratado; `PULSAR_SHUTDOWN_TIMEOUT_MS` (env) = teto interno do `shutdown()` — mantenha-o **< `stop_grace_period`**. No desligamento do *host* quem manda é o `shutdown-timeout` do daemon (`/etc/docker/daemon.json`, default 15s); e `systemctl enable docker` faz o container voltar sozinho na realocação.
 - **Rotação de logs (`utils/customLog.ts`):** transports do winston com `maxsize`/`maxFiles`/`tailable`, via env `LOG_MAX_SIZE` (bytes) e `LOG_MAX_FILES`. Teto de disco ≈ `LOG_MAX_SIZE × LOG_MAX_FILES` por nível. **Independe do Docker** (os defaults valem rodando bare). O compose adicionalmente capa os logs do **container** (json-file `max-size`/`max-file`) — fluxo separado da pasta `./logs`.
 - **STATUS heartbeat (`utils/progressManager.ts`):** sem TTY (container/pm2/systemd) as barras são desligadas; no lugar, um bloco consolidado é impresso a cada `STATUS_INTERVAL_MS` (default 10s; `0` desliga) mostrando, por dump ativo, barra de texto `█░` + % + docs, mais contadores (`concluídos`/`em andamento`/`total`). Legível mesmo sem cor. Só roda durante o dump inicial (`startStatusReporter`/`stopStatusReporter` em `sync.ts`); no modo TTY as barras continuam normais.
+
+### Múltiplas instâncias paralelas — `pulsar compose up` (`commands/compose.ts`)
+
+Pra rodar mais de um `sync` na mesma VM (datasets diferentes), o `docker-compose-limit.yml` sozinho **não serve**: ele fixa `container_name: pulsar-sync`, então `up` de novo é no-op (mexe no mesmo container). O `pulsar compose up` é um comando **interativo** que gera um `docker-compose-limit-<N>.yml` próprio pra cada instância nova:
+
+1. **Lê o `docker-compose-limit.yml` do diretório atual como base** (fonte única — a nova instância herda env/stop_grace/logging que você calibrou) e troca: `container_name`/serviço → `pulsar-sync-<N>`, o `command`+volume da config, e o volume de logs → `./logs-<N>`.
+2. **Detecta as configs do pulsar** na pasta (`detectConfigs.ts` classifica por `command.sync/migrate/ttl`) e oferece as de **sync**, mostrando o **destino** de cada uma (ajuda a não apontar duas pro mesmo destino).
+3. **Recomenda recursos pelo USO atual** (`recommend.ts`): orçamento ~65% da RAM e ~1 núcleo livre, **menos o que as instâncias existentes já comprometeram** (lido via `docker inspect` dos `pulsar-sync*`) — assim o somatório não estoura a VM. Padrão é aplicar o recomendado (Enter); manual é opcional.
+4. Oferece subir na hora (`docker compose -f docker-compose-limit-<N>.yml up -d --build`).
+
+**Crítico:** cada instância DEVE apontar pra um **destino diferente** (db/collections sem sobreposição). Dois `sync` no mesmo destino brigam pelo resume token global (`__sync`) e duplicam escrita. Os `docker-compose-limit-*.yml` e `logs-*/` gerados ficam no `.gitignore`. Lógica pura testada em `test/compose.test.ts`.
