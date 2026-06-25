@@ -20,7 +20,8 @@ bun run bin:dev        # compila e instala o binário em ~/.local/bin/pulsar
 bun run bin:prod       # compila para dist/pulsar sem instalar
 bun run sys:info       # mostra CPU/RAM/swap/disco, explica cada limite e sugere valores pro compose-limit
 bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compose-limit.yml
-pulsar compose up      # cria interativamente uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
+bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
+pulsar compose up      # idem, via binário instalado (bin:dev)
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
