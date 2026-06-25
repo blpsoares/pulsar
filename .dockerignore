@@ -2,3 +2,5 @@
 node_modules
 temp-dump
 logs
+logs-*
+docker-compose-limit-*.yml
