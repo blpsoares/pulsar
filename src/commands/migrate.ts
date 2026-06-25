@@ -1,18 +1,19 @@
+import Bottleneck from "bottleneck";
 import fs from "fs";
 import path from "path";
-import { conn } from "../db/conn";
-import Bottleneck from "bottleneck";
-import parseYml from "../utils/parseYml";
-import { initMigration } from "../core/dump/dump";
-import { deleteTempFolder } from "../utils/deleteTempFolder";
-import { initRestore } from "../core/dump/restoreDump";
-import { initRegistrationSync } from "../core/dump/initSync";
 import { dropOldCollections } from "../core/dump/dropOldCollections";
+import { initMigration } from "../core/dump/dump";
+import { initRegistrationSync } from "../core/dump/initSync";
 import { renameNewCollections } from "../core/dump/renameCollections";
-import { customLog } from "../utils/customLog";
-import { migrateYmlSchema, type MigrateYmlOptions } from "../types/parseYml";
+import { initRestore } from "../core/dump/restoreDump";
+import { conn } from "../db/conn";
 import { getCollections } from "../functions/getCollections";
 import type { MigrateOptionsCli } from "../types/cliOptions";
+import { type MigrateYmlOptions, migrateYmlSchema } from "../types/parseYml";
+import { customLog } from "../utils/customLog";
+import { deleteTempFolder } from "../utils/deleteTempFolder";
+import { formatLoadReport } from "../utils/loadReport";
+import parseYml from "../utils/parseYml";
 
 const migrateCollections = async (
 	ymlPath: string,
@@ -34,6 +35,9 @@ const migrateCollections = async (
 		migrate.collections,
 	);
 	const migrateCollections = collectionEntries.map((e) => e.name);
+
+	// Início da carga (1ª collection) — p/ o relatório de tempo total ao final.
+	const startedAt = Date.now();
 	/**
 	 *
 	 * ? MIGRATE COLLECTIONS
@@ -83,7 +87,7 @@ const migrateCollections = async (
 	if (failedColds.length > 0) {
 		customLog("info", "Retrying set cold stats on failed collections");
 
-		let [newSuccessColds] = await initRegistrationSync(
+		const [newSuccessColds] = await initRegistrationSync(
 			options,
 			failedColds,
 			clientDestination,
@@ -123,6 +127,13 @@ const migrateCollections = async (
 		migrate.destination.db,
 		successDrops,
 		limiter,
+	);
+
+	// Banco "up" — todas as collections migradas e renomeadas. Relatório de tempo.
+	customLog(
+		"info",
+		formatLoadReport(migrateCollections.length, startedAt, Date.now()),
+		true,
 	);
 
 	/**

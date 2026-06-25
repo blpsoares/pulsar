@@ -9,6 +9,7 @@ import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
 import { setLogConfig } from "../utils/logConfig";
 import { customLog, logger } from "../utils/customLog";
+import { formatLoadReport } from "../utils/loadReport";
 import {
 	finishProgress,
 	initProgress,
@@ -157,8 +158,10 @@ export async function syncCollections(
 		const statusIntervalMs = Number(process.env.STATUS_INTERVAL_MS) || 10000;
 		if (!barsActive) startStatusReporter(collections.length, statusIntervalMs);
 
+		const startedAt = Date.now();
 		const t0 = performance.now();
 		await engine.start();
+		const finishedAt = Date.now();
 		stopStatusReporter();
 		finishProgress();
 
@@ -189,6 +192,9 @@ export async function syncCollections(
 				: {}),
 		});
 		console.log(`\n${panel}\n`);
+		// Linha única e greppável: nº de collections + início/fim (relógio) + total,
+		// pra reportar "banco up em X". Vai pro terminal e pro logs/debug.log.
+		customLog("info", formatLoadReport(total, startedAt, finishedAt), true);
 		logger.info(
 			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}${copyIndexes ? ` | índices: +${engine.indexesCreated} (${engine.indexesSkipped} já existiam, ${engine.indexFailures.length} falhas)` : ""}`,
 		);
