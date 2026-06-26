@@ -147,3 +147,6 @@ dist
 # composes de instâncias geradas pelo `pulsar compose up`
 docker-compose-limit-*.yml
 logs-*/
+
+# scratch do subagent-driven-development
+.superpowers/
