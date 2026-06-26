@@ -1,6 +1,7 @@
 import Bottleneck from "bottleneck";
 import fs from "fs";
 import path from "path";
+import { assertMongoTools } from "../functions/assertMongoTools";
 import { dropOldCollections } from "../core/dump/dropOldCollections";
 import { initMigration } from "../core/dump/dump";
 import { initRegistrationSync } from "../core/dump/initSync";
@@ -19,6 +20,9 @@ const migrateCollections = async (
 	ymlPath: string,
 	cliParams: MigrateOptionsCli,
 ) => {
+	// Preflight: garante mongodump/mongorestore no PATH antes de tocar no Atlas.
+	assertMongoTools();
+
 	const outputExport = path.resolve(__dirname, "..", "..", "temp-dump");
 
 	if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);

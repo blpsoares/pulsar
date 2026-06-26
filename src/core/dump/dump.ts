@@ -75,7 +75,7 @@ export const dumpCollections = async (
 	if (failedExports.length > 0) {
 		customLog(
 			"warn",
-			`Some collections were not exported, check the logs at src/logs/error.log to view these collections`,
+			`Some collections were not exported, check the logs at logs/error.log to view these collections`,
 		);
 
 		logger.error(`No exported collections\n["${failedExports.join('","')}"]`);
