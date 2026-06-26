@@ -163,6 +163,16 @@ O filtro é aplicado em:
 
 O hash é calculado do documento **original** (sem `__sync`/`origin`), então a comparação funciona mesmo com os metadados presentes no destino.
 
+### `__migratedAt` — âncora de TTL
+
+Toda escrita no destino (dump e watch) grava um campo `__migratedAt` na **raiz**, do tipo BSON `Date`, com a data em que o doc **entrou na réplica**. É **imutável**: gravado na 1ª escrita e preservado nas demais (via pipeline `$ifNull("$__migratedAt", "$$NOW")` em `core/sync/writeDoc.ts`). Serve de âncora pro comando `ttl` em collections cujo `_id` **não** é `ObjectId` (onde `--derive-from-id` não funciona):
+
+```sh
+pulsar ttl --uri '...' --db x --all --field __migratedAt --expire 30d
+```
+
+Não é a data de criação real em produção — é "quando sincronizou". Pra limpeza da réplica (expirar X tempo após entrar), é a âncora correta. Lógica em `core/sync/writeDoc.ts`, testes em `test/writeDoc.test.ts`.
+
 ### Cópia de índices (`copyIndexes`)
 
 O copy doc-a-doc do sync **não** traz os índices secundários da origem (só os dados; `migrate` via mongorestore traz). Com `copyIndexes: true` no yml, o sync replica os índices da origem no destino: faz um **diff por assinatura** (key+opções) e cria **só os que faltam** — num banco já migrado, a maioria das collections nem recebe escrita. Collection que dumpa cria o índice **depois** do dump (build em lote, igual mongorestore); collection que resume completa no startup. Falha de `createIndex` (ex.: conflito de nome) é **contida** (loga, não aborta o sync) e re-tentada no próximo startup. Nunca remove índices que existem só no destino. Painel final mostra `Índices · criados/já existiam/falhados`. Lógica em `core/sync/copyIndexes.ts`, testes em `test/copyIndexes.test.ts` e `test/engine.copyIndexes.test.ts`.
