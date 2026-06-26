@@ -31,12 +31,18 @@ export const conn = async (uri: string, source: string = "->") => {
 			maxIdleTimeMS: 30000,
 		});
 		await client.connect();
+		// client.connect() resolve de forma OTIMISTA: o driver v6 retorna sem garantir
+		// um handshake real com o mongod, então um IP fora da allowlist do Atlas (ou
+		// 27017 bloqueada) passava como "Connected" e só estourava 50 erros crípticos
+		// lá no mongodump. O ping força um round-trip de verdade — falha aqui, com
+		// mensagem clara, em vez de mentir sucesso.
+		await client.db().command({ ping: 1 });
 		customLog("success", `Connected to ${source} MongoDB!`);
 		return client;
 	} catch (error) {
 		customLog(
 			"error",
-			`Can't connect to MongoDB, please verify your credentials or see logs on /src/logs/error.log`,
+			`Não alcancei o MongoDB (${source}). Verifique: 1) seu IP está na Network Access (IP allowlist) do Atlas; 2) a saída TCP na 27017 não está bloqueada; 3) credenciais/URI. Detalhes em logs/error.log`,
 		);
 		logger.error(uri);
 		throw errorHandler(error, "CONN:MONGO:CLIENT");
