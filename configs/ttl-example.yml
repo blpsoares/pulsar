@@ -17,3 +17,11 @@ command:
       - name: trimestral
         field: createdAt
         expire: 3mo            # 90 dias
+      # - name: qualquer-collection
+      #   field: __migratedAt   # data em que o doc entrou na réplica (BSON Date)
+      #   expire: 30d
+      #   # ATENÇÃO: o campo `__migratedAt` SÓ existe se o banco de destino foi
+      #   # criado/atualizado pelo `pulsar sync` (ele injeta esse campo, imutável,
+      #   # na 1ª escrita de cada doc). Num banco que NÃO passou pelo pulsar sync
+      #   # o campo não existe e o TTL não expira nada. Use-o como âncora de TTL
+      #   # em collections cujo `_id` NÃO é ObjectId (onde `deriveFromId` não dá).
