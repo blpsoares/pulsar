@@ -319,15 +319,11 @@ export class SyncEngine {
 	): Promise<boolean> {
 		const pipeline = buildDbWatchPipeline(this.opts.collections);
 		if (!globalToken) {
-			this.runStream(
-				this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
-				false,
-			);
+			this.runStream(this.opts.sourceDb.watch(pipeline), false);
 			return false;
 		}
 		this.resumeLost = false;
 		const stream = this.opts.sourceDb.watch(pipeline, {
-			fullDocument: "updateLookup",
 			startAfter: globalToken,
 		});
 		// O pump (for await) começa a consumir JÁ: isso dirige o aggregate (popula
@@ -386,10 +382,7 @@ export class SyncEngine {
 				);
 				this.resumeLost = true;
 				await stream.close().catch(() => {});
-				this.runStream(
-					this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
-					false,
-				);
+				this.runStream(this.opts.sourceDb.watch(pipeline), false);
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
@@ -398,7 +391,6 @@ export class SyncEngine {
 			setTimeout(() => {
 				if (this.closed || this.stream !== stream) return;
 				const next = this.opts.sourceDb.watch(pipeline, {
-					fullDocument: "updateLookup",
 					...(this.lastToken ? { startAfter: this.lastToken } : {}),
 				});
 				this.runStream(next, resumeMode);
@@ -413,7 +405,7 @@ export class SyncEngine {
 		if (!coll) return;
 		const route = this.routes.get(coll);
 		if (!route) return;
-		await this.applyEvent(change, route.destCol);
+		await this.applyEvent(change, route.srcCol, route.destCol);
 	}
 
 	/** Conta o evento (por collection + por tipo) p/ o heartbeat do watch. */
@@ -427,22 +419,32 @@ export class SyncEngine {
 
 	private async applyEvent(
 		change: ChangeStreamDocument,
+		srcCol: Collection,
 		destCol: Collection,
 	): Promise<void> {
 		const coll = destCol.collectionName;
 		switch (change.operationType) {
-			case "insert":
+			case "insert": {
 				this.countEvent(coll, "insert");
-				await watchInsertEvent(destCol, change.fullDocument);
+				const id = (change.documentKey as { _id: unknown })._id;
+				const doc = await srcCol.findOne({ _id: id as never });
+				await watchInsertEvent(destCol, doc as Document);
 				break;
-			case "update":
+			}
+			case "update": {
 				this.countEvent(coll, "update");
-				await watchUpdateEvent(destCol, change.fullDocument);
+				const id = (change.documentKey as { _id: unknown })._id;
+				const doc = await srcCol.findOne({ _id: id as never });
+				await watchUpdateEvent(destCol, doc as Document);
 				break;
-			case "replace":
+			}
+			case "replace": {
 				this.countEvent(coll, "replace");
-				await watchReplaceEvent(destCol, change.fullDocument);
+				const id = (change.documentKey as { _id: unknown })._id;
+				const doc = await srcCol.findOne({ _id: id as never });
+				await watchReplaceEvent(destCol, doc as Document);
 				break;
+			}
 			case "delete":
 				this.countEvent(coll, "delete");
 				// Durante o dump, registra o delete (evita re-inserir na corrida). No
