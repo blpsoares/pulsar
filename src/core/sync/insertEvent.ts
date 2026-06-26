@@ -1,7 +1,7 @@
-import type { Document, Collection } from "mongodb";
+import type { Collection, Document } from "mongodb";
 import { customLog, logger, terminalLog } from "../../utils/customLog";
-import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { getLogConfig } from "../../utils/logConfig";
+import { writeDocToDest } from "./writeDoc";
 
 export async function watchInsertEvent(
 	destCollection: Collection,
@@ -9,19 +9,15 @@ export async function watchInsertEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] insert: fullDocument not found, skipping.`);
+		customLog(
+			"warn",
+			`[${collectionName}] insert: fullDocument not found, skipping.`,
+		);
 		return;
 	}
 
-	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:insert");
-
 	try {
-		// upsert (não insertOne) para ser idempotente: o doc pode já existir por
-		// causa da corrida entre dump e change stream ou de entrega duplicada do
-		// evento. insertOne nesse caso lança E11000 e derrubaria o processo.
-		await destCollection.replaceOne({ _id: rawDocument._id }, newDocument, {
-			upsert: true,
-		});
+		await writeDocToDest(destCollection, rawDocument, "watch:insert");
 	} catch (error) {
 		customLog(
 			"error",

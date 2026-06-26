@@ -1,7 +1,7 @@
-import type { Document, Collection } from "mongodb";
+import type { Collection, Document } from "mongodb";
 import { customLog, logger, terminalLog } from "../../utils/customLog";
-import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { getLogConfig } from "../../utils/logConfig";
+import { writeDocToDest } from "./writeDoc";
 
 export async function watchUpdateEvent(
 	destCollection: Collection,
@@ -9,14 +9,15 @@ export async function watchUpdateEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] update: fullDocument not found, skipping.`);
+		customLog(
+			"warn",
+			`[${collectionName}] update: fullDocument not found, skipping.`,
+		);
 		return;
 	}
 
-	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:update");
-
 	try {
-		await destCollection.updateOne({ _id: rawDocument._id }, { $set: newDocument }, { upsert: true });
+		await writeDocToDest(destCollection, rawDocument, "watch:update");
 	} catch (error) {
 		customLog(
 			"error",

@@ -1,7 +1,7 @@
 import type { Collection, Document } from "mongodb";
 import { customLog, logger, terminalLog } from "../../utils/customLog";
-import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { getLogConfig } from "../../utils/logConfig";
+import { writeDocToDest } from "./writeDoc";
 
 export async function watchReplaceEvent(
 	destCollection: Collection,
@@ -9,18 +9,15 @@ export async function watchReplaceEvent(
 ) {
 	const { collectionName } = destCollection;
 	if (!rawDocument) {
-		customLog("warn", `[${collectionName}] replace: fullDocument not found, skipping.`);
+		customLog(
+			"warn",
+			`[${collectionName}] replace: fullDocument not found, skipping.`,
+		);
 		return;
 	}
 
-	const newDocument = addFieldsOnMongoDocument(rawDocument, "watch:replace");
-
 	try {
-		// upsert para cobrir o caso em que o doc ainda não chegou ao destino
-		// (corrida com o dump).
-		await destCollection.replaceOne({ _id: rawDocument._id }, newDocument, {
-			upsert: true,
-		});
+		await writeDocToDest(destCollection, rawDocument, "watch:replace");
 	} catch (error) {
 		customLog(
 			"error",
