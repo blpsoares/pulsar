@@ -55,10 +55,8 @@ src/
       index.ts            # só exporta acceptableEventOperations (orquestração migrou pro engine)
       dumpEvent.ts        # cursor completo com hash comparison, progress bar e stats
       watcherEvents.ts    # EventEmitter central para eventos do change stream
-      insertEvent.ts      # loga [collection] insert | _id quando verbose
-      updateEvent.ts      # loga [collection] update | _id quando verbose
+      changeBuffer.ts     # ChangeBuffer: dedupe/drain de IDs por collection para flush em lote
       deleteEvent.ts      # loga [collection] delete | _id quando verbose
-      replaceEvent.ts     # loga [collection] replace | _id quando verbose
     ttl/
       parseDuration.ts      # "30d"/"1h"/"3mo" -> segundos (mês=30d, ano=365d; 'm' proibido)
       resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
@@ -87,6 +85,8 @@ src/
 ### Stream único (`db.watch`) — 1 conexão pra todas as collections
 
 **Crítico p/ não saturar o Atlas.** O `sync` abre **UM único change stream no banco** (`sourceDb.watch`), recortado nas X collections via `$match` em `ns.coll` (`dbWatchPipeline.ts`), e **roteia cada evento pela `ns.coll`** pra collection de destino. Antes era 1 `collection.watch()` por collection → 55 conexões presas (cada change stream é um long-poll que prende 1 conexão pra vida toda) → 400-950 conexões no Atlas, derrubando o cluster compartilhado. Agora: **1 conexão de escuta** + ~`parallel` conexões de dump que giram. Por isso `maxPoolSize` é baixo (30) em `db/conn.ts`.
+
+**Watch como gatilho — re-busca em lote (`changeBuffer.ts` + `engine.ts` `flush`)**: o change stream é aberto **sem `updateLookup`** e com um `$project` que retira o `fullDocument` — o evento é usado apenas como **gatilho** (só `ns.coll` e `_id` importam). Os `_id`s recebidos são acumulados por collection no `ChangeBuffer` (dedupe por `_id`, sem duplicatas por evento rápido no mesmo doc). A cada `flushIntervalMs` (default 1000ms, configurável via `PULSAR_FLUSH_INTERVAL_MS` ou `performance.flushIntervalMs` no yml), o `flush()` drena o buffer e re-busca os docs via `find({ _id: { $in: [...] } })` na origem, escrevendo no destino via `writeDocToDest`. Docs ausentes na re-busca (deleções) recebem `deleteOne` no destino. Isso torna o watch **imune ao limite de 16MB** do change stream (o evento jamais carrega o documento — qualquer doc, de qualquer tamanho, passa como `_id` de ~12 bytes). O checkpoint após cada flush carimba o `lastFlushedToken` (não o `stream.resumeToken` instantâneo), garantindo que o token só avança quando todos os `_id`s daquele lote foram escritos. Lógica em `core/sync/changeBuffer.ts` e `engine.ts` (`flush`).
 
 **Consumo com backpressure (`engine.ts` `pump`)**: o stream é consumido via `for await`, **aguardando** cada escrita no destino antes de puxar o próximo evento. Isso prende a memória a ~1 lote do change stream e aplica os eventos **em ordem**. Substituiu o antigo `.on('change')` fire-and-forget, que disparava escritas concorrentes ILIMITADAS — no replay de um backlog grande (resume após downtime) isso empilhava milhares de `updateOne` + fullDocuments em memória e estourava a RAM da VM (era a causa raiz do OOM). O probe do resume (detecção do token válido vs 286) é por **polling do `resumeToken`** enquanto o `pump` dirige o stream — não bloqueia, mantém o resume rápido.
 

@@ -55,6 +55,8 @@ export const syncYmlSchema = z.object({
 					parallel: z.number().int().positive().optional(),
 					// tamanho do lote (find $in + bulkWrite) no dump
 					batchSize: z.number().int().positive().optional(),
+					// intervalo de flush do changeBuffer (ms); default 1000
+					flushIntervalMs: z.number().int().positive().optional(),
 				})
 				.optional(),
 		}),

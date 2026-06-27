@@ -65,12 +65,16 @@ export async function syncCollections(
 		toNum(process.env.PULSAR_BATCH_SIZE) ??
 		ymlPerf.batchSize ??
 		500;
+	const flushIntervalMs =
+		toNum(process.env.PULSAR_FLUSH_INTERVAL_MS) ??
+		ymlPerf.flushIntervalMs ??
+		1000;
 	const full = Boolean(cliParams.full);
 	const copyIndexes = Boolean(options.command.sync.copyIndexes ?? false);
 
 	customLog(
 		"info",
-		`Performance: parallel=${parallel} | batchSize=${batchSize}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}`,
+		`Performance: parallel=${parallel} | batchSize=${batchSize} | flushIntervalMs=${flushIntervalMs}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}`,
 	);
 
 	const client = await conn(options.command.sync.source.uri, "source");
@@ -148,6 +152,7 @@ export async function syncCollections(
 			collections,
 			parallel,
 			batchSize,
+			flushIntervalMs,
 			full,
 			copyIndexes,
 		});
