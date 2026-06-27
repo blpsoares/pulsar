@@ -433,6 +433,7 @@ export class SyncEngine {
 		const tokenAtDrain = this.pendingToken;
 		const grouped = this.buffer.drain();
 		this.flushing = (async () => {
+			let allOk = true;
 			for (const [coll, { upserts, deletes }] of grouped) {
 				const route = this.routes.get(coll);
 				if (!route) continue;
@@ -456,12 +457,17 @@ export class SyncEngine {
 						}
 					}
 				} catch (err) {
+					allOk = false;
 					const msg = err instanceof Error ? err.message : String(err);
 					logger.error(`FLUSH:${coll} ${msg}`);
+					// re-enfileira os ids da collection que falhou para retry no próximo flush
+					for (const id of deletes) this.buffer.add(coll, id, "delete");
+					for (const id of upserts) this.buffer.add(coll, id, "upsert");
 				}
 			}
-			// só agora o lote está aplicado: o checkpoint pode avançar.
-			if (tokenAtDrain) this.lastFlushedToken = tokenAtDrain;
+			// só avança o checkpoint se TODO o lote foi aplicado com sucesso —
+			// uma falha parcial mantém o token parado e re-entrega no próximo flush.
+			if (allOk && tokenAtDrain) this.lastFlushedToken = tokenAtDrain;
 		})();
 		try {
 			await this.flushing;
