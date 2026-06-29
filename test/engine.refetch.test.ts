@@ -8,6 +8,7 @@ import {
 	test,
 } from "bun:test";
 import type { Collection, Db, MongoClient } from "mongodb";
+import { dumpCollections } from "../src/core/sync/dumpEvent";
 import { SyncEngine } from "../src/core/sync/engine";
 import { setLogConfig } from "../src/utils/logConfig";
 import {
@@ -59,6 +60,38 @@ function mkEngine() {
 		flushIntervalMs: 150,
 	});
 }
+
+describe("dumpCollections — proteção da race delete-durante-dump (I1)", () => {
+	test("deletedIds passado ao dumpCollections impede ressurreição de doc deletado", async () => {
+		// Semeia 3 docs na origem (_id 0, 1, 2)
+		await srcDb.collection("c").insertMany([
+			{ _id: 0 as any, v: "zero" },
+			{ _id: 1 as any, v: "um" },
+			{ _id: 2 as any, v: "dois" },
+		]);
+
+		// Simula que _id "1" foi deletado na origem ENQUANTO o dump rodava:
+		// o engine já aplicou o deleteOne no destino e registrou "1" em deletedIds.
+		// O dump não deve ressuscitar esse doc ao processar o lote da origem.
+		await dumpCollections(
+			srcDb.collection("c"),
+			dstDb.collection("c"),
+			["1"], // deletedIds: "1" foi deletado durante o dump
+			{},
+		);
+
+		const ids = await dstDb
+			.collection("c")
+			.find({}, { projection: { _id: 1 } })
+			.map((d) => d._id)
+			.toArray();
+		const idSet = new Set(ids.map(Number));
+
+		expect(idSet.has(0)).toBe(true); // _id:0 deve existir
+		expect(idSet.has(2)).toBe(true); // _id:2 deve existir
+		expect(idSet.has(1)).toBe(false); // _id:1 foi "deletado durante dump" — não ressuscita
+	});
+});
 
 describe("SyncEngine — watch por re-busca", () => {
 	test("insert/update ao vivo são replicados (via re-busca), com __migratedAt", async () => {

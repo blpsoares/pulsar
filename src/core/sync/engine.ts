@@ -115,6 +115,10 @@ export class SyncEngine {
 	private closed = false;
 	/** Sinaliza ao probe do openStream que o resume caiu no 286 (→ re-dump). */
 	private resumeLost = false;
+	/** _ids deletados pelo watch ENQUANTO o dump inicial roda (proteção race delete-durante-dump). */
+	private readonly deletedIds: string[] = [];
+	/** true até os dumps iniciais concluírem — enquanto true, flush registra deletes em deletedIds. */
+	private dumpsActive = true;
 
 	constructor(options: SyncEngineOptions) {
 		this.opts = {
@@ -200,6 +204,9 @@ export class SyncEngine {
 					dumpLimiter.schedule(() => this.runDump(p.col, p.resumeFromId)),
 				),
 		);
+		// Dumps concluídos: para de acumular deletes e libera a memória.
+		this.dumpsActive = false;
+		this.deletedIds.length = 0;
 
 		// collections que RESUMIRAM (dados já no destino): completa índices faltantes
 		// no startup. As que dumparam já trataram índices no runDump.
@@ -220,7 +227,9 @@ export class SyncEngine {
 		// Se nenhum evento foi processado (dump puro sem mudanças online), semeia
 		// o lastFlushedToken com a posição atual do stream — o dump cobre tudo até
 		// aqui, então é seguro fazer o checkpoint nesse ponto.
-		if (!this.lastFlushedToken) {
+		// Guarda (C1): só semeia se o buffer está vazio; se o flush falhou e
+		// re-enfileirou ids, não avançamos o token — o restart re-entrega esses ids.
+		if (!this.lastFlushedToken && this.buffer.size() === 0) {
 			this.lastFlushedToken =
 				(this.stream?.resumeToken as ResumeToken | undefined) ?? this.lastToken;
 		}
@@ -287,16 +296,21 @@ export class SyncEngine {
 		const route = this.routes.get(col.name);
 		if (!route) return;
 		await freezeCollection(route.destCol);
-		const ok = await dumpCollections(route.srcCol, route.destCol, [], {
-			filter: col.filter,
-			batchSize: this.opts.batchSize,
-			resumeFromId,
-			onProgress: (lastId) => this.checkpointDumpProgress(col.name, lastId),
-			onDone: (info) => {
-				this.docsDumped += info.inserted + info.updated;
-				this.dumpedNames.push(col.name);
+		const ok = await dumpCollections(
+			route.srcCol,
+			route.destCol,
+			this.deletedIds,
+			{
+				filter: col.filter,
+				batchSize: this.opts.batchSize,
+				resumeFromId,
+				onProgress: (lastId) => this.checkpointDumpProgress(col.name, lastId),
+				onDone: (info) => {
+					this.docsDumped += info.inserted + info.updated;
+					this.dumpedNames.push(col.name);
+				},
 			},
-		});
+		);
 		if (ok) {
 			await markDumpCompleted(this.opts.destDb, col.name);
 			// dump concluído: não deve ressuscitar como incompleto no flush do stop.
@@ -408,6 +422,11 @@ export class SyncEngine {
 					"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
 				);
 				this.resumeLost = true;
+				// M1: descarta o buffer obsoleto do stream expirado (token não mais
+				// válido); o re-dump vai reconciliar tudo — não pode aplicar eventos
+				// de um stream morto com um pendingToken que nunca será persistido.
+				this.buffer.drain();
+				this.pendingToken = undefined;
 				await stream.close().catch(() => {});
 				this.runStream(this.opts.sourceDb.watch(pipeline), false);
 				return;
@@ -440,6 +459,10 @@ export class SyncEngine {
 				try {
 					if (deletes.length > 0) {
 						await route.destCol.deleteMany({ _id: { $in: deletes } });
+						// Informa o dump concorrente (I1): docs já deletados não devem ser
+						// ressuscitados caso o cursor do dump ainda não os tenha processado.
+						if (this.dumpsActive)
+							for (const id of deletes) this.deletedIds.push(String(id));
 					}
 					if (upserts.length > 0) {
 						const query = route.filter
@@ -451,6 +474,9 @@ export class SyncEngine {
 						const missing = upserts.filter((id) => !found.has(String(id)));
 						if (missing.length > 0) {
 							await route.destCol.deleteMany({ _id: { $in: missing } });
+							// Também registra os "missing" como deletados pro dump concorrente.
+							if (this.dumpsActive)
+								for (const id of missing) this.deletedIds.push(String(id));
 						}
 						for (const doc of docs) {
 							await writeDocToDest(route.destCol, doc, "watch:refetch");
