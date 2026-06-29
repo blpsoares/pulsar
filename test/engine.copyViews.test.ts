@@ -52,8 +52,8 @@ async function isView(db: Db, name: string): Promise<boolean> {
 	return info?.type === "view";
 }
 
-describe("SyncEngine — migrateViews (paralelo ao dump)", () => {
-	test("migrateViews:true recria as views da origem no destino", async () => {
+describe("SyncEngine — copyViews (paralelo ao dump)", () => {
+	test("copyViews:true recria as views da origem no destino", async () => {
 		await seed(srcDb, "colA", 10);
 		await srcDb.createCollection("colA_view", {
 			viewOn: "colA",
@@ -64,7 +64,7 @@ describe("SyncEngine — migrateViews (paralelo ao dump)", () => {
 			sourceDb: srcDb,
 			destDb: dstDb,
 			collections: [{ name: "colA" }],
-			migrateViews: true,
+			copyViews: true,
 			checkpointIntervalMs: 100,
 		});
 		await engine.start();
@@ -77,7 +77,7 @@ describe("SyncEngine — migrateViews (paralelo ao dump)", () => {
 		await engine.stop();
 	});
 
-	test("migrateViews por array: só as nomeadas", async () => {
+	test("copyViews por array: só as nomeadas", async () => {
 		await seed(srcDb, "colA", 3);
 		await srcDb.createCollection("v_sim", { viewOn: "colA", pipeline: [] });
 		await srcDb.createCollection("v_nao", { viewOn: "colA", pipeline: [] });
@@ -86,7 +86,7 @@ describe("SyncEngine — migrateViews (paralelo ao dump)", () => {
 			sourceDb: srcDb,
 			destDb: dstDb,
 			collections: [{ name: "colA" }],
-			migrateViews: ["v_sim"],
+			copyViews: ["v_sim"],
 			checkpointIntervalMs: 100,
 		});
 		await engine.start();
@@ -97,7 +97,7 @@ describe("SyncEngine — migrateViews (paralelo ao dump)", () => {
 		await engine.stop();
 	});
 
-	test("default (sem migrateViews): NÃO cria views", async () => {
+	test("default (sem copyViews): NÃO cria views", async () => {
 		await seed(srcDb, "colA", 3);
 		await srcDb.createCollection("v1", { viewOn: "colA", pipeline: [] });
 

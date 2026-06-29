@@ -45,7 +45,7 @@ export const syncYmlSchema = z.object({
 			copyIndexes: z.boolean().optional(),
 			// Recria as views da origem no destino (metadados, fora do sync):
 			// `true` = todas; array de nomes = só essas; omitido = nenhuma.
-			migrateViews: z.union([z.boolean(), z.array(z.string())]).optional(),
+			copyViews: z.union([z.boolean(), z.array(z.string())]).optional(),
 			logging: z
 				.object({
 					verbose: z.boolean().optional(),

@@ -7,5 +7,5 @@ command:
       uri: "destination database uri"
       db: "destination database name"
     copyIndexes: false        # opcional: replica os índices secundários da origem
-    migrateViews: false       # opcional: true = recria todas as views; ou ["v1","v2"] por nome
+    copyViews: false          # opcional: true = recria todas as views; ou ["v1","v2"] por nome
     collections: ["collections", "name","to","sync"]

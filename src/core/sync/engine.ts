@@ -51,7 +51,7 @@ export type SyncEngineOptions = {
 	copyIndexes?: boolean;
 	/** Recriar no destino as views da origem (metadados, fora do sync). `true` =
 	 *  todas; array de nomes = só essas; `false`/omitido = nenhuma. */
-	migrateViews?: boolean | string[];
+	copyViews?: boolean | string[];
 };
 
 type Route = { srcCol: Collection; destCol: Collection; filter?: Document };
@@ -98,7 +98,7 @@ export class SyncEngine {
 	indexesCreated = 0;
 	indexesSkipped = 0;
 	readonly indexFailures: { coll: string; name: string }[] = [];
-	/** Migração de views (quando migrateViews on): agregados p/ o painel final. */
+	/** Migração de views (quando copyViews on): agregados p/ o painel final. */
 	viewsCreated = 0;
 	viewsUpdated = 0;
 	viewsSkipped = 0;
@@ -142,7 +142,7 @@ export class SyncEngine {
 			flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
 			copyIndexes: options.copyIndexes ?? false,
-			migrateViews: options.migrateViews ?? false,
+			copyViews: options.copyViews ?? false,
 		};
 		for (const col of this.opts.collections) {
 			this.routes.set(col.name, {
@@ -283,7 +283,7 @@ export class SyncEngine {
 	 * próximo startup). `listCollections` da origem falhando também é contido.
 	 */
 	private async runViewMigration(): Promise<void> {
-		const mv = this.opts.migrateViews;
+		const mv = this.opts.copyViews;
 		if (mv === false) return;
 		const names = Array.isArray(mv) ? mv : undefined;
 		if (names && names.length === 0) return;

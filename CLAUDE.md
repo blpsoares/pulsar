@@ -57,7 +57,7 @@ src/
       watcherEvents.ts    # EventEmitter central para eventos do change stream
       changeBuffer.ts     # ChangeBuffer: dedupe/drain de IDs por collection para flush em lote
       deleteEvent.ts      # loga [collection] delete | _id quando verbose
-      copyViews.ts        # recria views da origem no destino (migrateViews): paralelo ao dump, idempotente
+      copyViews.ts        # recria views da origem no destino (copyViews): paralelo ao dump, idempotente
     ttl/
       parseDuration.ts      # "30d"/"1h"/"3mo" -> segundos (mês=30d, ano=365d; 'm' proibido)
       resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
@@ -178,14 +178,14 @@ Não é a data de criação real em produção — é "quando sincronizou". Pra 
 
 O copy doc-a-doc do sync **não** traz os índices secundários da origem (só os dados; `migrate` via mongorestore traz). Com `copyIndexes: true` no yml, o sync replica os índices da origem no destino: faz um **diff por assinatura** (key+opções) e cria **só os que faltam** — num banco já migrado, a maioria das collections nem recebe escrita. Collection que dumpa cria o índice **depois** do dump (build em lote, igual mongorestore); collection que resume completa no startup. Falha de `createIndex` (ex.: conflito de nome) é **contida** (loga, não aborta o sync) e re-tentada no próximo startup. Nunca remove índices que existem só no destino. Painel final mostra `Índices · criados/já existiam/falhados`. Lógica em `core/sync/copyIndexes.ts`, testes em `test/copyIndexes.test.ts` e `test/engine.copyIndexes.test.ts`.
 
-### Migração de views (`migrateViews`)
+### Migração de views (`copyViews`)
 
-O sync replica **collections** (dump + change stream); **views NÃO são sincronizadas** — uma view é metadado puro (`viewOn` + `pipeline`), sem documentos, sem oplog. Então, ao dropar/recriar o destino do zero, as views da origem **somem e não voltam** sozinhas (o pulsar não as enxerga na lista de collections). `migrateViews` resolve isso recriando as definições no destino:
+O sync replica **collections** (dump + change stream); **views NÃO são sincronizadas** — uma view é metadado puro (`viewOn` + `pipeline`), sem documentos, sem oplog. Então, ao dropar/recriar o destino do zero, as views da origem **somem e não voltam** sozinhas (o pulsar não as enxerga na lista de collections). `copyViews` resolve isso recriando as definições no destino:
 
 ```yaml
-migrateViews: true            # todas as views da origem
+copyViews: true               # todas as views da origem
 # — ou —
-migrateViews:
+copyViews:
   - regioes                   # só estas (por NOME)
   - _v_snapshotDados
 ```
@@ -196,7 +196,7 @@ migrateViews:
 - Erro por-view é **contido** (loga `view:falha`, não aborta o sync) e re-tentado no próximo startup. Painel final: `Views · criadas/atualizadas/iguais/falhadas`.
 - **Atenção:** uma view cujo `viewOn` **não** está na lista de `collections` sincronizadas existe mas retorna vazio — use o array pra escolher só as views cuja base é sincronizada. Default `false` (nenhuma).
 
-Lógica em `core/sync/copyViews.ts`, testes em `test/copyViews.test.ts` e `test/engine.migrateViews.test.ts`.
+Lógica em `core/sync/copyViews.ts`, testes em `test/copyViews.test.ts` e `test/engine.copyViews.test.ts`.
 
 ### Logging
 
@@ -228,7 +228,7 @@ command:
       verbose: false    # default false
       progress: true    # default true
     copyIndexes: false   # default false; true replica índices secundários da origem no destino
-    migrateViews: false  # default false; true recria TODAS as views da origem; ou um array de nomes
+    copyViews: false     # default false; true recria TODAS as views da origem; ou um array de nomes
     collections:
       - simple-collection
       - name: filtered-collection
