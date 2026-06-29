@@ -12,6 +12,7 @@ import { customLog, logger } from "../../utils/customLog";
 import { setSyncPlan } from "../../utils/progressManager";
 import { ChangeBuffer, type ChangeOp } from "./changeBuffer";
 import { ensureCollectionIndexes } from "./copyIndexes";
+import { copyViews } from "./copyViews";
 import { buildDbWatchPipeline } from "./dbWatchPipeline";
 import { dumpCollections } from "./dumpEvent";
 import { decideStartupAction, isHistoryLostError } from "./restartDecision";
@@ -48,6 +49,9 @@ export type SyncEngineOptions = {
 	resumeProbeMs?: number;
 	/** Replicar no destino os índices secundários da origem (default false). */
 	copyIndexes?: boolean;
+	/** Recriar no destino as views da origem (metadados, fora do sync). `true` =
+	 *  todas; array de nomes = só essas; `false`/omitido = nenhuma. */
+	migrateViews?: boolean | string[];
 };
 
 type Route = { srcCol: Collection; destCol: Collection; filter?: Document };
@@ -94,6 +98,11 @@ export class SyncEngine {
 	indexesCreated = 0;
 	indexesSkipped = 0;
 	readonly indexFailures: { coll: string; name: string }[] = [];
+	/** Migração de views (quando migrateViews on): agregados p/ o painel final. */
+	viewsCreated = 0;
+	viewsUpdated = 0;
+	viewsSkipped = 0;
+	readonly viewFailures: { name: string; reason: string }[] = [];
 	/** Contadores de eventos do watch (p/ o heartbeat): por collection e por tipo. */
 	readonly eventCounts = new Map<string, number>();
 	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
@@ -133,6 +142,7 @@ export class SyncEngine {
 			flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
 			copyIndexes: options.copyIndexes ?? false,
+			migrateViews: options.migrateViews ?? false,
 		};
 		for (const col of this.opts.collections) {
 			this.routes.set(col.name, {
@@ -171,6 +181,12 @@ export class SyncEngine {
 			this.opts.flushIntervalMs,
 		);
 		this.flushTimer.unref?.();
+
+		// 2.5) MIGRAÇÃO DE VIEWS — em paralelo aos dumps. Views são metadados puros
+		//      (sem documentos, sem change stream), então NÃO passam pelo sync: este
+		//      passo recria a definição (viewOn/pipeline) e roda concorrente, sem
+		//      bloquear o dump (o Mongo cria view até sobre collection inexistente).
+		const viewsDone = this.runViewMigration();
 
 		// 3) decide dump por collection (o stream já cobre o tempo real de todas).
 		const effectiveToken = forceDumpAll ? undefined : globalToken;
@@ -220,6 +236,9 @@ export class SyncEngine {
 			);
 		}
 
+		// garante que a migração de views (paralela) terminou antes do painel.
+		await viewsDone;
+
 		// 5) garante o token global persistido (não só no tick de 5s).
 		await this.waitForToken(this.opts.resumeProbeMs);
 		// Flush de eventos que chegaram durante o dump (buffer pode ter acumulado).
@@ -256,6 +275,40 @@ export class SyncEngine {
 			),
 		);
 		if (this.stream) await this.stream.close().catch(() => {});
+	}
+
+	/**
+	 * Recria as views da origem no destino (em paralelo, fora do sync). Contido:
+	 * uma falha de view não derruba o sync (entra em `viewFailures`, re-tentada no
+	 * próximo startup). `listCollections` da origem falhando também é contido.
+	 */
+	private async runViewMigration(): Promise<void> {
+		const mv = this.opts.migrateViews;
+		if (mv === false) return;
+		const names = Array.isArray(mv) ? mv : undefined;
+		if (names && names.length === 0) return;
+		try {
+			const res = await copyViews(this.opts.sourceDb, this.opts.destDb, names);
+			this.viewsCreated = res.created;
+			this.viewsUpdated = res.updated;
+			this.viewsSkipped = res.skipped;
+			this.viewFailures.push(...res.failed);
+			const parts = [
+				`criadas ${res.created}`,
+				`atualizadas ${res.updated}`,
+				`já iguais ${res.skipped}`,
+			];
+			if (res.failed.length > 0) {
+				parts.push(`FALHARAM ${res.failed.length}`);
+			}
+			customLog("info", `views | ${parts.join(", ")}`);
+			for (const f of res.failed) {
+				customLog("warn", `view:falha | ${f.name} | ${f.reason}`);
+			}
+		} catch (err) {
+			const reason = err instanceof Error ? err.message : String(err);
+			customLog("warn", `views | falha ao listar/migrar (contido): ${reason}`);
+		}
 	}
 
 	/** Garante os índices da origem no destino p/ uma collection; agrega e loga. */

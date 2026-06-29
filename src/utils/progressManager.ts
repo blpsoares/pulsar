@@ -217,6 +217,12 @@ export function renderClosingPanel(d: {
 		skipped: number;
 		failed: { coll: string; name: string }[];
 	};
+	views?: {
+		created: number;
+		updated: number;
+		skipped: number;
+		failed: { name: string; reason: string }[];
+	};
 }): string {
 	const num = (n: number) => n.toLocaleString("pt-BR");
 	const dur = (ms: number) => {
@@ -256,6 +262,16 @@ export function renderClosingPanel(d: {
 				: "";
 		body.push(
 			`Índices ... criados: ${d.indexes.created} · já existiam: ${d.indexes.skipped}${fLabel}`,
+		);
+	}
+	if (d.views) {
+		const f = d.views.failed;
+		const fLabel =
+			f.length > 0
+				? ` · falharam: ${f.length} (${f.map((x) => x.name).join(", ")})`
+				: "";
+		body.push(
+			`Views ..... criadas: ${d.views.created} · atualizadas: ${d.views.updated} · iguais: ${d.views.skipped}${fLabel}`,
 		);
 	}
 

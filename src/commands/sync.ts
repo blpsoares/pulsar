@@ -71,10 +71,12 @@ export async function syncCollections(
 		1000;
 	const full = Boolean(cliParams.full);
 	const copyIndexes = Boolean(options.command.sync.copyIndexes ?? false);
+	const migrateViews = options.command.sync.migrateViews ?? false;
+	const migrateViewsOn = migrateViews === true || Array.isArray(migrateViews);
 
 	customLog(
 		"info",
-		`Performance: parallel=${parallel} | batchSize=${batchSize} | flushIntervalMs=${flushIntervalMs}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}`,
+		`Performance: parallel=${parallel} | batchSize=${batchSize} | flushIntervalMs=${flushIntervalMs}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}${migrateViewsOn ? ` | migrateViews=${Array.isArray(migrateViews) ? migrateViews.length : "all"}` : ""}`,
 	);
 
 	const client = await conn(options.command.sync.source.uri, "source");
@@ -155,6 +157,7 @@ export async function syncCollections(
 			flushIntervalMs,
 			full,
 			copyIndexes,
+			migrateViews,
 		});
 
 		// Sem barra (não-TTY/container): liga o STATUS heartbeat no docker logs.
@@ -195,13 +198,23 @@ export async function syncCollections(
 						},
 					}
 				: {}),
+			...(migrateViewsOn
+				? {
+						views: {
+							created: engine.viewsCreated,
+							updated: engine.viewsUpdated,
+							skipped: engine.viewsSkipped,
+							failed: engine.viewFailures,
+						},
+					}
+				: {}),
 		});
 		console.log(`\n${panel}\n`);
 		// Linha única e greppável: nº de collections + início/fim (relógio) + total,
 		// pra reportar "banco up em X". Vai pro terminal e pro logs/debug.log.
 		customLog("info", formatLoadReport(total, startedAt, finishedAt), true);
 		logger.info(
-			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}${copyIndexes ? ` | índices: +${engine.indexesCreated} (${engine.indexesSkipped} já existiam, ${engine.indexFailures.length} falhas)` : ""}`,
+			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}${copyIndexes ? ` | índices: +${engine.indexesCreated} (${engine.indexesSkipped} já existiam, ${engine.indexFailures.length} falhas)` : ""}${migrateViewsOn ? ` | views: +${engine.viewsCreated} (${engine.viewsUpdated} atualizadas, ${engine.viewsSkipped} iguais, ${engine.viewFailures.length} falhas)` : ""}`,
 		);
 
 		// Em container (não-TTY): nota do "não remova" + heartbeat do watch 24/7.
