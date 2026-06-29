@@ -10,12 +10,10 @@ import type {
 import { freezeCollection } from "../../functions/freeze";
 import { customLog, logger } from "../../utils/customLog";
 import { setSyncPlan } from "../../utils/progressManager";
+import { ChangeBuffer, type ChangeOp } from "./changeBuffer";
 import { ensureCollectionIndexes } from "./copyIndexes";
 import { buildDbWatchPipeline } from "./dbWatchPipeline";
-import { watchDeleteEvent } from "./deleteEvent";
 import { dumpCollections } from "./dumpEvent";
-import { watchInsertEvent } from "./insertEvent";
-import { watchReplaceEvent } from "./replaceEvent";
 import { decideStartupAction, isHistoryLostError } from "./restartDecision";
 import { ResumeTokenCheckpointer } from "./resumeCheckpointer";
 import {
@@ -25,11 +23,12 @@ import {
 	saveDbResumeToken,
 	saveDumpProgress,
 } from "./syncState";
-import { watchUpdateEvent } from "./updateEvent";
+import { writeDocToDest } from "./writeDoc";
 
 const DEFAULT_PARALLEL = 3;
 const DEFAULT_BATCH_SIZE = 500;
 const DEFAULT_CHECKPOINT_MS = 5000;
+const DEFAULT_FLUSH_MS = 1000;
 const RESUME_REOPEN_MS = 5000;
 const RESUME_PROBE_MS = 1500;
 
@@ -43,6 +42,8 @@ export type SyncEngineOptions = {
 	batchSize?: number;
 	full?: boolean;
 	checkpointIntervalMs?: number;
+	/** Janela máx. (ms) p/ flush por tempo do buffer de mudanças (default 1000). */
+	flushIntervalMs?: number;
 	/** Janela máx. p/ considerar um resume estabelecido (e p/ aguardar token). */
 	resumeProbeMs?: number;
 	/** Replicar no destino os índices secundários da origem (default false). */
@@ -69,9 +70,9 @@ function isResumeImpossibleError(err: unknown): boolean {
 /**
  * Orquestra o `sync` com UM ÚNICO change stream no banco (`db.watch`) — uma
  * conexão escuta todas as collections configuradas (em vez de 1 por collection),
- * matando a saturação de conexões. Cada evento é roteado por `ns.coll` pro
- * destino certo. O dump de cada collection decide entre RETOMAR (pula o dump,
- * o stream já cobre as mudanças) ou DUMPAR (do zero ou da fronteira salva).
+ * matando a saturação de conexões. Cada evento é enfileirado no ChangeBuffer e
+ * aplicado em lote (re-busca em lote + writeDocToDest), tornando o watch imune
+ * ao limite de 16MB por evento do change stream.
  *
  * Instância isolada (sem estado global) — pode ser parada e recriada no mesmo
  * processo (essencial pros testes de restart).
@@ -81,7 +82,6 @@ export class SyncEngine {
 		collections: EngineCollection[];
 	};
 	private readonly routes = new Map<string, Route>();
-	private readonly deletedIds: string[] = [];
 	/** Collections cujo dump inicial FALHOU (após esgotar retries). */
 	readonly failedDumps: string[] = [];
 	/** Quantas resumiram (pularam dump) e quantas precisaram de dump neste run. */
@@ -97,19 +97,28 @@ export class SyncEngine {
 	/** Contadores de eventos do watch (p/ o heartbeat): por collection e por tipo. */
 	readonly eventCounts = new Map<string, number>();
 	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
-	/** `deletedIds` só serve durante o dump (corrida). Após os dumps vira false e
-	 * paramos de acumular — senão a lista cresceria 1 entrada por delete pra
-	 * sempre no watch 24/7 (vazamento lento). */
-	private dumpsActive = true;
 	private readonly lastDumpSaveAt = new Map<string, number>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
 	private stream: ChangeStream | null = null;
 	private checkpointer: ResumeTokenCheckpointer | null = null;
 	private lastToken: ResumeToken | undefined;
+	/** Buffer de gatilhos do watch: acumula (coll, id, op) com dedupe. */
+	private readonly buffer = new ChangeBuffer();
+	/** Token do evento mais recente já BUFFERIZADO (vira lastFlushedToken após o flush). */
+	private pendingToken: ResumeToken | undefined;
+	/** Token do último lote já APLICADO — é o que o checkpoint carimba. */
+	private lastFlushedToken: ResumeToken | undefined;
+	/** Lock: garante 1 flush por vez (pump x timer). */
+	private flushing: Promise<void> | null = null;
+	private flushTimer: ReturnType<typeof setInterval> | null = null;
 	private closed = false;
 	/** Sinaliza ao probe do openStream que o resume caiu no 286 (→ re-dump). */
 	private resumeLost = false;
+	/** _ids deletados pelo watch ENQUANTO o dump inicial roda (proteção race delete-durante-dump). */
+	private readonly deletedIds: string[] = [];
+	/** true até os dumps iniciais concluírem — enquanto true, flush registra deletes em deletedIds. */
+	private dumpsActive = true;
 
 	constructor(options: SyncEngineOptions) {
 		this.opts = {
@@ -121,6 +130,7 @@ export class SyncEngine {
 			full: options.full ?? false,
 			checkpointIntervalMs:
 				options.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_MS,
+			flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
 			copyIndexes: options.copyIndexes ?? false,
 		};
@@ -147,13 +157,20 @@ export class SyncEngine {
 		//    expirou (286), forceDumpAll: re-dumpa tudo pra não perder mudanças.
 		const forceDumpAll = await this.openStream(globalToken);
 
-		// 2) checkpoint do token global a cada ~5s.
+		// 2) checkpoint do token global a cada ~5s — carimba o lastFlushedToken
+		//    (o que já foi APLICADO), não o último evento do stream.
 		this.checkpointer = new ResumeTokenCheckpointer(
-			() => this.stream?.resumeToken ?? this.lastToken ?? null,
+			() => this.lastFlushedToken ?? null,
 			(t) => saveDbResumeToken(this.opts.destDb, t),
 			this.opts.checkpointIntervalMs,
 		);
 		this.checkpointer.start();
+		// timer do flush por tempo (caso parem de chegar eventos com o buffer cheio)
+		this.flushTimer = setInterval(
+			() => void this.flush(),
+			this.opts.flushIntervalMs,
+		);
+		this.flushTimer.unref?.();
 
 		// 3) decide dump por collection (o stream já cobre o tempo real de todas).
 		const effectiveToken = forceDumpAll ? undefined : globalToken;
@@ -187,6 +204,9 @@ export class SyncEngine {
 					dumpLimiter.schedule(() => this.runDump(p.col, p.resumeFromId)),
 				),
 		);
+		// Dumps concluídos: para de acumular deletes e libera a memória.
+		this.dumpsActive = false;
+		this.deletedIds.length = 0;
 
 		// collections que RESUMIRAM (dados já no destino): completa índices faltantes
 		// no startup. As que dumparam já trataram índices no runDump.
@@ -200,19 +220,30 @@ export class SyncEngine {
 			);
 		}
 
-		// dumps concluídos: a lista de deletes-durante-dump não serve mais. Limpa a
-		// memória acumulada e desliga o acúmulo (no watch ela só cresceria à toa).
-		this.deletedIds.length = 0;
-		this.dumpsActive = false;
-
 		// 5) garante o token global persistido (não só no tick de 5s).
 		await this.waitForToken(this.opts.resumeProbeMs);
+		// Flush de eventos que chegaram durante o dump (buffer pode ter acumulado).
+		await this.flush().catch(() => {});
+		// Se nenhum evento foi processado (dump puro sem mudanças online), semeia
+		// o lastFlushedToken com a posição atual do stream — o dump cobre tudo até
+		// aqui, então é seguro fazer o checkpoint nesse ponto.
+		// Guarda (C1): só semeia se o buffer está vazio; se o flush falhou e
+		// re-enfileirou ids, não avançamos o token — o restart re-entrega esses ids.
+		if (!this.lastFlushedToken && this.buffer.size() === 0) {
+			this.lastFlushedToken =
+				(this.stream?.resumeToken as ResumeToken | undefined) ?? this.lastToken;
+		}
 		await this.checkpointer.flush().catch(() => {});
 	}
 
 	/** Fecha o stream e faz o flush final do checkpoint. */
 	async stop(): Promise<void> {
 		this.closed = true;
+		if (this.flushTimer) {
+			clearInterval(this.flushTimer);
+			this.flushTimer = null;
+		}
+		await this.flush().catch(() => {});
 		if (this.checkpointer) await this.checkpointer.stop();
 		// Flush final das fronteiras de dumps AINDA incompletos: na preempção
 		// (ACPI/SIGTERM) no meio de um dump, o restart retoma de onde parou em vez
@@ -319,15 +350,11 @@ export class SyncEngine {
 	): Promise<boolean> {
 		const pipeline = buildDbWatchPipeline(this.opts.collections);
 		if (!globalToken) {
-			this.runStream(
-				this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
-				false,
-			);
+			this.runStream(this.opts.sourceDb.watch(pipeline), false);
 			return false;
 		}
 		this.resumeLost = false;
 		const stream = this.opts.sourceDb.watch(pipeline, {
-			fullDocument: "updateLookup",
 			startAfter: globalToken,
 		});
 		// O pump (for await) começa a consumir JÁ: isso dirige o aggregate (popula
@@ -363,19 +390,29 @@ export class SyncEngine {
 
 	/**
 	 * Consome o stream com BACKPRESSURE. O `for await` não puxa o próximo lote do
-	 * change stream enquanto o apply do evento atual não terminar (`await`). Troca
-	 * o antigo `.on('change')` fire-and-forget — que disparava escritas concorrentes
-	 * ILIMITADAS e estourava a RAM no replay de backlog — por aplicação serializada
-	 * e ORDENADA, com memória presa a ~1 lote. Numa falha transitória reabre com
-	 * `startAfter: lastToken` em 5s; no 286 do resume, sinaliza resumeLost e reabre
-	 * fresh (o openStream lê isso e força o re-dump de tudo).
+	 * change stream enquanto o enfileiramento + flush por tamanho não terminam.
+	 * Eventos são acumulados no ChangeBuffer e aplicados em lote (re-busca $in),
+	 * tornando o watch imune ao limite de 16MB por evento (o evento em si é só um
+	 * gatilho; o documento real é buscado com findOne/$in numa query separada).
+	 * Numa falha transitória reabre com `startAfter: lastToken` em 5s; no 286 do
+	 * resume, sinaliza resumeLost e reabre fresh.
 	 */
 	private async pump(stream: ChangeStream, resumeMode: boolean): Promise<void> {
 		try {
 			for await (const change of stream) {
 				if (this.closed || this.stream !== stream) break;
 				this.lastToken = change._id;
-				await this.route(change);
+				const coll = (change as { ns?: { coll?: string } }).ns?.coll;
+				if (!coll || !this.routes.has(coll)) continue;
+				const op: ChangeOp =
+					change.operationType === "delete" ? "delete" : "upsert";
+				const id = (change as { documentKey?: { _id?: unknown } }).documentKey
+					?._id;
+				if (id === undefined) continue;
+				this.buffer.add(coll, id, op);
+				this.pendingToken = change._id;
+				this.countEvent(coll, change.operationType as never);
+				if (this.buffer.size() >= this.opts.batchSize) await this.flush();
 			}
 		} catch (err) {
 			if (this.closed || this.stream !== stream) return;
@@ -385,11 +422,13 @@ export class SyncEngine {
 					"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
 				);
 				this.resumeLost = true;
+				// M1: descarta o buffer obsoleto do stream expirado (token não mais
+				// válido); o re-dump vai reconciliar tudo — não pode aplicar eventos
+				// de um stream morto com um pendingToken que nunca será persistido.
+				this.buffer.drain();
+				this.pendingToken = undefined;
 				await stream.close().catch(() => {});
-				this.runStream(
-					this.opts.sourceDb.watch(pipeline, { fullDocument: "updateLookup" }),
-					false,
-				);
+				this.runStream(this.opts.sourceDb.watch(pipeline), false);
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
@@ -398,7 +437,6 @@ export class SyncEngine {
 			setTimeout(() => {
 				if (this.closed || this.stream !== stream) return;
 				const next = this.opts.sourceDb.watch(pipeline, {
-					fullDocument: "updateLookup",
 					...(this.lastToken ? { startAfter: this.lastToken } : {}),
 				});
 				this.runStream(next, resumeMode);
@@ -406,14 +444,62 @@ export class SyncEngine {
 		}
 	}
 
-	/** Roteia o evento pela ns.coll pra collection de destino correspondente. */
-	private async route(change: ChangeStreamDocument): Promise<void> {
-		const ns = (change as { ns?: { coll?: string } }).ns;
-		const coll = ns?.coll;
-		if (!coll) return;
-		const route = this.routes.get(coll);
-		if (!route) return;
-		await this.applyEvent(change, route.destCol);
+	/** Aplica o buffer: re-busca em lote por collection, grava/deleta no destino,
+	 *  e carimba o token aplicado. 1 flush por vez (lock). Best-effort por-coll. */
+	private async flush(): Promise<void> {
+		if (this.flushing) return this.flushing;
+		if (this.buffer.size() === 0) return;
+		const tokenAtDrain = this.pendingToken;
+		const grouped = this.buffer.drain();
+		this.flushing = (async () => {
+			let allOk = true;
+			for (const [coll, { upserts, deletes }] of grouped) {
+				const route = this.routes.get(coll);
+				if (!route) continue;
+				try {
+					if (deletes.length > 0) {
+						await route.destCol.deleteMany({ _id: { $in: deletes } });
+						// Informa o dump concorrente (I1): docs já deletados não devem ser
+						// ressuscitados caso o cursor do dump ainda não os tenha processado.
+						if (this.dumpsActive)
+							for (const id of deletes) this.deletedIds.push(String(id));
+					}
+					if (upserts.length > 0) {
+						const query = route.filter
+							? { $and: [{ _id: { $in: upserts } }, route.filter] }
+							: { _id: { $in: upserts } };
+						const docs = await route.srcCol.find(query).toArray();
+						const found = new Set(docs.map((d) => String(d._id)));
+						// ausentes na re-busca = deletados OU saíram do filtro → delete no destino
+						const missing = upserts.filter((id) => !found.has(String(id)));
+						if (missing.length > 0) {
+							await route.destCol.deleteMany({ _id: { $in: missing } });
+							// Também registra os "missing" como deletados pro dump concorrente.
+							if (this.dumpsActive)
+								for (const id of missing) this.deletedIds.push(String(id));
+						}
+						for (const doc of docs) {
+							await writeDocToDest(route.destCol, doc, "watch:refetch");
+						}
+					}
+				} catch (err) {
+					allOk = false;
+					const msg = err instanceof Error ? err.message : String(err);
+					logger.error(`FLUSH:${coll} ${msg}`);
+					// re-enfileira os ids da collection que falhou para retry no próximo flush
+					for (const id of deletes) this.buffer.add(coll, id, "delete");
+					for (const id of upserts) this.buffer.add(coll, id, "upsert");
+				}
+			}
+			// só avança o checkpoint se TODO o lote foi aplicado com sucesso —
+			// uma falha parcial mantém o token parado e re-entrega no próximo flush.
+			if (allOk && tokenAtDrain) this.lastFlushedToken = tokenAtDrain;
+		})();
+		try {
+			await this.flushing;
+		} finally {
+			this.flushing = null;
+		}
 	}
 
 	/** Conta o evento (por collection + por tipo) p/ o heartbeat do watch. */
@@ -423,39 +509,6 @@ export class SyncEngine {
 	): void {
 		this.eventTotals[op]++;
 		this.eventCounts.set(coll, (this.eventCounts.get(coll) ?? 0) + 1);
-	}
-
-	private async applyEvent(
-		change: ChangeStreamDocument,
-		destCol: Collection,
-	): Promise<void> {
-		const coll = destCol.collectionName;
-		switch (change.operationType) {
-			case "insert":
-				this.countEvent(coll, "insert");
-				await watchInsertEvent(destCol, change.fullDocument);
-				break;
-			case "update":
-				this.countEvent(coll, "update");
-				await watchUpdateEvent(destCol, change.fullDocument);
-				break;
-			case "replace":
-				this.countEvent(coll, "replace");
-				await watchReplaceEvent(destCol, change.fullDocument);
-				break;
-			case "delete":
-				this.countEvent(coll, "delete");
-				// Durante o dump, registra o delete (evita re-inserir na corrida). No
-				// watch, passa um array descartável → nada acumula (sem vazamento).
-				await watchDeleteEvent(
-					change.documentKey._id as never,
-					destCol,
-					this.dumpsActive ? this.deletedIds : [],
-				);
-				break;
-			default:
-				break;
-		}
 	}
 
 	private async waitForToken(timeoutMs: number): Promise<void> {

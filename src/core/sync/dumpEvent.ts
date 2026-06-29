@@ -1,6 +1,7 @@
 // biome-ignore assist/source/organizeImports: <explanation>
 import type { AnyBulkWriteOperation, Collection, Document } from "mongodb";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
+import { buildReplaceWithMigratedAt } from "./writeDoc";
 import { customLog } from "../../utils/customLog";
 import { getLogConfig } from "../../utils/logConfig";
 import {
@@ -30,7 +31,11 @@ function isTransientDumpError(err: unknown): boolean {
 	const msg = String(e.message ?? "");
 	if (/Mongo(Network|ServerSelection|PoolCleared|NotPrimary)/i.test(name))
 		return true;
-	if (e.code === "ECONNREFUSED" || e.code === "ECONNRESET" || e.code === "ETIMEDOUT")
+	if (
+		e.code === "ECONNREFUSED" ||
+		e.code === "ECONNRESET" ||
+		e.code === "ETIMEDOUT"
+	)
 		return true;
 	return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|connection|socket|topology|server selection|not primary|getMore|CursorNotFound|connection pool/i.test(
 		msg,
@@ -65,7 +70,8 @@ export async function dumpCollections(
 	const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
 	const { collectionName } = destCollection;
 	const { progress } = getLogConfig();
-	const maxRetries = Number(process.env.DUMP_MAX_RETRIES) || DEFAULT_MAX_RETRIES;
+	const maxRetries =
+		Number(process.env.DUMP_MAX_RETRIES) || DEFAULT_MAX_RETRIES;
 	const retryBaseMs =
 		Number(process.env.DUMP_RETRY_BASE_MS) || DEFAULT_RETRY_BASE_MS;
 	let bar: ReturnType<typeof createBar> | null = null;
@@ -217,9 +223,9 @@ async function processBatch(
 
 		if (!destDoc) {
 			ops.push({
-				replaceOne: {
+				updateOne: {
 					filter: { _id: coldDocument._id },
-					replacement: newDocument,
+					update: buildReplaceWithMigratedAt(newDocument),
 					upsert: true,
 				},
 			});
@@ -235,7 +241,7 @@ async function processBatch(
 		ops.push({
 			updateOne: {
 				filter: { _id: coldDocument._id, "__sync.hot": { $ne: true } },
-				update: { $set: newDocument },
+				update: buildReplaceWithMigratedAt(newDocument),
 			},
 		});
 		stats.updated++;
