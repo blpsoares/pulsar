@@ -218,7 +218,6 @@ export function renderClosingPanel(d: {
 		failed: { coll: string; name: string }[];
 	};
 }): string {
-	const W = 54;
 	const num = (n: number) => n.toLocaleString("pt-BR");
 	const dur = (ms: number) => {
 		const s = Math.round(ms / 1000);
@@ -226,34 +225,28 @@ export function renderClosingPanel(d: {
 		const m = Math.floor(s / 60);
 		return `${m}m ${s % 60}s`;
 	};
-	const row = (s: string) => {
-		let content = ` ${s}`;
-		const cps = [...content];
-		// trunca p/ a borda nunca estourar (listas de nomes longas, hint, etc.)
-		if (cps.length > W) content = `${cps.slice(0, W - 1).join("")}…`;
-		const len = [...content].length;
-		return `║${content}${" ".repeat(Math.max(0, W - len))}║`;
-	};
 	const dumpedLabel =
 		d.dumpedNames.length > 0 ? `  (${d.dumpedNames.join(", ")})` : "";
-	const lines = [
-		`╔${"═".repeat(W)}╗`,
-		row("PULSAR · SINCRONIZAÇÃO INICIAL CONCLUÍDA"),
-		`╠${"═".repeat(W)}╣`,
-		row(`Collections em dia ........ ${d.total - d.failed.length}/${d.total}`),
-		row(`  ↳ retomadas (delta) ..... ${d.resumed}`),
-		row(`  ↳ dump completo ......... ${d.dumped}${dumpedLabel}`),
+
+	const title = "PULSAR · SINCRONIZAÇÃO INICIAL CONCLUÍDA";
+	const mode = "MODO: tempo real · replicando mudanças ao vivo";
+
+	// Corpo (texto puro de cada linha, sem bordas) — coletado ANTES pra calcular a
+	// largura dinâmica que cabe o maior conteúdo (ex.: lista de collections cujos
+	// índices falharam) sem truncar.
+	const body: string[] = [
+		`Collections em dia ........ ${d.total - d.failed.length}/${d.total}`,
+		`  ↳ retomadas (delta) ..... ${d.resumed}`,
+		`  ↳ dump completo ......... ${d.dumped}${dumpedLabel}`,
 	];
 	if (d.failed.length > 0) {
-		lines.push(
-			row(
-				`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`,
-			),
+		body.push(
+			`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`,
 		);
 	}
-	lines.push(
-		row(`Docs copiados no dump ..... ${num(d.docsDumped)}`),
-		row(`Duração ................... ${dur(d.durationMs)}`),
+	body.push(
+		`Docs copiados no dump ..... ${num(d.docsDumped)}`,
+		`Duração ................... ${dur(d.durationMs)}`,
 	);
 	if (d.indexes) {
 		const f = d.indexes.failed;
@@ -261,19 +254,39 @@ export function renderClosingPanel(d: {
 			f.length > 0
 				? ` · falharam: ${f.length} (${[...new Set(f.map((x) => x.coll))].join(", ")})`
 				: "";
-		lines.push(
-			row(
-				`Índices ... criados: ${d.indexes.created} · já existiam: ${d.indexes.skipped}${fLabel}`,
-			),
+		body.push(
+			`Índices ... criados: ${d.indexes.created} · já existiam: ${d.indexes.skipped}${fLabel}`,
 		);
 	}
-	lines.push(
+
+	// Largura dinâmica: cabe o maior conteúdo (+1 do espaço à esquerda do row()),
+	// entre um mínimo legível (54) e um teto (120) pra não estourar o terminal.
+	const MIN_W = 54;
+	const MAX_W = 120;
+	const needed = Math.max(
+		...[title, mode, d.stopHint, ...body].map((s) => [...s].length + 1),
+	);
+	const W = Math.min(MAX_W, Math.max(MIN_W, needed));
+
+	const row = (s: string) => {
+		let content = ` ${s}`;
+		const cps = [...content];
+		// trunca só se passar do TETO (a largura já cresceu pro conteúdo normal)
+		if (cps.length > W) content = `${cps.slice(0, W - 1).join("")}…`;
+		const len = [...content].length;
+		return `║${content}${" ".repeat(Math.max(0, W - len))}║`;
+	};
+
+	return [
+		`╔${"═".repeat(W)}╗`,
+		row(title),
+		`╠${"═".repeat(W)}╣`,
+		...body.map(row),
 		`║${"─".repeat(W)}║`,
-		row("MODO: tempo real · replicando mudanças ao vivo"),
+		row(mode),
 		row(d.stopHint),
 		`╚${"═".repeat(W)}╝`,
-	);
-	return lines.join("\n");
+	].join("\n");
 }
 
 // ─── Heartbeat do WATCH contínuo (24/7, não-TTY) ─────────────────────────────
