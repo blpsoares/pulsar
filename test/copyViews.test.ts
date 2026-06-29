@@ -82,7 +82,7 @@ describe("copyViews — migração de views (metadados, sem sync)", () => {
 		expect(r2.skipped).toBe(1);
 	});
 
-	test("pipeline diferente → atualiza via collMod (sem dropar)", async () => {
+	test("pipeline diferente → drop+recreate deixa idêntica à origem", async () => {
 		await srcDb.createCollection("v1", {
 			viewOn: "base",
 			pipeline: [{ $match: { a: 1 } }],

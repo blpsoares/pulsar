@@ -79,11 +79,14 @@ export async function listSourceViews(
  * Garante UMA view no destino, idempotente e SEM destruir dado:
  * - não existe → `createCollection({ viewOn, pipeline })`
  * - existe e idêntica → `skipped`
- * - existe e difere → `collMod` (atualiza viewOn/pipeline in place, sem dropar)
+ * - existe e DIFERE → drop + recreate (fica IDÊNTICA à origem)
  * - existe como COLLECTION real de mesmo nome → ERRO (não clobbera dado).
  *
- * View é metadado puro (não tem documentos, não passa por dump nem change
- * stream) — por isso vive fora do caminho de sync.
+ * Por que drop+recreate e não `collMod`: (a) garante identidade TOTAL com a
+ * origem (inclusive collation, que `collMod` não altera em view); (b) funciona
+ * com a role `readWrite` (que inclui drop/createCollection) — `collMod` exigiria
+ * `dbAdmin`. Dropar uma VIEW não perde dado: view é metadado puro (sem
+ * documentos, não passa por dump nem change stream).
  */
 export async function ensureView(
 	destDb: Db,
@@ -107,12 +110,12 @@ export async function ensureView(
 			collation?: Document;
 		};
 		if (signature(cur) === signature(def)) return "skipped";
-		// collMod muda viewOn/pipeline in place. (collation de view não é alterável
-		// por collMod; mudança rara — fica fora deste caminho, sem drop.)
-		await destDb.command({
-			collMod: def.name,
+		// Difere: dropa e recria IDÊNTICA à origem (view não tem dado a perder).
+		await destDb.dropCollection(def.name);
+		await destDb.createCollection(def.name, {
 			viewOn: def.viewOn,
 			pipeline: def.pipeline,
+			...(def.collation ? { collation: def.collation } : {}),
 		});
 		return "updated";
 	}
