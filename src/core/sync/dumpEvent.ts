@@ -153,7 +153,36 @@ export async function dumpCollections(
 					}
 				}
 				await flush(page);
-				break; // varredura completa → sai do loop de retry
+
+				// GUARDA DE RECONCILIAÇÃO. Um cursor pode encerrar ANTES do fim SEM
+				// lançar erro (cursor morto no servidor vindo como "fim limpo", getMore
+				// devolvendo cursorId 0 cedo, resume pulando faixa). Sem este check, uma
+				// varredura PARCIAL era reportada como dump COMPLETO → markDumpCompleted,
+				// e o stream ao vivo nunca reconciliava (só entrega mudança nova, não
+				// re-injeta doc pré-existente que o cursor pulou). Foi a causa de perda
+				// silenciosa de docs (ex.: collection de 117 copiada com 82, marcada OK).
+				// Conferimos que NÃO sobra nada abaixo da fronteira; se sobra, a
+				// varredura não terminou: reabrimos da fronteira em vez de marcar completo.
+				const remainingQuery =
+					frontier != null
+						? { $and: [baseFilter, { _id: { $lt: frontier } }] }
+						: baseFilter;
+				const remaining = await sourceCollection.countDocuments(remainingQuery);
+				if (remaining === 0) break; // varredura REALMENTE completa
+
+				if (attempt >= maxRetries) {
+					throw new Error(
+						`dump truncado: o cursor encerrou cedo e ainda faltam ${remaining} docs abaixo de _id<${String(
+							frontier,
+						)} após ${maxRetries} tentativas (collection: ${collectionName}, processados: ${processed})`,
+					);
+				}
+				attempt++;
+				customLog(
+					"warn",
+					`dump:short-cursor | collection: ${collectionName} | cursor encerrou cedo, faltam ${remaining} | retomando de _id<${String(frontier)} | tentativa ${attempt}/${maxRetries}`,
+				);
+				// não é falha de rede → reabre imediatamente, sem backoff
 			} catch (err) {
 				if (!isTransientDumpError(err) || attempt >= maxRetries) throw err;
 				attempt++;
