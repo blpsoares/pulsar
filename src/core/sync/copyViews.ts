@@ -76,18 +76,22 @@ export async function listSourceViews(
 }
 
 /**
- * Garante UMA view no destino, idempotente e SEM destruir dado:
+ * Garante UMA view no destino, idempotente e SEM destruir dado. SÓ escreve no
+ * DESTINO (a origem é apenas lida em listSourceViews):
  * - não existe → `createCollection({ viewOn, pipeline })`
  * - existe e idêntica → `skipped`
- * - existe e DIFERE → drop + recreate (fica IDÊNTICA à origem)
+ * - existe e DIFERE → preserva a antiga numa view de backup `<name>__pulsar_bkp`
+ *   e recria a canônica IDÊNTICA à origem (rename de view não existe no Mongo —
+ *   `CommandNotSupportedOnView` — então o backup é uma view nova com a def antiga)
  * - existe como COLLECTION real de mesmo nome → ERRO (não clobbera dado).
  *
  * Por que drop+recreate e não `collMod`: (a) garante identidade TOTAL com a
  * origem (inclusive collation, que `collMod` não altera em view); (b) funciona
- * com a role `readWrite` (que inclui drop/createCollection) — `collMod` exigiria
- * `dbAdmin`. Dropar uma VIEW não perde dado: view é metadado puro (sem
- * documentos, não passa por dump nem change stream).
+ * com a role `readWrite` (drop/createCollection) — `collMod` exigiria `dbAdmin`.
+ * Dropar uma VIEW não perde dado: view é metadado puro (sem documentos).
  */
+export const BACKUP_SUFFIX = "__pulsar_bkp";
+
 export async function ensureView(
 	destDb: Db,
 	def: ViewDef,
@@ -110,7 +114,27 @@ export async function ensureView(
 			collation?: Document;
 		};
 		if (signature(cur) === signature(def)) return "skipped";
-		// Difere: dropa e recria IDÊNTICA à origem (view não tem dado a perder).
+
+		// Difere. Preserva a definição ANTIGA numa view de backup ANTES de recriar
+		// (alguém pode ter customizado no staging e querer recuperar). Backup-first:
+		// se a criação do backup falhar, a original NÃO é dropada (propaga, contido).
+		const bkpName = `${def.name}${BACKUP_SUFFIX}`;
+		const bkpExisting = (
+			await destDb
+				.listCollections({ name: bkpName }, { nameOnly: false })
+				.toArray()
+		)[0];
+		// só mexe no backup se o nome estiver livre ou já for uma VIEW nossa (nunca
+		// sobrescreve uma collection real que por acaso tenha esse nome).
+		if (!bkpExisting || bkpExisting.type === "view") {
+			if (bkpExisting) await destDb.dropCollection(bkpName);
+			await destDb.createCollection(bkpName, {
+				viewOn: cur.viewOn ?? def.viewOn,
+				pipeline: cur.pipeline ?? [],
+				...(cur.collation ? { collation: cur.collation } : {}),
+			});
+		}
+
 		await destDb.dropCollection(def.name);
 		await destDb.createCollection(def.name, {
 			viewOn: def.viewOn,

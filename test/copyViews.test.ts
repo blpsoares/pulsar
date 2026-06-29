@@ -82,7 +82,7 @@ describe("copyViews — migração de views (metadados, sem sync)", () => {
 		expect(r2.skipped).toBe(1);
 	});
 
-	test("pipeline diferente → drop+recreate deixa idêntica à origem", async () => {
+	test("pipeline diferente → recria idêntica à origem e PRESERVA a antiga em __pulsar_bkp", async () => {
 		await srcDb.createCollection("v1", {
 			viewOn: "base",
 			pipeline: [{ $match: { a: 1 } }],
@@ -98,8 +98,14 @@ describe("copyViews — migração de views (metadados, sem sync)", () => {
 
 		const r = await copyViews(srcDb, dstDb);
 		expect(r.updated).toBe(1);
+		// canônica agora idêntica à origem
 		const d = await viewDef(dstDb, "v1");
+		expect(d?.type).toBe("view");
 		expect(d?.pipeline).toEqual([{ $match: { a: 2 } }]);
+		// definição ANTIGA preservada no backup
+		const bkp = await viewDef(dstDb, "v1__pulsar_bkp");
+		expect(bkp?.type).toBe("view");
+		expect(bkp?.pipeline).toEqual([{ $match: { a: 1 } }]);
 	});
 
 	test("filtro por nomes: migra só as listadas", async () => {
