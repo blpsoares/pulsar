@@ -8,12 +8,14 @@ export const MongoStatusReturns = (
 ): string[][] => {
 	const successfulExports: string[] = [];
 	const failedExports: string[] = [];
+	const missingExports: string[] = [];
 	collectionsStats.forEach((item) => {
 		if (item.success) successfulExports.push(item.success);
 		if (item.failed) failedExports.push(item.failed);
+		if (item.missing) missingExports.push(item.missing);
 	});
 
-	return [successfulExports, failedExports];
+	return [successfulExports, failedExports, missingExports];
 };
 
 function encodeDocument(document: Document) {
