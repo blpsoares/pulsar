@@ -46,6 +46,19 @@ function isTransientDumpError(err: unknown): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Chave estável de `_id` para mapas em memória. `_id.toString()` COLIDE para `_id`
+ * composto/objeto (todos viram "[object Object]") → quebra a decisão
+ * insert/update no re-dump. ObjectId/number/string têm toString único; objeto é
+ * serializado com JSON.
+ */
+const idKey = (id: unknown): string =>
+	id != null &&
+	typeof id === "object" &&
+	!(id as { _bsontype?: string })._bsontype
+		? JSON.stringify(id)
+		: String(id);
+
 export type DumpOptions = {
 	filter?: Document;
 	batchSize?: number;
@@ -87,14 +100,42 @@ export async function dumpCollections(
 	let frontier: unknown = resumeFromId ?? null;
 
 	try {
+		// O dump varre sort({_id:-1}) e retoma/concilia por {_id:{$lt:fronteira}}.
+		// Tipo BSON do _id (ObjectId/number/string/object/...). MISTO = MIN e MAX de
+		// tipos diferentes (ex.: ObjectId + objeto na mesma coll): aí sort({_id:-1})
+		// CRUZA brackets de tipo, mas {_id:$lt} faz TYPE-BRACKETING → o $lt pula os
+		// docs de outro tipo. UNIFORME (tudo ObjectId, OU tudo número, OU tudo objeto):
+		// $lt concorda com o sort → fronteira/guarda funcionam normal.
+		const idType = (v: unknown): string =>
+			v == null
+				? "null"
+				: ((v as { _bsontype?: string })._bsontype ?? typeof v);
+		const [minDoc, maxDoc] = await Promise.all([
+			sourceCollection
+				.find(baseFilter, { projection: { _id: 1 } })
+				.sort({ _id: 1 })
+				.limit(1)
+				.next(),
+			sourceCollection
+				.find(baseFilter, { projection: { _id: 1 } })
+				.sort({ _id: -1 })
+				.limit(1)
+				.next(),
+		]);
+		const idIsUniform = !minDoc || idType(minDoc._id) === idType(maxDoc?._id);
+		// _id MISTO: a fronteira (resumeFromId) é INSEGURA com $lt → ignora e varre
+		// tudo; a guarda mede cobertura pela contagem do destino (abaixo).
+		if (!idIsUniform) frontier = null;
+
 		const countQuery =
-			frontier != null
+			idIsUniform && frontier != null
 				? { $and: [baseFilter, { _id: { $lt: frontier } }] }
 				: baseFilter;
-		// Sem filtro nem retomada, estimatedDocumentCount (metadados, instantâneo);
-		// caso contrário countDocuments (scan real) para o total correto do recorte.
+		// Sem filtro/retomada E _id uniforme: estimatedDocumentCount (metadados,
+		// instantâneo). Senão countDocuments (exato — a guarda de _id misto depende
+		// de um total confiável).
 		const total =
-			!filter && frontier == null
+			idIsUniform && !filter && frontier == null
 				? await sourceCollection.estimatedDocumentCount()
 				: await sourceCollection.countDocuments(countQuery);
 
@@ -153,7 +194,7 @@ export async function dumpCollections(
 		while (true) {
 			try {
 				const query =
-					frontier != null
+					idIsUniform && frontier != null
 						? { $and: [baseFilter, { _id: { $lt: frontier } }] }
 						: baseFilter;
 				const cursor = sourceCollection.find(query).sort({ _id: -1 });
@@ -176,13 +217,24 @@ export async function dumpCollections(
 				// e o stream ao vivo nunca reconciliava (só entrega mudança nova, não
 				// re-injeta doc pré-existente que o cursor pulou). Foi a causa de perda
 				// silenciosa de docs (ex.: collection de 117 copiada com 82, marcada OK).
-				// Conferimos que NÃO sobra nada abaixo da fronteira; se sobra, a
-				// varredura não terminou: reabrimos da fronteira em vez de marcar completo.
-				const remainingQuery =
-					frontier != null
-						? { $and: [baseFilter, { _id: { $lt: frontier } }] }
-						: baseFilter;
-				const remaining = await sourceCollection.countDocuments(remainingQuery);
+				// Conferimos que NÃO falta nada; se falta, a varredura não terminou:
+				// retentamos em vez de marcar completo.
+				// - _id ObjectId: {_id:$lt:fronteira} é confiável e live-safe.
+				// - _id composto/misto: NÃO usa $lt (type-bracketing pula docs de outro
+				//   tipo). Mede a cobertura REAL pela contagem do DESTINO vs o total da
+				//   origem — imune a re-leituras (em retries, o `processed` infla pois
+				//   re-varre do topo; a contagem do destino não).
+				let remaining: number;
+				if (idIsUniform) {
+					const remainingQuery =
+						frontier != null
+							? { $and: [baseFilter, { _id: { $lt: frontier } }] }
+							: baseFilter;
+					remaining = await sourceCollection.countDocuments(remainingQuery);
+				} else {
+					const destCount = await destCollection.countDocuments(baseFilter);
+					remaining = Math.max(0, total - destCount);
+				}
 				if (remaining === 0) break; // varredura REALMENTE completa
 
 				if (attempt >= maxRetries) {
@@ -273,14 +325,14 @@ async function processBatch(
 			{ projection: { "__sync.hot": 1, "__sync.hash": 1 } },
 		)
 		.toArray();
-	const destMap = new Map(existing.map((d) => [d._id.toString(), d]));
+	const destMap = new Map(existing.map((d) => [idKey(d._id), d]));
 
 	const ops: AnyBulkWriteOperation[] = [];
 
 	for (const coldDocument of docs) {
 		const newDocument = addFieldsOnMongoDocument(coldDocument, "dump", false);
 		const sourceHash = newDocument.__sync?.hash;
-		const destDoc = destMap.get(coldDocument._id.toString());
+		const destDoc = destMap.get(idKey(coldDocument._id));
 
 		if (!destDoc) {
 			ops.push({
