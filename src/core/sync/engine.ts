@@ -1,7 +1,6 @@
 import Bottleneck from "bottleneck";
 import type {
 	ChangeStream,
-	ChangeStreamDocument,
 	Collection,
 	Db,
 	Document,

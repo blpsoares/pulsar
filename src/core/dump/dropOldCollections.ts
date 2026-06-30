@@ -1,9 +1,9 @@
-import Bottleneck from "bottleneck";
+import type Bottleneck from "bottleneck";
+import type { SingleBar } from "cli-progress";
 import type { Db, MongoClient } from "mongodb";
+import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
 import { MongoStatusReturns } from "../../utils/mongo";
-import { createSingleBar } from "../../utils/createProgressBar";
-import type { SingleBar } from "cli-progress";
 
 const validateDropCollections = async (
 	db: Db,

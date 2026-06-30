@@ -1,4 +1,4 @@
-import fs from "fs";
+import fs from "node:fs";
 import yaml from "js-yaml";
 import type { ZodType } from "zod";
 import { ZodError } from "zod";

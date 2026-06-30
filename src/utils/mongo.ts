@@ -1,5 +1,5 @@
-import { BSON, type Document } from "mongodb";
 import { createHash } from "node:crypto";
+import { BSON, type Document } from "mongodb";
 
 //? Bring messages from collections that were not dumped/restored to this file (making the dump and restore functions cleaner)
 export const MongoStatusReturns = (
@@ -28,7 +28,7 @@ export function addFieldsOnMongoDocument(
 	hot: boolean = true,
 ) {
 	const hash = encodeDocument(rawDocument);
-	const newDocument: Record<string, any> = {
+	const newDocument: Record<string, unknown> = {
 		...rawDocument,
 		__sync: {
 			hot,

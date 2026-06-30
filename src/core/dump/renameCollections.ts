@@ -1,9 +1,9 @@
-import Bottleneck from "bottleneck";
-import { logger, customLog } from "../../utils/customLog";
-import { Db, MongoClient } from "mongodb";
-import { MongoStatusReturns } from "../../utils/mongo";
-import { createSingleBar } from "../../utils/createProgressBar";
+import type Bottleneck from "bottleneck";
 import type { SingleBar } from "cli-progress";
+import type { Db, MongoClient } from "mongodb";
+import { createSingleBar } from "../../utils/createProgressBar";
+import { customLog, logger } from "../../utils/customLog";
+import { MongoStatusReturns } from "../../utils/mongo";
 
 const dbRenameCollection = async (
 	db: Db,
@@ -58,7 +58,8 @@ export const renameNewCollections = async (
 	const solvedRenames = await Promise.all(renameCollectionsPromises);
 	progressBarRename.stop();
 
-	const [successfullRenames, failedRenames] = MongoStatusReturns(solvedRenames);
+	const [_successfullRenames, failedRenames] =
+		MongoStatusReturns(solvedRenames);
 
 	if (failedRenames.length > 0) {
 		customLog(

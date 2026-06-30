@@ -1,6 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
 import Bottleneck from "bottleneck";
-import fs from "fs";
-import path from "path";
 import { dropOldCollections } from "../core/dump/dropOldCollections";
 import { initMigration } from "../core/dump/dump";
 import { initRegistrationSync } from "../core/dump/initSync";

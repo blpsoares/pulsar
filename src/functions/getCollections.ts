@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync } from "node:fs";
 import type { Db, Document } from "mongodb";
 import { errorHandler } from "../errors/errorHandler";
 import type { SyncCollectionEntry } from "../types/parseYml";
@@ -6,9 +6,10 @@ import { t } from "../utils/i18n";
 
 export type CollectionEntry = { name: string; filter?: Document };
 
-function resolveEntry(
-	entry: SyncCollectionEntry,
-): Omit<CollectionEntry, "filter"> & {
+function resolveEntry(entry: SyncCollectionEntry): Omit<
+	CollectionEntry,
+	"filter"
+> & {
 	filterFile?: string;
 	filter?: Document;
 } {

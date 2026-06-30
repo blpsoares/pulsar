@@ -1,10 +1,10 @@
-import type { MongoClient } from "mongodb";
+import type Bottleneck from "bottleneck";
 import type { SingleBar } from "cli-progress";
+import type { MongoClient } from "mongodb";
+import type { MigrateYmlOptions } from "../../types/parseYml";
 import { createSingleBar } from "../../utils/createProgressBar";
 import { customLog, logger } from "../../utils/customLog";
-import type Bottleneck from "bottleneck";
 import { MongoStatusReturns } from "../../utils/mongo";
-import type { MigrateYmlOptions } from "../../types/parseYml";
 
 const createSyncStatsOnDestinDb = async (
 	client: MongoClient,

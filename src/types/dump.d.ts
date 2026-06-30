@@ -1,4 +1,4 @@
 type MongoStatusReturn = {
-  success: string | false;
-  failed: string | false;
+	success: string | false;
+	failed: string | false;
 };

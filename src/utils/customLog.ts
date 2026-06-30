@@ -69,12 +69,12 @@ export const logger = createLogger({
 /** Escreve apenas no terminal (não toca no winston/arquivo). */
 export const terminalLog = (
 	type: OptionsCustomLogs,
-	message: any,
+	message: unknown,
 	breakLine?: boolean,
 ) => {
 	const prefix = `[ ${type.toUpperCase()} ] `;
 	const _breakLine = breakLine ? "\n" : "";
-	multiLog(optionsLogs[type].bold(_breakLine + prefix + message));
+	multiLog(optionsLogs[type].bold(_breakLine + prefix + String(message)));
 };
 
 /**
@@ -84,18 +84,18 @@ export const terminalLog = (
  */
 export const fileLog = (
 	type: OptionsCustomLogs,
-	message: any,
-	error: any = "",
+	message: unknown,
+	error: unknown = "",
 ) => {
-	logger.log({ level: type, message: message + error });
+	logger.log({ level: type, message: String(message) + String(error) });
 };
 
 export const customLog = (
 	type: OptionsCustomLogs,
-	message: any,
+	message: unknown,
 	breakLine?: boolean,
-	error: any = "",
+	error: unknown = "",
 ) => {
 	terminalLog(type, message, breakLine);
-	logger.log({ level: type, message: message + error });
+	logger.log({ level: type, message: String(message) + String(error) });
 };
