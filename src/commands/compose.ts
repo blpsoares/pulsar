@@ -6,6 +6,7 @@ import chalk from "chalk";
 import { buildInstanceCompose } from "../core/compose/buildCompose";
 import { detectConfigs } from "../core/compose/detectConfigs";
 import { recommendResources } from "../core/compose/recommend";
+import { t } from "../utils/i18n";
 
 const GiB = 1024 * 1024 * 1024;
 const BASE_FILE = "docker-compose-limit.yml";
@@ -58,8 +59,8 @@ function nextSuffix(names: string[]): string {
 export async function composeUp(): Promise<void> {
 	if (!existsSync(BASE_FILE)) {
 		console.log(
-			chalk.red(`✗ Não achei ${BASE_FILE} no diretório atual.`) +
-				chalk.gray(" Rode na raiz do repo do pulsar."),
+			chalk.red(t("compose.base_not_found", { file: BASE_FILE })) +
+				chalk.gray(t("compose.run_at_root")),
 		);
 		process.exit(1);
 	}
@@ -69,22 +70,24 @@ export async function composeUp(): Promise<void> {
 	const usedRam = totalRam - os.freemem();
 	const committed = committedResources();
 
-	console.log(`\n${chalk.bold.cyan("PULSAR COMPOSE — nova instância")}`);
+	console.log(`\n${chalk.bold.cyan(t("compose.title"))}`);
 	console.log(chalk.gray("─".repeat(58)));
 	console.log(
-		`${chalk.gray("Instâncias existentes:")} ${
+		`${chalk.gray(t("compose.existing_instances"))} ${
 			committed.names.length
 				? chalk.yellowBright(committed.names.join(", "))
-				: chalk.gray("nenhuma")
+				: chalk.gray(t("compose.none"))
 		}`,
 	);
 	console.log(
-		`${chalk.gray("RAM:")} total ${chalk.greenBright(`${(totalRam / GiB).toFixed(1)}G`)} · ` +
-			`em uso (SO) ${chalk.yellow(`${(usedRam / GiB).toFixed(1)}G`)} · ` +
-			`comprometida p/ pulsar ${chalk.yellow(`${(committed.mem / GiB).toFixed(1)}G`)}`,
+		t("compose.ram_line", {
+			total: (totalRam / GiB).toFixed(1),
+			used: (usedRam / GiB).toFixed(1),
+			committed: (committed.mem / GiB).toFixed(1),
+		}),
 	);
 	console.log(
-		`${chalk.gray("CPU:")} ${chalk.yellowBright(String(cores))} núcleo(s) · comprometidos ${chalk.yellow(String(committed.cpus))}\n`,
+		`${t("compose.cpu_line", { cores, committed: committed.cpus })}\n`,
 	);
 
 	// ── detecta configs do pulsar ───────────────────────────────────────────
@@ -98,11 +101,14 @@ export async function composeUp(): Promise<void> {
 	const syncs = found.filter((c) => c.kind === "sync");
 
 	if (syncs.length) {
-		console.log(chalk.bold("Configs de sync encontradas:"));
+		console.log(chalk.bold(t("compose.sync_configs_found")));
 		syncs.forEach((c, i) => {
 			console.log(
-				`  ${chalk.cyan(String(i + 1))}) ${c.file} ` +
-					chalk.gray(`→ destino: ${c.destDb ?? "?"}`),
+				t("compose.config_item", {
+					n: i + 1,
+					file: c.file,
+					dest: c.destDb ?? "?",
+				}),
 			);
 		});
 		const others = found.filter(
@@ -111,7 +117,9 @@ export async function composeUp(): Promise<void> {
 		if (others.length) {
 			console.log(
 				chalk.gray(
-					`  (ignoradas p/ sync: ${others.map((o) => `${o.file}[${o.kind}]`).join(", ")})`,
+					t("compose.ignored_for_sync", {
+						list: others.map((o) => `${o.file}[${o.kind}]`).join(", "),
+					}),
 				),
 			);
 		}
@@ -122,35 +130,33 @@ export async function composeUp(): Promise<void> {
 	const def = syncs.length ? syncs[0].file : "configs/sync.yml";
 	const pick = (
 		prompt(
-			chalk.cyan("Config (nº da lista ou caminho)") +
-				chalk.gray(" — DEVE apontar p/ outro destino:"),
+			chalk.cyan(t("compose.prompt_config")) +
+				chalk.gray(t("compose.prompt_config_hint")),
 			def,
 		) ?? ""
 	).trim();
 	const byIndex = syncs[Number(pick) - 1];
 	const configPath = byIndex ? byIndex.file : pick;
 	if (!configPath) {
-		console.log(chalk.red("Config obrigatória. Abortado."));
+		console.log(chalk.red(t("compose.config_required")));
 		process.exit(1);
 	}
 	if (!existsSync(configPath)) {
 		console.log(
-			chalk.yellowBright(
-				`⚠ ${configPath} ainda não existe — crie antes de subir (URI/destino próprios).`,
-			),
+			chalk.yellowBright(t("compose.config_not_exist", { path: configPath })),
 		);
 	}
 
 	// ── 2º: nome/sufixo do container da nova instância ───────────────────────
 	const suffix = (
 		prompt(
-			chalk.cyan("Sufixo da instância") +
-				chalk.gray(" (ex.: 2 → pulsar-sync-2):"),
+			chalk.cyan(t("compose.prompt_suffix")) +
+				chalk.gray(t("compose.prompt_suffix_hint")),
 			nextSuffix(committed.names),
 		) ?? ""
 	).trim();
 	if (!suffix) {
-		console.log(chalk.red("Sufixo obrigatório. Abortado."));
+		console.log(chalk.red(t("compose.suffix_required")));
 		process.exit(1);
 	}
 
@@ -162,17 +168,17 @@ export async function composeUp(): Promise<void> {
 		committed.cpus,
 	);
 	console.log(
-		`\n${chalk.bold.cyan("Recursos sugeridos")} ${chalk.gray("(disponível − em uso → recomendado)")}`,
+		`\n${chalk.bold.cyan(t("compose.suggested_resources"))} ${chalk.gray(t("compose.suggested_resources_hint"))}`,
 	);
 	console.log(
 		`    mem_limit/memswap ${chalk.greenBright(`${rec.memLimitMiB}m`)} · ` +
 			`mem_reservation ${chalk.greenBright(`${rec.memReservMiB}m`)} · ` +
 			`cpus ${chalk.greenBright(String(rec.cpus))}`,
 	);
-	console.log(
-		chalk.gray("  [1] usar recomendados (Enter)   [2] inserir manualmente"),
-	);
-	const mode = (prompt(chalk.cyan("Opção:"), "1") ?? "1").trim();
+	console.log(chalk.gray(t("compose.resource_mode_hint")));
+	const mode = (
+		prompt(chalk.cyan(t("compose.prompt_option")), "1") ?? "1"
+	).trim();
 
 	const res =
 		mode === "2"
@@ -185,7 +191,10 @@ export async function composeUp(): Promise<void> {
 						prompt("mem_reservation (MiB):", String(rec.memReservMiB)),
 						rec.memReservMiB,
 					),
-					cpus: numOr(prompt("cpus (núcleos):", String(rec.cpus)), rec.cpus),
+					cpus: numOr(
+						prompt(t("compose.prompt_cpus"), String(rec.cpus)),
+						rec.cpus,
+					),
 				}
 			: rec;
 
@@ -198,37 +207,33 @@ export async function composeUp(): Promise<void> {
 	const outFile = `docker-compose-limit-${suffix}.yml`;
 	writeFileSync(outFile, outSrc);
 
-	console.log(`\n${chalk.bold.green(`✓ Gerado ${outFile}`)}`);
 	console.log(
-		chalk.gray("  container ") +
-			chalk.bold(`pulsar-sync-${suffix}`) +
-			chalk.gray(" · config ") +
-			chalk.bold(configPath) +
-			chalk.gray(" · logs ") +
-			chalk.bold(`./logs-${suffix}`) +
-			chalk.gray(` · ${res.memLimitMiB}m/${res.cpus}cpu`),
+		`\n${chalk.bold.green(t("compose.generated", { file: outFile }))}`,
+	);
+	console.log(
+		t("compose.generated_detail", {
+			container: `pulsar-sync-${suffix}`,
+			config: configPath,
+			logs: `./logs-${suffix}`,
+			mem: res.memLimitMiB,
+			cpus: res.cpus,
+		}),
 	);
 
-	if (confirm(`Subir agora (docker compose -f ${outFile} up -d --build)?`)) {
+	if (confirm(t("compose.confirm_up", { file: outFile }))) {
 		try {
 			execSync(`docker compose -f ${outFile} up -d --build`, {
 				stdio: "inherit",
 			});
 			console.log(
-				chalk.green(`\n✓ pulsar-sync-${suffix} no ar.`) +
-					chalk.gray(` Logs: docker logs -f pulsar-sync-${suffix}`),
+				chalk.green(t("compose.up_ok", { suffix })) +
+					chalk.gray(t("compose.up_ok_logs", { suffix })),
 			);
 		} catch {
-			console.log(
-				chalk.red(
-					"\n✗ Falha ao subir — verifique o Docker e o compose gerado.",
-				),
-			);
+			console.log(chalk.red(t("compose.up_fail")));
 			process.exit(1);
 		}
 	} else {
-		console.log(
-			chalk.gray(`\nQuando quiser: docker compose -f ${outFile} up -d --build`),
-		);
+		console.log(chalk.gray(t("compose.up_later", { file: outFile })));
 	}
 }

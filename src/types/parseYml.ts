@@ -50,6 +50,7 @@ export const syncYmlSchema = z.object({
 				.object({
 					verbose: z.boolean().optional(),
 					progress: z.boolean().optional(),
+					lang: z.enum(["en", "pt"]).optional(),
 				})
 				.optional(),
 			performance: z

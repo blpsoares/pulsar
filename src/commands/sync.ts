@@ -7,6 +7,7 @@ import { getCollections } from "../functions/getCollections";
 import type { SyncOptionsCli } from "../types/cliOptions";
 import { syncYmlSchema, type SyncYmlOptions } from "../types/parseYml";
 import parseYml from "../utils/parseYml";
+import { setLang, t } from "../utils/i18n";
 import { setLogConfig } from "../utils/logConfig";
 import { customLog, logger } from "../utils/customLog";
 import { formatLoadReport } from "../utils/loadReport";
@@ -26,6 +27,10 @@ export async function syncCollections(
 ) {
 	const options = parseYml<SyncYmlOptions>(ymlPath, syncYmlSchema);
 
+	setLang(
+		process.env.PULSAR_LANG || options.command.sync.logging?.lang || "en",
+	);
+
 	const ymlLogging = options.command.sync.logging ?? {};
 
 	// A barra de progresso (cli-progress) depende de um TTY para renderizar e,
@@ -41,10 +46,7 @@ export async function syncCollections(
 	});
 
 	if (wantProgress && !isTTY) {
-		customLog(
-			"warn",
-			"Saída sem TTY detectada (pm2/nohup/systemd) — barra de progresso desativada, usando log linha-a-linha.",
-		);
+		customLog("warn", t("sync.no_tty"));
 	}
 
 	// Precedência dos parâmetros de performance: flag CLI > yml > default.
@@ -74,9 +76,22 @@ export async function syncCollections(
 	const copyViews = options.command.sync.copyViews ?? false;
 	const copyViewsOn = copyViews === true || Array.isArray(copyViews);
 
+	const perfExtra =
+		(full ? t("sync.performance.full") : "") +
+		(copyIndexes ? t("sync.performance.copyindexes") : "") +
+		(copyViewsOn
+			? t("sync.performance.copyviews", {
+					n: Array.isArray(copyViews) ? copyViews.length : "all",
+				})
+			: "");
 	customLog(
 		"info",
-		`Performance: parallel=${parallel} | batchSize=${batchSize} | flushIntervalMs=${flushIntervalMs}${full ? " | --full (re-dump forçado)" : ""}${copyIndexes ? " | copyIndexes=on" : ""}${copyViewsOn ? ` | copyViews=${Array.isArray(copyViews) ? copyViews.length : "all"}` : ""}`,
+		t("sync.performance", {
+			parallel,
+			batchSize,
+			flushIntervalMs,
+			extra: perfExtra,
+		}),
 	);
 
 	const client = await conn(options.command.sync.source.uri, "source");
@@ -100,21 +115,13 @@ export async function syncCollections(
 	const shutdown = async (signal: string) => {
 		if (stopping) return;
 		stopping = true;
-		customLog(
-			"warn",
-			`Recebido ${signal} — encerrando e salvando checkpoints...`,
-			true,
-		);
+		customLog("warn", t("sync.shutdown_received", { signal }), true);
 		// Teto do shutdown: generoso o bastante p/ o flush concluir mesmo com rede
 		// degradada na preempção (ACPI dá ~2 min), mas bounded p/ nunca pendurar
 		// (ex.: stream travado no loop do evento >16MB). Configurável por env.
 		const shutdownMs = Number(process.env.PULSAR_SHUTDOWN_TIMEOUT_MS) || 30000;
 		const forced = setTimeout(() => {
-			customLog(
-				"error",
-				`Shutdown excedeu ${shutdownMs}ms — saída forçada.`,
-				true,
-			);
+			customLog("error", t("sync.shutdown_exceeded", { shutdownMs }), true);
 			process.exit(1);
 		}, shutdownMs);
 		forced.unref?.();
@@ -144,7 +151,10 @@ export async function syncCollections(
 
 		customLog(
 			"info",
-			`Abrindo watch em ${collections.length} collection(s) — eventos: ${acceptableEventOperations.join(", ")}...`,
+			t("sync.opening_watch", {
+				count: collections.length,
+				events: acceptableEventOperations.join(", "),
+			}),
 			true,
 		);
 
@@ -178,8 +188,8 @@ export async function syncCollections(
 		const total = collections.length;
 		const falhas = engine.failedDumps;
 		const stopHint = isTTY
-			? "parar: Ctrl+C (salva o checkpoint)"
-			: "parar: docker stop (salva o checkpoint, não remova)";
+			? t("sync.stophint.tty")
+			: t("sync.stophint.container");
 		const panel = renderClosingPanel({
 			total,
 			resumed: engine.resumedCount,
@@ -213,22 +223,37 @@ export async function syncCollections(
 		// Linha única e greppável: nº de collections + início/fim (relógio) + total,
 		// pra reportar "banco up em X". Vai pro terminal e pro logs/debug.log.
 		customLog("info", formatLoadReport(total, startedAt, finishedAt), true);
+		const readyExtra =
+			(copyIndexes
+				? t("sync.ready.indexes", {
+						created: engine.indexesCreated,
+						skipped: engine.indexesSkipped,
+						failed: engine.indexFailures.length,
+					})
+				: "") +
+			(copyViewsOn
+				? t("sync.ready.views", {
+						created: engine.viewsCreated,
+						updated: engine.viewsUpdated,
+						skipped: engine.viewsSkipped,
+						failed: engine.viewFailures.length,
+					})
+				: "");
 		logger.info(
-			`SYNC PRONTO: ${total - falhas.length}/${total} em dia | ${engine.resumedCount} retomadas | ${engine.dumpsPlanned - falhas.length} dump | ${engine.docsDumped} docs | falhas: ${falhas.join(",") || "0"}${copyIndexes ? ` | índices: +${engine.indexesCreated} (${engine.indexesSkipped} já existiam, ${engine.indexFailures.length} falhas)` : ""}${copyViewsOn ? ` | views: +${engine.viewsCreated} (${engine.viewsUpdated} atualizadas, ${engine.viewsSkipped} iguais, ${engine.viewFailures.length} falhas)` : ""}`,
+			t("sync.ready", {
+				ready: total - falhas.length,
+				total,
+				resumed: engine.resumedCount,
+				dumps: engine.dumpsPlanned - falhas.length,
+				docs: engine.docsDumped,
+				failures: falhas.join(",") || "0",
+				extra: readyExtra,
+			}),
 		);
 
 		// Em container (não-TTY): nota do "não remova" + heartbeat do watch 24/7.
 		if (!barsActive) {
-			console.log(
-				[
-					"# enquanto este container roda, a réplica fica em TEMPO REAL.",
-					"# o estado (resume token + fronteiras) vive no Mongo de DESTINO, não no",
-					"# container — então `docker stop` e subir de novo RETOMA de onde parou,",
-					"# sem perder nada. Por isso NÃO precisa remover/recriar o container; e",
-					"# evite `kill -9`/OOM (aí o checkpoint final não é salvo: perde ~5s,",
-					"# re-aplicados idempotente no próximo start).",
-				].join("\n"),
-			);
+			console.log(t("sync.container_note"));
 			const eng = engine;
 			const heartbeatMs = Number(process.env.WATCH_HEARTBEAT_MS) || 60000;
 			startWatchHeartbeat(heartbeatMs, () => ({

@@ -1,8 +1,9 @@
 import chalk from "chalk";
-import { createLogger, format, transports } from "winston";
 import { format as formatDate } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { createLogger, format, transports } from "winston";
 import { multiLog } from "./progressManager";
+
 const { combine, timestamp, printf } = format;
 
 const optionsLogs = {
@@ -74,6 +75,19 @@ export const terminalLog = (
 	const prefix = `[ ${type.toUpperCase()} ] `;
 	const _breakLine = breakLine ? "\n" : "";
 	multiLog(optionsLogs[type].bold(_breakLine + prefix + message));
+};
+
+/**
+ * Escreve apenas no ARQUIVO (winston), sem tocar no terminal/stdout. Usado quando
+ * o STATUS heartbeat (não-TTY) já cobre a tela: a linha vira histórico greppável
+ * em `logs/debug.log` sem poluir o `docker logs`.
+ */
+export const fileLog = (
+	type: OptionsCustomLogs,
+	message: any,
+	error: any = "",
+) => {
+	logger.log({ level: type, message: message + error });
 };
 
 export const customLog = (

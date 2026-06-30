@@ -1,16 +1,17 @@
 import { MongoClient, MongoParseError } from "mongodb";
 import { errorHandler } from "../errors/errorHandler";
 import { customLog, logger } from "../utils/customLog";
+import { t } from "../utils/i18n";
 export const conn = async (uri: string, source: string = "->") => {
 	if (uri.endsWith("/")) uri = uri.slice(0, -1);
 	if (!uri) {
 		logger.error(uri);
 		throw errorHandler(
-			new MongoParseError(`Mongo URI not declared or is empty: uri=${uri}`),
+			new MongoParseError(t("conn.uri_empty", { uri })),
 			"CONN:MONGO:URI",
 		);
 	}
-	customLog("info", "Connecting to MongoDB...");
+	customLog("info", t("conn.connecting"));
 
 	try {
 		const client = new MongoClient(uri, {
@@ -37,13 +38,10 @@ export const conn = async (uri: string, source: string = "->") => {
 		// lá no mongodump. O ping força um round-trip de verdade — falha aqui, com
 		// mensagem clara, em vez de mentir sucesso.
 		await client.db().command({ ping: 1 });
-		customLog("success", `Connected to ${source} MongoDB!`);
+		customLog("success", t("conn.connected", { source }));
 		return client;
 	} catch (error) {
-		customLog(
-			"error",
-			`Não alcancei o MongoDB (${source}). Verifique: 1) seu IP está na Network Access (IP allowlist) do Atlas; 2) a saída TCP na 27017 não está bloqueada; 3) credenciais/URI. Detalhes em logs/error.log`,
-		);
+		customLog("error", t("conn.unreachable", { source }));
 		logger.error(uri);
 		throw errorHandler(error, "CONN:MONGO:CLIENT");
 	}

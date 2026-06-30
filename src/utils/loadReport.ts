@@ -4,6 +4,8 @@
  * do início da 1ª até o fim da última — pra reportar "banco up em X".
  */
 
+import { t } from "./i18n";
+
 /** Duração decorrida formatada: "45s" / "1m 30s" / "1h 5m 03s". */
 export function formatDuration(ms: number): string {
 	const totalSec = Math.max(0, Math.round(ms / 1000));
@@ -29,9 +31,10 @@ export function formatLoadReport(
 	startEpochMs: number,
 	endEpochMs: number,
 ): string {
-	return (
-		`CARGA INICIAL CONCLUÍDA: ${count} collections | ` +
-		`início ${clock(startEpochMs)} | fim ${clock(endEpochMs)} | ` +
-		`total ${formatDuration(endEpochMs - startEpochMs)}`
-	);
+	return t("load.report", {
+		count,
+		start: clock(startEpochMs),
+		end: clock(endEpochMs),
+		total: formatDuration(endEpochMs - startEpochMs),
+	});
 }

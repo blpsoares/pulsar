@@ -1,5 +1,6 @@
-import { ObjectId, type Collection } from "mongodb";
+import type { Collection, ObjectId } from "mongodb";
 import { customLog, logger, terminalLog } from "../../utils/customLog";
+import { t } from "../../utils/i18n";
 import { getLogConfig } from "../../utils/logConfig";
 
 export async function watchDeleteEvent(
@@ -15,7 +16,7 @@ export async function watchDeleteEvent(
 	} catch (error) {
 		customLog(
 			"error",
-			`watch:delete falhou | collection: ${collectionName} | _id: ${_id}`,
+			t("watch.delete_failed", { coll: collectionName, id: String(_id) }),
 			false,
 			error,
 		);
@@ -26,7 +27,7 @@ export async function watchDeleteEvent(
 
 	deletedIds.push(_id.toString());
 
-	const msg = `watch:delete | collection: ${collectionName} | _id: ${_id}`;
+	const msg = t("watch.delete", { coll: collectionName, id: String(_id) });
 	logger.info(msg);
 	if (getLogConfig().verbose) terminalLog("info", msg);
 }

@@ -2,10 +2,12 @@
 import type { AnyBulkWriteOperation, Collection, Document } from "mongodb";
 import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { buildReplaceWithMigratedAt } from "./writeDoc";
-import { customLog } from "../../utils/customLog";
+import { customLog, fileLog } from "../../utils/customLog";
+import { t } from "../../utils/i18n";
 import { getLogConfig } from "../../utils/logConfig";
 import {
 	createBar,
+	isStatusReporterActive,
 	markDone,
 	trackDumpDone,
 	trackDumpProgress,
@@ -102,10 +104,12 @@ export async function dumpCollections(
 
 		if (!bar) {
 			const resumeMsg =
-				frontier != null ? ` (retomando de _id<${frontier})` : "";
+				frontier != null
+					? t("dump.start_resume_suffix", { frontier: String(frontier) })
+					: "";
 			customLog(
 				"info",
-				`dump:start | collection: ${collectionName} | total: ${total}${resumeMsg}`,
+				t("dump.start", { coll: collectionName, total, resume: resumeMsg }),
 			);
 		}
 
@@ -123,9 +127,20 @@ export async function dumpCollections(
 			});
 			if (!bar && processed - lastLogged >= LOG_EVERY) {
 				lastLogged = processed;
-				customLog(
+				// Quando o STATUS heartbeat (não-TTY) está ativo, o painel já cobre o
+				// progresso no stdout — a linha vira só histórico no arquivo (evita a
+				// redundância no `docker logs`). Sem heartbeat, mantém no stdout.
+				const logProgress = isStatusReporterActive() ? fileLog : customLog;
+				logProgress(
 					"info",
-					`dump:progress | collection: ${collectionName} | ${processed}/${total} | skip ${stats.skipped} upd ${stats.updated} ins ${stats.inserted}`,
+					t("dump.progress", {
+						coll: collectionName,
+						processed,
+						total,
+						skip: stats.skipped,
+						upd: stats.updated,
+						ins: stats.inserted,
+					}),
 				);
 			}
 			onProgress?.(frontier);
@@ -172,15 +187,25 @@ export async function dumpCollections(
 
 				if (attempt >= maxRetries) {
 					throw new Error(
-						`dump truncado: o cursor encerrou cedo e ainda faltam ${remaining} docs abaixo de _id<${String(
-							frontier,
-						)} após ${maxRetries} tentativas (collection: ${collectionName}, processados: ${processed})`,
+						t("dump.truncated_error", {
+							remaining,
+							frontier: String(frontier),
+							maxRetries,
+							coll: collectionName,
+							processed,
+						}),
 					);
 				}
 				attempt++;
 				customLog(
 					"warn",
-					`dump:short-cursor | collection: ${collectionName} | cursor encerrou cedo, faltam ${remaining} | retomando de _id<${String(frontier)} | tentativa ${attempt}/${maxRetries}`,
+					t("dump.short_cursor", {
+						coll: collectionName,
+						remaining,
+						frontier: String(frontier),
+						attempt,
+						maxRetries,
+					}),
 				);
 				// não é falha de rede → reabre imediatamente, sem backoff
 			} catch (err) {
@@ -190,7 +215,14 @@ export async function dumpCollections(
 				const reason = err instanceof Error ? err.message : String(err);
 				customLog(
 					"warn",
-					`dump:retry | collection: ${collectionName} | tentativa ${attempt}/${maxRetries} | retomando de _id<${frontier} | aguardando ${wait}ms | causa: ${reason}`,
+					t("dump.retry", {
+						coll: collectionName,
+						attempt,
+						maxRetries,
+						frontier: String(frontier),
+						wait,
+						reason,
+					}),
 				);
 				await sleep(wait);
 			}

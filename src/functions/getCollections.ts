@@ -1,21 +1,35 @@
-import type { Db, Document } from "mongodb";
 import { readFileSync } from "fs";
+import type { Db, Document } from "mongodb";
 import { errorHandler } from "../errors/errorHandler";
 import type { SyncCollectionEntry } from "../types/parseYml";
+import { t } from "../utils/i18n";
 
 export type CollectionEntry = { name: string; filter?: Document };
 
-function resolveEntry(entry: SyncCollectionEntry): Omit<CollectionEntry, "filter"> & { filterFile?: string; filter?: Document } {
+function resolveEntry(
+	entry: SyncCollectionEntry,
+): Omit<CollectionEntry, "filter"> & {
+	filterFile?: string;
+	filter?: Document;
+} {
 	if (typeof entry === "string") return { name: entry };
 	return entry;
 }
 
-function loadFilter(entry: ReturnType<typeof resolveEntry>): Document | undefined {
+function loadFilter(
+	entry: ReturnType<typeof resolveEntry>,
+): Document | undefined {
 	if (entry.filterFile) {
 		try {
 			return JSON.parse(readFileSync(entry.filterFile, "utf-8"));
 		} catch {
-			throw errorHandler(new Error(`Could not read filterFile: ${entry.filterFile}`));
+			throw errorHandler(
+				new Error(
+					t("collections.filterfile_unreadable", {
+						filterFile: entry.filterFile,
+					}),
+				),
+			);
 		}
 	}
 	return entry.filter as Document | undefined;
@@ -35,7 +49,7 @@ export async function getCollections<T extends { all?: boolean }>(
 	}
 
 	if (!collections) {
-		throw errorHandler(new Error(`No collections to watch on file: ${ymlPath}`));
+		throw errorHandler(new Error(t("collections.none_to_watch", { ymlPath })));
 	}
 
 	return (collections as SyncCollectionEntry[]).map((raw) => {

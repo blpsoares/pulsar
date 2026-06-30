@@ -20,7 +20,7 @@ describe("formatLoadReport", () => {
 		const line = formatLoadReport(50, start, end);
 		expect(line).toContain("50 collections");
 		expect(line).toContain("total 37m 48s");
-		expect(line).toMatch(/início \d{2}:\d{2}:\d{2}/);
-		expect(line).toMatch(/fim \d{2}:\d{2}:\d{2}/);
+		expect(line).toMatch(/start \d{2}:\d{2}:\d{2}/);
+		expect(line).toMatch(/end \d{2}:\d{2}:\d{2}/);
 	});
 });

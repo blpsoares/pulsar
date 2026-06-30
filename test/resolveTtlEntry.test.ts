@@ -36,7 +36,7 @@ describe("resolveTtlEntry", () => {
 	test("erro quando não há field nem deriveFromId", () => {
 		expect(() =>
 			resolveTtlEntry({ name: "x", expire: "1d" }, undefined),
-		).toThrow(/sem campo de TTL/);
+		).toThrow(/has no TTL field/);
 	});
 
 	test("erro quando field e deriveFromId colidem", () => {

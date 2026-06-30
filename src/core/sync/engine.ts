@@ -9,6 +9,7 @@ import type {
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
 import { customLog, logger } from "../../utils/customLog";
+import { t } from "../../utils/i18n";
 import { setSyncPlan } from "../../utils/progressManager";
 import { ChangeBuffer, type ChangeOp } from "./changeBuffer";
 import { ensureCollectionIndexes } from "./copyIndexes";
@@ -294,20 +295,23 @@ export class SyncEngine {
 			this.viewsSkipped = res.skipped;
 			this.viewFailures.push(...res.failed);
 			const parts = [
-				`criadas ${res.created}`,
-				`atualizadas ${res.updated}`,
-				`já iguais ${res.skipped}`,
+				t("views.part_created", { created: res.created }),
+				t("views.part_updated", { updated: res.updated }),
+				t("views.part_skipped", { skipped: res.skipped }),
 			];
 			if (res.failed.length > 0) {
-				parts.push(`FALHARAM ${res.failed.length}`);
+				parts.push(t("views.part_failed", { failed: res.failed.length }));
 			}
-			customLog("info", `views | ${parts.join(", ")}`);
+			customLog("info", t("views.summary", { parts: parts.join(", ") }));
 			for (const f of res.failed) {
-				customLog("warn", `view:falha | ${f.name} | ${f.reason}`);
+				customLog(
+					"warn",
+					t("views.failure", { name: f.name, reason: f.reason }),
+				);
 			}
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
-			customLog("warn", `views | falha ao listar/migrar (contido): ${reason}`);
+			customLog("warn", t("views.list_migrate_failed", { reason }));
 		}
 	}
 
@@ -322,7 +326,7 @@ export class SyncEngine {
 			// listIndexes da origem falhou → a collection inteira falha na cópia.
 			const reason = err instanceof Error ? err.message : String(err);
 			this.indexFailures.push({ coll: col.name, name: "*" });
-			customLog("warn", `[${col.name}] cópia de índices falhou: ${reason}`);
+			customLog("warn", t("indexes.copy_failed", { coll: col.name, reason }));
 			return;
 		}
 		this.indexesCreated += res.created;
@@ -330,15 +334,21 @@ export class SyncEngine {
 		for (const f of res.failed)
 			this.indexFailures.push({ coll: col.name, name: f.name });
 		const parts = [
-			`${res.created} índices criados`,
-			`${res.skipped} já existiam`,
+			t("indexes.part_created", { created: res.created }),
+			t("indexes.part_existed", { skipped: res.skipped }),
 		];
 		if (res.failed.length > 0) {
 			parts.push(
-				`${res.failed.length} FALHOU (${res.failed.map((f) => f.name).join(", ")})`,
+				t("indexes.part_failed", {
+					failed: res.failed.length,
+					names: res.failed.map((f) => f.name).join(", "),
+				}),
 			);
 		}
-		customLog("info", `[${col.name}] ${parts.join(", ")}`);
+		customLog(
+			"info",
+			t("indexes.summary", { coll: col.name, parts: parts.join(", ") }),
+		);
 	}
 
 	/** Dump de uma collection: freeze (limpa hot velho) → dump → carimba. */
@@ -471,9 +481,7 @@ export class SyncEngine {
 			if (this.closed || this.stream !== stream) return;
 			const pipeline = buildDbWatchPipeline(this.opts.collections);
 			if (resumeMode && isResumeImpossibleError(err)) {
-				logger.error(
-					"RESUME:db.watch token global inválido/expirado — re-dump de tudo",
-				);
+				logger.error(t("resume.token_invalid"));
 				this.resumeLost = true;
 				// M1: descarta o buffer obsoleto do stream expirado (token não mais
 				// válido); o re-dump vai reconciliar tudo — não pode aplicar eventos
@@ -485,7 +493,7 @@ export class SyncEngine {
 				return;
 			}
 			const message = err instanceof Error ? err.message : String(err);
-			logger.error(`WATCH:db.watch ${message}. Reabrindo em 5s...`);
+			logger.error(t("watch.reopening", { message }));
 			await stream.close().catch(() => {});
 			setTimeout(() => {
 				if (this.closed || this.stream !== stream) return;

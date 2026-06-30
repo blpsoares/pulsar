@@ -1,3 +1,5 @@
+import { t } from "../../utils/i18n";
+
 const UNIT_SECONDS: Record<string, number> = {
 	s: 1,
 	sec: 1,
@@ -24,7 +26,7 @@ const UNIT_SECONDS: Record<string, number> = {
 export function parseDuration(input: string | number): number {
 	if (typeof input === "number") {
 		if (!Number.isFinite(input) || input <= 0) {
-			throw new Error(`Duração inválida: ${input} (precisa ser > 0)`);
+			throw new Error(t("ttl.duration.invalid_number", { input }));
 		}
 		return Math.floor(input);
 	}
@@ -35,16 +37,12 @@ export function parseDuration(input: string | number): number {
 			/^(\d+)(s|sec|seconds|min|minutes|h|hours|d|days|w|weeks|mo|months|y|years)$/,
 		);
 	if (!match) {
-		throw new Error(
-			`Duração inválida: "${input}". Use <número><unidade>, ex.: 30d, 1h, 3mo. ` +
-				`Unidades: s/sec/seconds, min/minutes, h/hours, d/days, w/weeks, mo/months, y/years. ` +
-				`'m' sozinho é proibido (ambíguo minuto/mês): use 'min' ou 'mo'.`,
-		);
+		throw new Error(t("ttl.duration.invalid_format", { input }));
 	}
 
 	const value = Number(match[1]);
 	if (value <= 0) {
-		throw new Error(`Duração inválida: "${input}" (precisa ser > 0)`);
+		throw new Error(t("ttl.duration.invalid_value", { input }));
 	}
 	return value * UNIT_SECONDS[match[2]];
 }

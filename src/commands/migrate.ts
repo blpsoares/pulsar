@@ -1,18 +1,19 @@
 import Bottleneck from "bottleneck";
 import fs from "fs";
 import path from "path";
-import { assertMongoTools } from "../functions/assertMongoTools";
 import { dropOldCollections } from "../core/dump/dropOldCollections";
 import { initMigration } from "../core/dump/dump";
 import { initRegistrationSync } from "../core/dump/initSync";
 import { renameNewCollections } from "../core/dump/renameCollections";
 import { initRestore } from "../core/dump/restoreDump";
 import { conn } from "../db/conn";
+import { assertMongoTools } from "../functions/assertMongoTools";
 import { getCollections } from "../functions/getCollections";
 import type { MigrateOptionsCli } from "../types/cliOptions";
 import { type MigrateYmlOptions, migrateYmlSchema } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
 import { deleteTempFolder } from "../utils/deleteTempFolder";
+import { t } from "../utils/i18n";
 import { formatLoadReport } from "../utils/loadReport";
 import parseYml from "../utils/parseYml";
 
@@ -67,7 +68,7 @@ const migrateCollections = async (
 	);
 
 	if (failedRestores.length > 0) {
-		customLog("error", `Failed to restore collections: ${failedRestores}`);
+		customLog("error", t("migrate.restore_failed", { list: failedRestores }));
 		return;
 	}
 
@@ -89,7 +90,7 @@ const migrateCollections = async (
 	);
 
 	if (failedColds.length > 0) {
-		customLog("info", "Retrying set cold stats on failed collections");
+		customLog("info", t("migrate.retry_cold"));
 
 		const [newSuccessColds] = await initRegistrationSync(
 			options,
@@ -111,7 +112,7 @@ const migrateCollections = async (
 		limiter,
 	);
 	if (failedDrops.length > 0) {
-		customLog("info", "Retrying drop failed collections");
+		customLog("info", t("migrate.retry_drop"));
 
 		const [newSuccessDrops] = await dropOldCollections(
 			clientDestination,

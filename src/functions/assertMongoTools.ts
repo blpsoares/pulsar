@@ -1,4 +1,5 @@
 import { errorHandler } from "../errors/errorHandler";
+import { t } from "../utils/i18n";
 
 /**
  * Preflight do `migrate`: o fluxo de dump/restore faz shell-out pros binários
@@ -14,11 +15,7 @@ export const assertMongoTools = () => {
 
 	if (missing.length > 0) {
 		throw errorHandler(
-			`Binário(s) não encontrado(s) no PATH: ${missing.join(", ")}. ` +
-				`O migrate precisa do mongodb-database-tools. Instale e tente de novo. ` +
-				`Ubuntu: baixe o .deb em https://www.mongodb.com/try/download/database-tools ` +
-				`(ex.: sudo apt install -y ./mongodb-database-tools-<codename>-x86_64-<versao>.deb). ` +
-				`Confirme com: mongodump --version`,
+			t("migrate.tools_missing", { missing: missing.join(", ") }),
 			"MIGRATE:TOOLS:MISSING",
 		);
 	}

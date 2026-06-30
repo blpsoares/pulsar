@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { customLog, logger } from "../../utils/customLog";
+import { t } from "../../utils/i18n";
 import { watchDeleteEvent } from "./deleteEvent";
 
 export const watcher = new EventEmitter();
@@ -13,7 +14,13 @@ watcher.on(
 	) => {
 		customLog(
 			"success",
-			`Collection [ ${coll} ] synced — ${total} docs | ${stats.skipped} skipped | ${stats.updated} updated | ${stats.inserted} inserted`,
+			t("dump.synced", {
+				coll,
+				total,
+				skipped: stats.skipped,
+				updated: stats.updated,
+				inserted: stats.inserted,
+			}),
 			true,
 		);
 		logger.info(
@@ -27,11 +34,7 @@ watcher.on("errorDump", (err: Error | unknown, coll: string) => {
 	// transitório (ex.: queda de conexão) numa única collection. Apenas logamos
 	// e seguimos — o change stream da collection continua ativo.
 	const message = err instanceof Error ? err.message : String(err);
-	customLog(
-		"error",
-		`Falha no dump da collection [ ${coll} ]: ${message}`,
-		true,
-	);
+	customLog("error", t("dump.collection_failed", { coll, message }), true);
 	logger.error(`DUMP:${coll} ${message}`);
 });
 

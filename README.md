@@ -1,20 +1,22 @@
+> 🌐 **Language / Idioma:** **English** · [Português (Brasil)](./README.pt-BR.md)
+
 # Mongo Pulsar
 
-CLI para sincronização de dados entre bancos MongoDB. Suporta dois modos: **migrate** (snapshot único via mongodump/mongorestore) e **sync** (watch contínuo via Change Streams).
+CLI for syncing data between MongoDB databases. It supports two modes: **migrate** (one-shot snapshot via mongodump/mongorestore) and **sync** (continuous watch via Change Streams).
 
 ---
 
-## Instalação
+## Installation
 
-### Opção 1 — binário local
+### Option 1 — local binary
 
 ```sh
 bun run bin:dev
 ```
 
-Compila e copia o binário para `~/.local/bin/pulsar`.
+Compiles and copies the binary to `~/.local/bin/pulsar`.
 
-### Opção 2 — Docker
+### Option 2 — Docker
 
 ```sh
 docker-compose up --build -d
@@ -23,13 +25,13 @@ docker exec -it pulsar-dev sh
 
 ---
 
-## Comandos
+## Commands
 
-### `migrate` — snapshot único
+### `migrate` — one-shot snapshot
 
-Exporta collections do banco de origem via `mongodump` e restaura no destino via `mongorestore`. Ideal para a migração inicial de grandes volumes.
+Exports collections from the source database via `mongodump` and restores them into the destination via `mongorestore`. Ideal for the initial migration of large volumes.
 
-**Arquivo de configuração:**
+**Configuration file:**
 
 ```yaml
 command:
@@ -41,42 +43,42 @@ command:
       uri: 'mongodb://localhost:27017'
       db: 'destination-database'
     collections: ['collection-1', 'collection-2']
-    queryString: '{"status":"active"}' # opcional — filtro em formato JSON.stringify
+    queryString: '{"status":"active"}' # optional — filter in JSON.stringify format
 ```
 
-**Uso:**
+**Usage:**
 
 ```sh
-pulsar migrate config.yml [opções]
+pulsar migrate config.yml [options]
 ```
 
-| Flag | Descrição | Padrão |
+| Flag | Description | Default |
 |---|---|---|
-| `-p, --parallel <n>` | Collections exportadas em paralelo | `2` |
-| `-r, --maxRetries <n>` | Tentativas em collections com falha | `3` |
-| `-a, --all` | Exporta todas as collections do banco | — |
+| `-p, --parallel <n>` | Collections exported in parallel | `2` |
+| `-r, --maxRetries <n>` | Retries for failed collections | `3` |
+| `-a, --all` | Exports every collection in the database | — |
 
-**Exemplo:**
+**Example:**
 
 ```sh
 pulsar migrate config.yml -p 5 -r 10
 pulsar migrate config.yml -a
 ```
 
-**Comportamento interno:**
-- Se a pasta `temp-dump` já existir (processo interrompido anteriormente), retoma a partir das collections não exportadas.
-- A pasta `temp-dump` é removida ao final.
-- Cada collection é restaurada com o prefixo `_dump_` e depois renomeada, evitando conflito com dados existentes.
+**Internal behavior:**
+- If the `temp-dump` folder already exists (a previously interrupted run), it resumes from the collections that were not exported yet.
+- The `temp-dump` folder is removed at the end.
+- Each collection is restored with a `_dump_` prefix and then renamed, avoiding conflicts with existing data.
 
 ---
 
-### `sync` — watch contínuo
+### `sync` — continuous watch
 
-Abre um cursor completo no banco de origem para sincronização inicial e mantém um Change Stream ativo para capturar inserções, atualizações, substituições e deleções em tempo real.
+Opens a full cursor on the source database for the initial sync and keeps a Change Stream active to capture inserts, updates, replaces, and deletes in real time.
 
-> **Requisito:** o banco de **origem** precisa estar em Replica Set (Change Streams não funcionam em standalone).
+> **Requirement:** the **source** database must be in a Replica Set (Change Streams do not work in standalone).
 
-**Arquivo de configuração:**
+**Configuration file:**
 
 ```yaml
 command:
@@ -87,25 +89,25 @@ command:
     destination:
       uri: 'mongodb://localhost:27017'
       db: 'destination-database'
-    collections: ['collection-1', 'collection-2']  # ou formato com filtro — ver abaixo
+    collections: ['collection-1', 'collection-2']  # or the filtered format — see below
     logging:
-      verbose: false   # loga cada evento no terminal (insert, update, delete, replace)
-      progress: true   # exibe barra de progresso durante o dump inicial
+      verbose: false   # logs each event in the terminal (insert, update, delete, replace)
+      progress: true   # shows a progress bar during the initial dump
 ```
 
-**Uso:**
+**Usage:**
 
 ```sh
-pulsar sync config.yml [opções]
+pulsar sync config.yml [options]
 ```
 
-| Flag | Descrição | Padrão |
+| Flag | Description | Default |
 |---|---|---|
-| `-p, --parallel <n>` | Collections processadas em paralelo | `3` |
-| `-a, --all` | Sincroniza todas as collections do banco | — |
-| `-v, --verbose` | Loga cada evento no terminal (sobrescreve `logging.verbose` do yml) | `false` |
+| `-p, --parallel <n>` | Collections processed in parallel | `3` |
+| `-a, --all` | Syncs every collection in the database | — |
+| `-v, --verbose` | Logs each event in the terminal (overrides `logging.verbose` from the yml) | `false` |
 
-**Exemplos:**
+**Examples:**
 
 ```sh
 pulsar sync config.yml -p 5
@@ -115,15 +117,15 @@ pulsar sync config.yml --verbose
 
 ---
 
-### Filtros por collection
+### Per-collection filters
 
-Collections podem ter filtros opcionais aplicados tanto no cursor do dump inicial quanto no Change Stream. Duas formas de definir:
+Collections can have optional filters applied both to the initial dump cursor and to the Change Stream. There are two ways to define them:
 
-**Inline no yml (YAML nativo):**
+**Inline in the yml (native YAML):**
 
 ```yaml
 collections:
-  - users                      # sem filtro — sincroniza tudo
+  - users                      # no filter — syncs everything
   - name: orders
     filter:
       status: "active"
@@ -135,12 +137,12 @@ collections:
         $gte: "2024-01-01"
 ```
 
-**Arquivo JSON externo (para filtros grandes):**
+**External JSON file (for large filters):**
 
 ```yaml
 collections:
   - name: events
-    filterFile: ./filters/events.json   # path relativo ao CWD
+    filterFile: ./filters/events.json   # path relative to the CWD
 ```
 
 `./filters/events.json`:
@@ -153,39 +155,39 @@ collections:
 }
 ```
 
-> Filtros inline e `filterFile` não podem ser usados juntos na mesma collection.
-> Deletes sempre são propagados independente do filtro.
+> Inline filters and `filterFile` cannot be used together on the same collection.
+> Deletes are always propagated regardless of the filter.
 
 ---
 
-### Comportamento interno do sync
+### Internal behavior of sync
 
-Ao iniciar (ou reiniciar), para cada collection:
+On start (or restart), for each collection:
 
-1. Abre um Change Stream — eventos em tempo real já estão sendo capturados.
-2. Conta o total de documentos (`countDocuments`) para exibir a barra de progresso.
-3. Roda um cursor completo no source (`find(filter).sort({ _id: -1 })`).
-4. Para cada documento, compara o hash SHA-1 do source com `__sync.hash` no destino:
-   - **Doc ausente no destino** → `insertOne`
-   - **`__sync.hot === true`** → pula (change stream já atualizou este doc com versão mais recente)
-   - **Hash igual** → pula (documento idêntico, zero writes)
-   - **Hash diferente** → `updateOne`
+1. Opens a Change Stream — real-time events are already being captured.
+2. Counts the total number of documents (`countDocuments`) to display the progress bar.
+3. Runs a full cursor on the source (`find(filter).sort({ _id: -1 })`).
+4. For each document, compares the source's SHA-1 hash with `__sync.hash` on the destination:
+   - **Document missing on the destination** → `insertOne`
+   - **`__sync.hot === true`** → skip (the change stream already updated this doc with a newer version)
+   - **Equal hash** → skip (identical document, zero writes)
+   - **Different hash** → `updateOne`
 
-Isso garante que ao adicionar uma nova collection e reiniciar o watch, apenas documentos novos ou alterados são processados nas collections existentes.
+This ensures that when you add a new collection and restart the watch, only new or changed documents are processed in the existing collections.
 
-**Progresso durante o dump:**
+**Progress during the dump:**
 
 ```
 colA ⟬████████░░⟭ 80% | 8000/10000 | ↷ 7950 skip | ✎ 30 upd | ⊕ 20 ins | ⧖ 00:45
 ```
 
-**Ao finalizar cada collection:**
+**When each collection finishes:**
 
 ```
-[ SUCCESS ] Collection [ colA ] concluída — 10000 docs | 9950 iguais | 30 atualizados | 20 inseridos
+[ SUCCESS ] Collection [ colA ] finished — 10000 docs | 9950 equal | 30 updated | 20 inserted
 ```
 
-**Com `--verbose`, cada evento do watch:**
+**With `--verbose`, each watch event:**
 
 ```
 [ INFO ] [orders] insert | _id: 63abc123...
@@ -193,42 +195,42 @@ colA ⟬████████░░⟭ 80% | 8000/10000 | ↷ 7950 skip | ✎
 [ INFO ] [orders] delete | _id: 63abc125...
 ```
 
-**Metadados adicionados aos documentos no destino:**
+**Metadata added to documents on the destination:**
 
 ```json
 {
   "__sync": {
     "hot": true,
     "ts": 1234567890,
-    "hash": "sha1-do-documento-origem"
+    "hash": "sha1-of-the-source-document"
   },
   "origin": "dump | watch:insert | watch:update | watch:replace"
 }
 ```
 
-**Eventos suportados pelo Change Stream:**
+**Events supported by the Change Stream:**
 
-| Evento | Comportamento |
+| Event | Behavior |
 |---|---|
-| `insert` | Insere o documento no destino com `origin: watch:insert` |
-| `update` | Atualiza via upsert com `origin: watch:update` |
-| `replace` | Substitui o documento com `origin: watch:replace` |
-| `delete` | Remove o documento do destino |
+| `insert` | Inserts the document on the destination with `origin: watch:insert` |
+| `update` | Updates via upsert with `origin: watch:update` |
+| `replace` | Replaces the document with `origin: watch:replace` |
+| `delete` | Removes the document from the destination |
 
-> **Atenção:** deleções que ocorrem enquanto o watch está **desligado** não são propagadas no reinício — o cursor vê apenas documentos que existem no source.
+> **Warning:** deletes that happen while the watch is **off** are not propagated on restart — the cursor only sees documents that exist on the source.
 
 ---
 
 ## Logs
 
-Todos os eventos são registrados em arquivo via Winston, independente de `--verbose`.
+All events are recorded to file via Winston, regardless of `--verbose`.
 
-| Arquivo | Conteúdo |
+| File | Contents |
 |---|---|
-| `logs/error.log` | Apenas erros |
-| `logs/debug.log` | Todos os eventos (info, success, warn, error) |
+| `logs/error.log` | Errors only |
+| `logs/debug.log` | All events (info, success, warn, error) |
 
-Para desabilitar a barra de progresso (ex.: em ambientes sem TTY):
+To disable the progress bar (e.g. in environments without a TTY):
 
 ```yaml
 logging:
@@ -237,20 +239,20 @@ logging:
 
 ---
 
-## Teste local com Docker
+## Local testing with Docker
 
-O repositório inclui um `docker-compose-test.yml` com dois Mongos isolados (mongo-a na porta 27020, mongo-b na porta 27021) e um config de exemplo em `configs/test-sync.yml`.
+The repository includes a `docker-compose-test.yml` with two isolated Mongos (mongo-a on port 27020, mongo-b on port 27021) and a sample config at `configs/test-sync.yml`.
 
 ```sh
-# Subir os containers
+# Start the containers
 docker compose -f docker-compose-test.yml up -d
 
-# Inicializar o replica set do mongo-a (necessário para Change Streams)
+# Initialize the replica set on mongo-a (required for Change Streams)
 docker exec mongo-a mongosh --eval "rs.initiate({_id:'rs0', members:[{_id:0, host:'127.0.0.1:27017'}]})"
 
-# Rodar o sync
+# Run the sync
 pulsar sync configs/test-sync.yml
 
-# Com verbose
+# With verbose
 pulsar sync configs/test-sync.yml --verbose
 ```

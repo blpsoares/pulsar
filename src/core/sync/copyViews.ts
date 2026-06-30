@@ -1,5 +1,6 @@
 // src/core/sync/copyViews.ts
 import type { Db, Document } from "mongodb";
+import { t } from "../../utils/i18n";
 
 export type ViewDef = {
 	name: string;
@@ -104,9 +105,7 @@ export async function ensureView(
 
 	if (existing) {
 		if (existing.type !== "view") {
-			throw new Error(
-				`destino já tem uma COLLECTION "${def.name}" (não uma view) — pulando p/ não destruir dado`,
-			);
+			throw new Error(t("views.dest_is_collection_error", { name: def.name }));
 		}
 		const cur = (existing.options ?? {}) as {
 			viewOn?: string;

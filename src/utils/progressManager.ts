@@ -1,23 +1,32 @@
 import chalk from "chalk";
 import { MultiBar } from "cli-progress";
+import { t } from "./i18n";
 
 let _multiBar: MultiBar | null = null;
 let _total = 0;
 let _done = 0;
 let _pending: string[] = [];
 
-const barFormat =
-	`${chalk.cyan("{collection}")} ⟬{bar}⟭ {percentage}% ` +
-	`| {value}/{total} ` +
-	`| ${chalk.gray("↷ {skip} skip")} ` +
-	`| ${chalk.yellow("✎ {upd} upd")} ` +
-	`| ${chalk.green("⊕ {ins} ins")} ` +
-	`| ⧖ {duration_formatted}`;
+// Os placeholders ({bar}/{value}/...) são consumidos pela cli-progress, então são
+// re-emitidos literalmente como params do t() (a string traduzida os preserva).
+function getBarFormat(): string {
+	return t("panel.bar.format", {
+		collection: "{collection}",
+		bar: "{bar}",
+		percentage: "{percentage}",
+		value: "{value}",
+		total: "{total}",
+		skip: "{skip}",
+		upd: "{upd}",
+		ins: "{ins}",
+		duration_formatted: "{duration_formatted}",
+	});
+}
 
 function getMultiBar(): MultiBar {
 	if (!_multiBar) {
 		_multiBar = new MultiBar({
-			format: barFormat,
+			format: getBarFormat(),
 			barCompleteChar: "█",
 			barIncompleteChar: "░",
 			barsize: 24,
@@ -117,6 +126,14 @@ export function multiLog(message: string) {
 type ActiveDump = { processed: number; total: number };
 const _activeDumps = new Map<string, ActiveDump>();
 let _statusTimer: ReturnType<typeof setInterval> | null = null;
+// true enquanto o heartbeat STATUS está imprimindo (não-TTY). Lido pelos logs de
+// progresso pra desviarem do stdout (já coberto pelo painel) e irem só pro arquivo.
+let _statusActive = false;
+
+/** O heartbeat STATUS está ligado? (não-TTY com intervalo > 0). */
+export function isStatusReporterActive(): boolean {
+	return _statusActive;
+}
 let _dumpsDone = 0;
 let _collsTotal = 0;
 // Plano do run: quantas RESUMIRAM (pularam dump, mantidas pelo watch) vs quantas
@@ -164,7 +181,7 @@ function printStatus() {
 	const W = 64;
 	const out: string[] = [];
 	out.push(chalk.cyan("━".repeat(W)));
-	out.push(chalk.bold.cyan("  SYNC · DUMP INICIAL"));
+	out.push(chalk.bold.cyan(t("status.header")));
 	for (const [name, { processed, total }] of _activeDumps) {
 		const pct =
 			total > 0 ? Math.min(100, Math.floor((processed / total) * 100)) : 0;
@@ -177,9 +194,13 @@ function printStatus() {
 	}
 	out.push(
 		chalk.gray(
-			`  resumidas (sem dump, mantidas pelo watch): ${_resuming}  ·  ` +
-				`dump concluído: ${_dumpsDone}/${_dumpsPlanned}  ·  ` +
-				`em andamento: ${_activeDumps.size}  ·  total: ${_collsTotal}`,
+			t("status.footer", {
+				resuming: _resuming,
+				done: _dumpsDone,
+				planned: _dumpsPlanned,
+				active: _activeDumps.size,
+				total: _collsTotal,
+			}),
 		),
 	);
 	out.push(chalk.cyan("━".repeat(W)));
@@ -196,6 +217,7 @@ export function startStatusReporter(
 	if (_statusTimer || intervalMs <= 0) return;
 	_statusTimer = setInterval(printStatus, intervalMs);
 	_statusTimer.unref?.();
+	_statusActive = true;
 }
 
 /**
@@ -232,46 +254,69 @@ export function renderClosingPanel(d: {
 		return `${m}m ${s % 60}s`;
 	};
 	const dumpedLabel =
-		d.dumpedNames.length > 0 ? `  (${d.dumpedNames.join(", ")})` : "";
+		d.dumpedNames.length > 0
+			? t("panel.dumped_names", { names: d.dumpedNames.join(", ") })
+			: "";
 
-	const title = "PULSAR · SINCRONIZAÇÃO INICIAL CONCLUÍDA";
-	const mode = "MODO: tempo real · replicando mudanças ao vivo";
+	const title = t("panel.title");
+	const mode = t("panel.mode");
 
 	// Corpo (texto puro de cada linha, sem bordas) — coletado ANTES pra calcular a
 	// largura dinâmica que cabe o maior conteúdo (ex.: lista de collections cujos
 	// índices falharam) sem truncar.
 	const body: string[] = [
-		`Collections em dia ........ ${d.total - d.failed.length}/${d.total}`,
-		`  ↳ retomadas (delta) ..... ${d.resumed}`,
-		`  ↳ dump completo ......... ${d.dumped}${dumpedLabel}`,
+		t("panel.collections_ok", {
+			ok: d.total - d.failed.length,
+			total: d.total,
+		}),
+		t("panel.resumed", { resumed: d.resumed }),
+		t("panel.dumped", { dumped: d.dumped, dumpedLabel }),
 	];
 	if (d.failed.length > 0) {
 		body.push(
-			`  ↳ FALHARAM (re-dump) .... ${d.failed.length} (${d.failed.join(", ")})`,
+			t("panel.failed", {
+				count: d.failed.length,
+				names: d.failed.join(", "),
+			}),
 		);
 	}
 	body.push(
-		`Docs copiados no dump ..... ${num(d.docsDumped)}`,
-		`Duração ................... ${dur(d.durationMs)}`,
+		t("panel.docs_dumped", { docs: num(d.docsDumped) }),
+		t("panel.duration", { dur: dur(d.durationMs) }),
 	);
 	if (d.indexes) {
 		const f = d.indexes.failed;
 		const fLabel =
 			f.length > 0
-				? ` · falharam: ${f.length} (${[...new Set(f.map((x) => x.coll))].join(", ")})`
+				? t("panel.indexes_failed", {
+						count: f.length,
+						colls: [...new Set(f.map((x) => x.coll))].join(", "),
+					})
 				: "";
 		body.push(
-			`Índices ... criados: ${d.indexes.created} · já existiam: ${d.indexes.skipped}${fLabel}`,
+			t("panel.indexes", {
+				created: d.indexes.created,
+				skipped: d.indexes.skipped,
+				fLabel,
+			}),
 		);
 	}
 	if (d.views) {
 		const f = d.views.failed;
 		const fLabel =
 			f.length > 0
-				? ` · falharam: ${f.length} (${f.map((x) => x.name).join(", ")})`
+				? t("panel.views_failed", {
+						count: f.length,
+						names: f.map((x) => x.name).join(", "),
+					})
 				: "";
 		body.push(
-			`Views ..... criadas: ${d.views.created} · atualizadas: ${d.views.updated} · iguais: ${d.views.skipped}${fLabel}`,
+			t("panel.views", {
+				created: d.views.created,
+				updated: d.views.updated,
+				skipped: d.views.skipped,
+				fLabel,
+			}),
 		);
 	}
 
@@ -330,18 +375,26 @@ function renderWatchBlock(s: WatchSnapshot): string {
 	const total =
 		s.totals.insert + s.totals.update + s.totals.replace + s.totals.delete;
 	const num = (n: number) => n.toLocaleString("pt-BR");
-	const head = `──── PULSAR · WATCH ATIVO ──── uptime ${fmtUptime(s.uptimeMs)}`;
+	const head = t("watch.heartbeat.head", { uptime: fmtUptime(s.uptimeMs) });
 	if (total === 0) {
-		return `${head} · 0 eventos (origem quieta)`;
+		return t("watch.heartbeat.idle", { head });
 	}
 	const TOP = 8;
 	const top = s.perColl.slice(0, TOP).map(([c, n]) => `${c} ${num(n)}`);
 	const rest = s.perColl.length - TOP;
-	const topLine =
-		`   mais ativas: ${top.join(" · ")}` + (rest > 0 ? `  (+${rest})` : "");
+	const topLine = t("watch.heartbeat.top", {
+		top: top.join(" · "),
+		rest: rest > 0 ? t("watch.heartbeat.top_rest", { rest }) : "",
+	});
 	return [
 		head,
-		` eventos: ${num(total)}  (ins ${num(s.totals.insert)} · upd ${num(s.totals.update)} · rep ${num(s.totals.replace)} · del ${num(s.totals.delete)})`,
+		t("watch.heartbeat.events", {
+			total: num(total),
+			insert: num(s.totals.insert),
+			update: num(s.totals.update),
+			replace: num(s.totals.replace),
+			delete: num(s.totals.delete),
+		}),
 		topLine,
 	].join("\n");
 }
@@ -372,5 +425,6 @@ export function stopStatusReporter() {
 		clearInterval(_statusTimer);
 		_statusTimer = null;
 	}
+	_statusActive = false;
 	_activeDumps.clear();
 }

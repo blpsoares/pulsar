@@ -12,6 +12,7 @@ import {
 	ttlYmlSchema,
 } from "../types/parseYml";
 import { customLog } from "../utils/customLog";
+import { t } from "../utils/i18n";
 import parseYml from "../utils/parseYml";
 
 /** Concorrência padrão: modesto por ser cluster (possivelmente compartilhado). */
@@ -51,16 +52,16 @@ function buildPlan(file: string | undefined, cli: TtlOptionsCli): Plan {
 	}
 
 	// modo CLI: validações de presença/exclusividade
-	if (!cli.uri || !cli.db) throw new Error("Modo CLI exige --uri e --db");
-	if (!cli.expire) throw new Error("Modo CLI exige --expire");
+	if (!cli.uri || !cli.db) throw new Error(t("ttl.err_uri_db"));
+	if (!cli.expire) throw new Error(t("ttl.err_expire"));
 	if (cli.field && cli.deriveFromId)
-		throw new Error("--field e --derive-from-id são mutuamente exclusivos");
+		throw new Error(t("ttl.err_field_derive_exclusive"));
 	if (!cli.field && !cli.deriveFromId)
-		throw new Error("Modo CLI exige --field ou --derive-from-id");
+		throw new Error(t("ttl.err_field_or_derive"));
 	if (cli.collections && cli.all)
-		throw new Error("--collections e --all são mutuamente exclusivos");
+		throw new Error(t("ttl.err_collections_all_exclusive"));
 	if (!cli.collections && !cli.all)
-		throw new Error("Modo CLI exige --collections ou --all");
+		throw new Error(t("ttl.err_collections_or_all"));
 
 	const defaults: TtlDefaults = {
 		field: cli.field,
@@ -114,7 +115,7 @@ export async function ttlCommand(
 		const limiter = new Bottleneck({ maxConcurrent: plan.parallel });
 		customLog(
 			"info",
-			`Aplicando TTL em ${resolved.length} collection(s) com paralelismo ${plan.parallel}...`,
+			t("ttl.applying", { count: resolved.length, parallel: plan.parallel }),
 		);
 
 		const settled = await Promise.allSettled(
@@ -123,11 +124,16 @@ export async function ttlCommand(
 					const out = await applyTtl(db, r);
 					const derived =
 						out.derivedCount !== undefined
-							? ` (_created em ${out.derivedCount} docs)`
+							? t("ttl.derived_frag", { count: out.derivedCount })
 							: "";
 					customLog(
 						"success",
-						`TTL em ${out.name}: ${out.field} expira em ${out.expireAfterSeconds}s${derived}`,
+						t("ttl.applied_coll", {
+							name: out.name,
+							field: out.field,
+							seconds: out.expireAfterSeconds,
+							derived,
+						}),
 					);
 					return out;
 				}),
@@ -147,12 +153,19 @@ export async function ttlCommand(
 		});
 
 		for (const f of failures)
-			customLog("error", `TTL FALHOU em ${f.name}: ${f.error}`);
+			customLog(
+				"error",
+				t("ttl.failed_coll", { name: f.name, error: f.error }),
+			);
 		customLog(
 			failures.length ? "error" : "info",
-			`TTL aplicado em ${results.length}/${resolved.length} collection(s)${
-				failures.length ? ` — ${failures.length} FALHARAM` : "."
-			}`,
+			t("ttl.summary", {
+				applied: results.length,
+				total: resolved.length,
+				extra: failures.length
+					? t("ttl.summary_failed", { failed: failures.length })
+					: ".",
+			}),
 		);
 		return results;
 	} catch (error) {

@@ -1,4 +1,5 @@
 import type { TtlCollectionEntry, TtlDefaults } from "../../types/parseYml";
+import { t } from "../../utils/i18n";
 import { parseDuration } from "./parseDuration";
 
 export type ResolvedTtl = {
@@ -26,7 +27,7 @@ export function resolveTtlEntry(
 	// Colisão no mesmo nível: a collection definiu os dois de uma vez.
 	if (obj.field && obj.deriveFromId) {
 		throw new Error(
-			`Collection "${obj.name}": "field" e "deriveFromId" são mutuamente exclusivos`,
+			t("ttl.resolve.field_derive_exclusive", { name: obj.name }),
 		);
 	}
 
@@ -49,21 +50,17 @@ export function resolveTtlEntry(
 
 	if (field && deriveFromId) {
 		throw new Error(
-			`Collection "${obj.name}": "field" e "deriveFromId" são mutuamente exclusivos`,
+			t("ttl.resolve.field_derive_exclusive", { name: obj.name }),
 		);
 	}
 	if (!field && !deriveFromId) {
-		throw new Error(
-			`Collection "${obj.name}" sem campo de TTL definido: informe "field" (campo Date existente) ou "deriveFromId: true"`,
-		);
+		throw new Error(t("ttl.resolve.no_field", { name: obj.name }));
 	}
 
 	const rawExpire =
 		obj.expire ?? obj.expireAfterSeconds ?? d.expire ?? d.expireAfterSeconds;
 	if (rawExpire === undefined) {
-		throw new Error(
-			`Collection "${obj.name}" sem "expire"/"expireAfterSeconds" definido`,
-		);
+		throw new Error(t("ttl.resolve.no_expire", { name: obj.name }));
 	}
 
 	return {
