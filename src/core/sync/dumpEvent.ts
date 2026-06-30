@@ -59,6 +59,54 @@ const idKey = (id: unknown): string =>
 		? JSON.stringify(id)
 		: String(id);
 
+// Ordem canônica dos tipos BSON (do menor pro maior), agrupada pelos aliases de
+// `$type`. Usada pra montar "_id ABAIXO da fronteira na ordem TOTAL" mesmo com
+// _id de tipos MISTOS na mesma coll.
+const BSON_RANK: string[][] = [
+	["minKey"],
+	["null"],
+	["double", "int", "long", "decimal"],
+	["string", "symbol"],
+	["object"],
+	["array"],
+	["binData"],
+	["objectId"],
+	["bool"],
+	["date"],
+	["timestamp"],
+	["regex"],
+	["maxKey"],
+];
+/** Índice (rank) do valor na ordem BSON acima. */
+const valueRank = (v: unknown): number => {
+	if (v == null) return 1;
+	const bt = (v as { _bsontype?: string })._bsontype;
+	if (bt === "ObjectId") return 7;
+	if (bt === "Long" || bt === "Int32" || bt === "Double" || bt === "Decimal128")
+		return 2;
+	if (v instanceof Date) return 9;
+	if (Array.isArray(v)) return 5;
+	const jt = typeof v;
+	if (jt === "number") return 2;
+	if (jt === "string") return 3;
+	if (jt === "boolean") return 8;
+	return 4; // objeto/documento
+};
+/**
+ * Cláusula "_id ESTRITAMENTE ABAIXO de `frontier` na ordem TOTAL do BSON".
+ *
+ * `{_id: {$lt: x}}` numa query faz TYPE-BRACKETING (só compara o MESMO tipo de x),
+ * mas `sort({_id:-1})` cruza tipos. Com _id misto isso diverge e a retomada pula
+ * docs. Aqui resolvemos: `$lt` (mesmo tipo, abaixo) OR `$type` em todos os tipos
+ * de rank menor. Pra _id uniforme reduz a `{_id:$lt}` (sem custo extra).
+ */
+const belowFrontier = (frontier: unknown): Document => {
+	const lower = BSON_RANK.slice(0, valueRank(frontier)).flat();
+	return lower.length > 0
+		? { $or: [{ _id: { $lt: frontier } }, { _id: { $type: lower } }] }
+		: { _id: { $lt: frontier } };
+};
+
 export type DumpOptions = {
 	filter?: Document;
 	batchSize?: number;
@@ -99,45 +147,20 @@ export async function dumpCollections(
 	// retomada tanto entre restarts quanto entre RETRIES dentro do mesmo run.
 	let frontier: unknown = resumeFromId ?? null;
 
-	try {
-		// O dump varre sort({_id:-1}) e retoma/concilia por {_id:{$lt:fronteira}}.
-		// Tipo BSON do _id (ObjectId/number/string/object/...). MISTO = MIN e MAX de
-		// tipos diferentes (ex.: ObjectId + objeto na mesma coll): aí sort({_id:-1})
-		// CRUZA brackets de tipo, mas {_id:$lt} faz TYPE-BRACKETING → o $lt pula os
-		// docs de outro tipo. UNIFORME (tudo ObjectId, OU tudo número, OU tudo objeto):
-		// $lt concorda com o sort → fronteira/guarda funcionam normal.
-		const idType = (v: unknown): string =>
-			v == null
-				? "null"
-				: ((v as { _bsontype?: string })._bsontype ?? typeof v);
-		const [minDoc, maxDoc] = await Promise.all([
-			sourceCollection
-				.find(baseFilter, { projection: { _id: 1 } })
-				.sort({ _id: 1 })
-				.limit(1)
-				.next(),
-			sourceCollection
-				.find(baseFilter, { projection: { _id: 1 } })
-				.sort({ _id: -1 })
-				.limit(1)
-				.next(),
-		]);
-		const idIsUniform = !minDoc || idType(minDoc._id) === idType(maxDoc?._id);
-		// _id MISTO: a fronteira (resumeFromId) é INSEGURA com $lt → ignora e varre
-		// tudo; a guarda mede cobertura pela contagem do destino (abaixo).
-		if (!idIsUniform) frontier = null;
+	// Query do recorte ainda-não-copiado: tudo, ou "abaixo da fronteira" na ordem
+	// TOTAL do BSON (type-safe p/ _id misto — ver belowFrontier).
+	const remainingFilter = (): Document =>
+		frontier != null
+			? { $and: [baseFilter, belowFrontier(frontier)] }
+			: baseFilter;
 
-		const countQuery =
-			idIsUniform && frontier != null
-				? { $and: [baseFilter, { _id: { $lt: frontier } }] }
-				: baseFilter;
-		// Sem filtro/retomada E _id uniforme: estimatedDocumentCount (metadados,
-		// instantâneo). Senão countDocuments (exato — a guarda de _id misto depende
-		// de um total confiável).
+	try {
+		// Sem filtro/retomada: estimatedDocumentCount (metadados, instantâneo).
+		// Senão countDocuments (exato — a guarda depende de um total confiável).
 		const total =
-			idIsUniform && !filter && frontier == null
+			!filter && frontier == null
 				? await sourceCollection.estimatedDocumentCount()
-				: await sourceCollection.countDocuments(countQuery);
+				: await sourceCollection.countDocuments(remainingFilter());
 
 		bar = progress ? createBar(collectionName, total) : null;
 		// alimenta o STATUS heartbeat (visível no docker logs em não-TTY)
@@ -193,11 +216,9 @@ export async function dumpCollections(
 		let attempt = 0;
 		while (true) {
 			try {
-				const query =
-					idIsUniform && frontier != null
-						? { $and: [baseFilter, { _id: { $lt: frontier } }] }
-						: baseFilter;
-				const cursor = sourceCollection.find(query).sort({ _id: -1 });
+				const cursor = sourceCollection
+					.find(remainingFilter())
+					.sort({ _id: -1 });
 				let page: Document[] = [];
 				for await (const coldDocument of cursor) {
 					// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
@@ -217,24 +238,14 @@ export async function dumpCollections(
 				// e o stream ao vivo nunca reconciliava (só entrega mudança nova, não
 				// re-injeta doc pré-existente que o cursor pulou). Foi a causa de perda
 				// silenciosa de docs (ex.: collection de 117 copiada com 82, marcada OK).
-				// Conferimos que NÃO falta nada; se falta, a varredura não terminou:
-				// retentamos em vez de marcar completo.
-				// - _id ObjectId: {_id:$lt:fronteira} é confiável e live-safe.
-				// - _id composto/misto: NÃO usa $lt (type-bracketing pula docs de outro
-				//   tipo). Mede a cobertura REAL pela contagem do DESTINO vs o total da
-				//   origem — imune a re-leituras (em retries, o `processed` infla pois
-				//   re-varre do topo; a contagem do destino não).
-				let remaining: number;
-				if (idIsUniform) {
-					const remainingQuery =
-						frontier != null
-							? { $and: [baseFilter, { _id: { $lt: frontier } }] }
-							: baseFilter;
-					remaining = await sourceCollection.countDocuments(remainingQuery);
-				} else {
-					const destCount = await destCollection.countDocuments(baseFilter);
-					remaining = Math.max(0, total - destCount);
-				}
+				// Conferimos que NÃO sobra nada ABAIXO da fronteira (na ordem total do
+				// BSON, type-safe via belowFrontier). Se sobra, a varredura não terminou:
+				// reabrimos da fronteira (retoma de verdade, sem re-ler) em vez de marcar
+				// completo. Como a retomada respeita a ordem total, isto vale também p/
+				// _id misto/composto.
+				const remaining = await sourceCollection.countDocuments(
+					remainingFilter(),
+				);
 				if (remaining === 0) break; // varredura REALMENTE completa
 
 				if (attempt >= maxRetries) {
