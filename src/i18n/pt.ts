@@ -159,6 +159,8 @@ const dict = {
 	"conn.uri_empty": "Mongo URI not declared or is empty: uri={uri}",
 	"conn.connecting": "Conectando ao MongoDB...",
 	"conn.connected": "Conectado ao {source} MongoDB!",
+	"conn.retry":
+		"Conexão com o {source} MongoDB falhou (tentativa {attempt}/{maxAttempts}) — retentando em {wait}ms. Causa: {reason}",
 	"conn.unreachable":
 		"Não alcancei o MongoDB ({source}). Verifique: 1) seu IP está na Network Access (IP allowlist) do Atlas; 2) a saída TCP na 27017 não está bloqueada; 3) credenciais/URI. Detalhes em logs/error.log",
 } as const;
