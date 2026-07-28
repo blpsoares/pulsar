@@ -22,6 +22,8 @@ bun run sys:info       # mostra CPU/RAM/swap/disco, explica cada limite e sugere
 bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compose-limit.yml
 bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
 pulsar compose up      # idem, via binário instalado (bin:dev)
+pulsar                 # sem argumento: abre a TUI (Ink) — cria config, roda, instala serviço, lê log
+pulsar tui             # idem, explícito
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
@@ -67,6 +69,21 @@ src/
       recommend.ts          # recomenda recursos: orçamento (~65% RAM, ~1 core livre) MENOS o já comprometido pelas instâncias existentes
       buildCompose.ts       # gera o compose da nova instância a partir do docker-compose-limit.yml base (troca nome/config/volumes/recursos)
       detectConfigs.ts      # varre *.yml e classifica por command.sync/migrate/ttl (mostra destino)
+      committed.ts          # soma mem/cpu já comprometidos pelos containers pulsar-sync (usado pelo compose up e pela TUI)
+    inspect/                # [TUI] introspecção: collections+views, $collStats, índices, probe de conexão, maskUri
+    config/                 # [TUI] form <-> yml: formState, buildConfig, loadConfig, writeConfig (valida com Zod)
+    run/                    # [TUI] pulsarCommand (binário vs bun src/cli.ts), logLines (ANSI/ring buffer)
+    service/                # [TUI] background: systemd, launchd, pm2, docker + detect/manager
+    logs/                   # [TUI] readLog (tail pela cauda), tailCommand (journalctl/pm2/docker/tail)
+  tui/
+    index.tsx             # render da TUI; exige TTY (sem TTY manda usar os subcomandos)
+    App.tsx               # roteador de telas
+    theme.ts              # paleta/glifos
+    components/           # Frame, Select, TextInput, CollectionPicker
+    hooks/                # useInspector (Mongo), useProcess (filho), useSpinner
+    screens/              # Home, Wizard, Runner, Services, Logs (+ wizard/*)
+  stubs/
+    react-devtools-core.ts  # stub p/ o ink sobreviver ao bun build --compile
   functions/
     getCollections.ts     # resolve lista de collections; carrega filter/filterFile
     freeze.ts             # chamado no início do sync (operação no destino)
@@ -273,6 +290,47 @@ docker compose -f docker-compose-test.yml up -d
 docker exec mongo-a mongosh --eval "rs.initiate({_id:'rs0', members:[{_id:0, host:'127.0.0.1:27017'}]})"
 bun run src/cli.ts sync configs/test-sync.yml --verbose
 ```
+
+## TUI (`pulsar` sem argumento)
+
+Interface de terminal em **Ink** que cobre o ciclo inteiro sem editar yml à mão.
+`pulsar` sem subcomando abre a TUI; `pulsar tui` é o explícito. Os subcomandos
+não mudaram, e o import do módulo é dinâmico — quem roda `pulsar sync` num
+container não carrega react/ink.
+
+- **Criar/editar config:** form guiado (modo → origem → destino → collections →
+  avançado → revisar). Conecta na origem de verdade, lista os bancos, e mostra
+  collections e views com **busca incremental** (`/`) e multi-seleção. Abrir um
+  yml existente **preserva os `filter`/`filterFile`** escritos à mão (a TUI
+  ainda não os edita, mas não os apaga). Valida com os mesmos schemas Zod do
+  `parseYml` **antes** de gravar, e grava atomicamente (tmp + rename).
+- **Estimativas (opt-in):** o painel `e` liga "show estimatives" e escolhe quais
+  métricas puxar. Por padrão a tela não conta nada — `countDocuments` numa
+  collection de 215M docs levaria minutos. Os números vêm de `$collStats`
+  (metadata, instantâneo) e aparecem com `~`; `c` faz a contagem exata da
+  collection sob o cursor. O resumo "vai ser enviado" muda por modo (sync conta
+  índices só com `copyIndexes`; migrate leva índices sempre; ttl não copia dado)
+  e avisa quando uma view aponta para collection fora da seleção.
+- **Rodar:** dispara `sync`/`migrate`/`ttl` como processo filho com a saída ao
+  vivo. Para com **SIGTERM** (o pulsar grava o resume token antes de sair);
+  SIGKILL só depois de 35s. A TUI nunca deixa filho órfão.
+- **Background e boot:** systemd (unit de *usuário*, sem sudo), launchd
+  (LaunchAgent), pm2 (ecosystem file) e docker (herda o
+  `docker-compose-limit.yml`). A tela detecta o que existe na máquina, mostra o
+  **plano completo** (arquivos + comandos) antes de executar, e **nunca roda
+  sudo** — passos privilegiados (`enable-linger` de fallback, `pm2 startup`,
+  `systemctl enable docker`) são listados para você rodar. Instalar/iniciar/
+  parar/remover e status vivem na mesma tela.
+- **Logs:** duas visões — *gravados* (`./logs/*.log`, lidos pela cauda, com
+  busca e follow) e *ao vivo* (seguidor nativo: `journalctl -f`, `pm2 logs`,
+  `docker logs -f`, `tail -F`). O filho roda sem TTY, então o pulsar já troca as
+  barras pelo bloco STATUS — formato que cabe no painel.
+
+**Detalhe de build:** o ink referencia `react-devtools-core` e quebraria o
+`bun build --compile`; `src/stubs/react-devtools-core.ts` é mapeado via `paths`
+no tsconfig para resolver isso. Desenho completo em
+`docs/superpowers/specs/2026-07-28-tui-design.md`. Testes em
+`test/tuiConfig.test.ts`, `test/tuiService.test.ts` e `test/tuiInspect.test.ts`.
 
 ## Pontos de atenção
 

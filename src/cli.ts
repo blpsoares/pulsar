@@ -21,7 +21,12 @@ process.on("uncaughtException", (err) => {
 	console.error("[ ERROR ] uncaughtException:", err.message);
 });
 
-await showTitle();
+// `pulsar` sem subcomando abre a TUI. O título em ASCII art é pulado nesse
+// caminho: o ink toma conta da tela inteira e o banner só empurraria o layout
+// para fora da janela.
+const wantsTui = process.argv.length <= 2 || process.argv[2] === "tui";
+
+if (!wantsTui) await showTitle();
 
 const program = new Command();
 
@@ -108,4 +113,21 @@ compose
 	)
 	.action(composeUp);
 
-program.parse(process.argv);
+program
+	.command("tui")
+	.description(
+		"abre a interface de terminal: cria configs, dispara os modos, instala em background e lê logs",
+	)
+	.action(async () => {
+		const { startTui } = await import("./tui/index");
+		await startTui(process.cwd());
+	});
+
+if (wantsTui) {
+	// Import dinâmico: quem roda `pulsar sync` num container não paga o custo de
+	// carregar react/ink.
+	const { startTui } = await import("./tui/index");
+	await startTui(process.cwd());
+} else {
+	program.parse(process.argv);
+}

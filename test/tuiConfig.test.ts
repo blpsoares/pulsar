@@ -1,0 +1,301 @@
+import { describe, expect, test } from "bun:test";
+import yaml from "js-yaml";
+import { buildConfig } from "../src/core/config/buildConfig";
+import { emptyForm, validateForm } from "../src/core/config/formState";
+import {
+	mergeCollections,
+	parseConfigObject,
+} from "../src/core/config/loadConfig";
+import { toYaml, validateConfig } from "../src/core/config/writeConfig";
+import { formatBytes, formatCount } from "../src/core/inspect/collStats";
+import { filterEntries, isInternalName } from "../src/core/inspect/inspectDb";
+import { buildTransferPlan } from "../src/core/inspect/summary";
+
+function syncForm() {
+	const f = emptyForm("sync");
+	f.source = { uri: "mongodb://src:27017", db: "prod" };
+	f.destination = { uri: "mongodb://dst:27017", db: "replica" };
+	f.collections = ["users", "orders"];
+	return f;
+}
+
+describe("buildConfig", () => {
+	test("gera um sync válido e enxuto (sem defaults ruidosos)", () => {
+		const config = buildConfig(syncForm());
+		expect(validateConfig("sync", config)).toEqual([]);
+
+		const sync = (config.command as Record<string, Record<string, unknown>>)
+			.sync;
+		expect(sync.collections).toEqual(["users", "orders"]);
+		// progress:true e verbose:false são default do pulsar — não vão pro arquivo
+		expect(sync.logging).toBeUndefined();
+		expect(sync.copyIndexes).toBeUndefined();
+	});
+
+	test("emite logging apenas quando difere do default", () => {
+		const f = syncForm();
+		f.logging = { verbose: true, progress: false };
+		const sync = (
+			buildConfig(f).command as Record<string, Record<string, unknown>>
+		).sync;
+		expect(sync.logging).toEqual({ verbose: true, progress: false });
+	});
+
+	test("copyViews aceita true e lista, e ignora lista vazia", () => {
+		const f = syncForm();
+		f.copyViews = true;
+		expect(
+			(buildConfig(f).command as Record<string, Record<string, unknown>>).sync
+				.copyViews,
+		).toBe(true);
+
+		f.copyViews = ["regioes"];
+		expect(
+			(buildConfig(f).command as Record<string, Record<string, unknown>>).sync
+				.copyViews,
+		).toEqual(["regioes"]);
+
+		f.copyViews = [];
+		expect(
+			(buildConfig(f).command as Record<string, Record<string, unknown>>).sync
+				.copyViews,
+		).toBeUndefined();
+	});
+
+	test("ttl não emite destino e valida contra o schema de ttl", () => {
+		const f = emptyForm("ttl");
+		f.source = { uri: "mongodb://src:27017", db: "replica" };
+		f.collections = ["logs"];
+		f.ttlDefaults = { deriveFromId: true, expire: "30d" };
+
+		const config = buildConfig(f);
+		expect(validateConfig("ttl", config)).toEqual([]);
+		const ttl = (config.command as Record<string, Record<string, unknown>>).ttl;
+		expect(ttl.destination).toBeUndefined();
+		expect(ttl.defaults).toEqual({ deriveFromId: true, expire: "30d" });
+	});
+
+	test("preserva filtros de collection ao salvar por cima", () => {
+		const preserved = new Map([
+			["orders", { name: "orders", filter: { status: "active" } }],
+		]);
+		const sync = (
+			buildConfig(syncForm(), preserved).command as Record<
+				string,
+				Record<string, unknown>
+			>
+		).sync;
+		expect(sync.collections).toEqual([
+			"users",
+			{ name: "orders", filter: { status: "active" } },
+		]);
+	});
+});
+
+describe("round-trip yml", () => {
+	test("build -> yaml -> parse devolve o mesmo form", () => {
+		const original = syncForm();
+		original.copyIndexes = true;
+		original.performance = { parallel: 4, batchSize: 1000 };
+
+		const text = toYaml(buildConfig(original));
+		const loaded = parseConfigObject(yaml.load(text));
+
+		expect(loaded).not.toBeNull();
+		expect(loaded?.form.mode).toBe("sync");
+		expect(loaded?.form.source).toEqual(original.source);
+		expect(loaded?.form.destination).toEqual(original.destination);
+		expect(loaded?.form.collections).toEqual(original.collections);
+		expect(loaded?.form.copyIndexes).toBe(true);
+		expect(loaded?.form.performance.parallel).toBe(4);
+	});
+
+	test("filtro sobrevive ao round-trip de edição", () => {
+		const raw = {
+			command: {
+				sync: {
+					source: { uri: "u", db: "a" },
+					destination: { uri: "u2", db: "b" },
+					collections: ["users", { name: "logs", filterFile: "./f.json" }],
+				},
+			},
+		};
+		const loaded = parseConfigObject(raw);
+		expect(loaded?.form.collections).toEqual(["users", "logs"]);
+
+		const merged = mergeCollections(
+			loaded?.form.collections ?? [],
+			loaded?.preservedEntries ?? new Map(),
+		);
+		expect(merged).toEqual(["users", { name: "logs", filterFile: "./f.json" }]);
+	});
+
+	test("yml que não é do pulsar é rejeitado", () => {
+		expect(parseConfigObject({ services: {} })).toBeNull();
+		expect(parseConfigObject(null)).toBeNull();
+	});
+});
+
+describe("validateForm", () => {
+	test("form vazio acusa os campos obrigatórios", () => {
+		const errors = validateForm(emptyForm("sync")).map((e) => e.field);
+		expect(errors).toContain("source.uri");
+		expect(errors).toContain("destination.db");
+		expect(errors).toContain("collections");
+	});
+
+	test("origem igual ao destino é bloqueado", () => {
+		const f = syncForm();
+		f.destination = { ...f.source };
+		expect(validateForm(f).some((e) => /mesmo banco/.test(e.message))).toBe(
+			true,
+		);
+	});
+
+	test("ttl exige âncora de data e duração", () => {
+		const f = emptyForm("ttl");
+		f.source = { uri: "u", db: "d" };
+		f.collections = ["logs"];
+		const fields = validateForm(f).map((e) => e.field);
+		expect(fields).toContain("ttl.field");
+		expect(fields).toContain("ttl.expire");
+	});
+
+	test("field + deriveFromId juntos são mutuamente exclusivos", () => {
+		const f = emptyForm("ttl");
+		f.source = { uri: "u", db: "d" };
+		f.collections = ["logs"];
+		f.ttlDefaults = { field: "createdAt", deriveFromId: true, expire: "30d" };
+		expect(
+			validateForm(f).some((e) => /mutuamente exclusiv/.test(e.message)),
+		).toBe(true);
+	});
+
+	test("form completo passa", () => {
+		expect(validateForm(syncForm())).toEqual([]);
+	});
+});
+
+describe("buildTransferPlan", () => {
+	const estimates = [
+		{
+			name: "users",
+			docs: 1000,
+			storageSize: 2048,
+			totalIndexSize: 512,
+			indexCount: 3,
+			exact: false,
+		},
+		{
+			name: "orders",
+			docs: 500,
+			storageSize: 1024,
+			totalIndexSize: 256,
+			indexCount: 2,
+			exact: false,
+		},
+		{
+			name: "ignorada",
+			docs: 9999,
+			storageSize: 1,
+			totalIndexSize: 1,
+			indexCount: 1,
+			exact: false,
+		},
+	];
+
+	test("soma só o que está selecionado e marca como aproximado", () => {
+		const plan = buildTransferPlan({
+			mode: "sync",
+			selected: ["users", "orders"],
+			estimates,
+		});
+		expect(plan.docs).toBe(1500);
+		expect(plan.dataSize).toBe(3072);
+		expect(plan.approximate).toBe(true);
+	});
+
+	test("índices só contam no sync quando copyIndexes está ligado", () => {
+		const indexes = [
+			{ collection: "users", indexes: [], secondaryCount: 2 },
+			{ collection: "orders", indexes: [], secondaryCount: 1 },
+		];
+		const base = {
+			mode: "sync" as const,
+			selected: ["users", "orders"],
+			estimates,
+			indexes,
+		};
+
+		expect(buildTransferPlan(base).indexes).toBe(0);
+		expect(buildTransferPlan({ ...base, copyIndexes: true }).indexes).toBe(3);
+	});
+
+	test("migrate leva índices sempre (mongorestore) e nunca views", () => {
+		const plan = buildTransferPlan({
+			mode: "migrate",
+			selected: ["users"],
+			estimates,
+			indexes: [{ collection: "users", indexes: [], secondaryCount: 4 }],
+			sourceViews: [{ name: "v", kind: "view", viewOn: "users" }],
+			copyViews: true,
+		});
+		expect(plan.indexes).toBe(4);
+		expect(plan.views).toBe(0);
+	});
+
+	test("avisa quando a view aponta pra collection fora da seleção", () => {
+		const plan = buildTransferPlan({
+			mode: "sync",
+			selected: ["users"],
+			estimates,
+			sourceViews: [
+				{ name: "v_orders", kind: "view", viewOn: "orders" },
+				{ name: "v_users", kind: "view", viewOn: "users" },
+			],
+			copyViews: true,
+		});
+		expect(plan.views).toBe(2);
+		expect(plan.warnings.some((w) => w.includes("v_orders"))).toBe(true);
+		expect(plan.warnings.some((w) => w.includes("v_users"))).toBe(false);
+	});
+
+	test("ttl não envia documentos e cria 1 índice por collection", () => {
+		const plan = buildTransferPlan({
+			mode: "ttl",
+			selected: ["users", "orders"],
+			estimates,
+		});
+		expect(plan.docs).toBe(0);
+		expect(plan.indexes).toBe(2);
+	});
+});
+
+describe("helpers de exibição", () => {
+	test("filterEntries é case-insensitive e por substring", () => {
+		const entries = [
+			{ name: "orders" },
+			{ name: "pre_Orders" },
+			{ name: "users" },
+		];
+		expect(filterEntries(entries, "ord").map((e) => e.name)).toEqual([
+			"orders",
+			"pre_Orders",
+		]);
+		expect(filterEntries(entries, "  ").length).toBe(3);
+	});
+
+	test("nomes internos ficam fora da lista", () => {
+		expect(isInternalName("system.views")).toBe(true);
+		expect(isInternalName("__sync")).toBe(true);
+		expect(isInternalName("users")).toBe(false);
+	});
+
+	test("formatação cabe em coluna estreita", () => {
+		expect(formatBytes(0)).toBe("0 B");
+		expect(formatBytes(2048)).toBe("2.0 KB");
+		expect(formatBytes(1536 * 1024 * 1024)).toBe("1.5 GB");
+		expect(formatCount(999)).toBe("999");
+		expect(formatCount(215_000_000)).toBe("215M");
+	});
+});

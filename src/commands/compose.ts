@@ -4,6 +4,7 @@ import os from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { buildInstanceCompose } from "../core/compose/buildCompose";
+import { committedResources } from "../core/compose/committed";
 import { detectConfigs } from "../core/compose/detectConfigs";
 import { recommendResources } from "../core/compose/recommend";
 import { t } from "../utils/i18n";
@@ -15,35 +16,6 @@ const BASE_FILE = "docker-compose-limit.yml";
 function numOr(input: string | null, fallback: number): number {
 	const n = Number((input ?? "").trim());
 	return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-type Committed = { mem: number; cpus: number; names: string[] };
-
-/** Soma mem_limit e cpus já comprometidos pelos containers pulsar-sync existentes. */
-function committedResources(): Committed {
-	try {
-		const names = execSync(
-			'docker ps -a --filter "name=pulsar-sync" --format "{{.Names}}"',
-			{ encoding: "utf8" },
-		)
-			.trim()
-			.split("\n")
-			.filter(Boolean);
-		let mem = 0;
-		let cpus = 0;
-		for (const n of names) {
-			const raw = execSync(
-				`docker inspect --format "{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}}" ${n}`,
-				{ encoding: "utf8" },
-			).trim();
-			const [m, nano] = raw.split(/\s+/).map(Number);
-			if (Number.isFinite(m)) mem += m;
-			if (Number.isFinite(nano)) cpus += nano / 1e9;
-		}
-		return { mem, cpus, names };
-	} catch {
-		return { mem: 0, cpus: 0, names: [] };
-	}
 }
 
 /** Próximo sufixo numérico livre (pulsar-sync base = 1). */

@@ -10,6 +10,12 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
+
+    // O ink referencia react-devtools-core e quebra o `bun build --compile`.
+    // Ver src/stubs/react-devtools-core.ts.
+    "paths": {
+      "react-devtools-core": ["./src/stubs/react-devtools-core.ts"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
