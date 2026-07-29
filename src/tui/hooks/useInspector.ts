@@ -5,12 +5,13 @@ import {
 	countExact,
 	estimateMany,
 } from "../../core/inspect/collStats";
+import { type DbSummary, dbSummary } from "../../core/inspect/dbStats";
 import {
 	type CollIndexes,
 	indexSummaryMany,
 } from "../../core/inspect/indexSummary";
 import { type DbOverview, inspectDb } from "../../core/inspect/inspectDb";
-import { probeConnection } from "../../core/inspect/probe";
+import { type DatabaseInfo, probeConnection } from "../../core/inspect/probe";
 
 /**
  * Toda a conversa da TUI com o Mongo passa por aqui.
@@ -28,8 +29,12 @@ export type InspectorState = {
 	status: ConnStatus;
 	error?: string;
 	/** bancos visíveis; vazio quando o usuário não tem permissão de listar */
-	databases: string[];
+	databases: DatabaseInfo[];
 	overview?: DbOverview;
+	/** banco cujo overview/summary está carregado — inclui o preview sob o cursor */
+	currentDb?: string;
+	/** retrato do banco escolhido: collections, views, índices, tamanho */
+	summary?: DbSummary;
 	estimates: CollEstimate[];
 	indexes: CollIndexes[];
 	loadingStats: boolean;
@@ -106,8 +111,20 @@ export function useInspector() {
 			const gen = generation.current;
 
 			try {
-				const overview = await inspectDb(client.db(dbName));
-				apply(gen, { overview, estimates: [], indexes: [] });
+				const db = client.db(dbName);
+				// As duas chamadas são de metadata e independentes entre si — em
+				// paralelo o resumo aparece junto com a lista, não depois dela.
+				const [overview, summary] = await Promise.all([
+					inspectDb(db),
+					dbSummary(db),
+				]);
+				apply(gen, {
+					overview,
+					summary,
+					currentDb: dbName,
+					estimates: [],
+					indexes: [],
+				});
 			} catch (err) {
 				apply(gen, {
 					error: err instanceof Error ? err.message : String(err),

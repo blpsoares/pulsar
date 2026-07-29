@@ -1,8 +1,9 @@
 import { Box, Text } from "ink";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { emptyForm, type FormState } from "../../core/config/formState";
 import type { CollectionEntryRaw } from "../../core/config/loadConfig";
 import { formatBytes, formatCount } from "../../core/inspect/collStats";
+import type { DbSummary } from "../../core/inspect/dbStats";
 import type { TuiMode } from "../../core/inspect/summary";
 import { buildTransferPlan } from "../../core/inspect/summary";
 import { Select } from "../components/Select";
@@ -102,6 +103,25 @@ export function Wizard({
 	const destination = useInspector();
 	const views = source.state.overview?.views ?? [];
 
+	/**
+	 * Config aberta para edição já traz URI e banco no arquivo — reconecta
+	 * sozinha. Sem isto, voltar ao passo de collections mostraria uma lista
+	 * vazia e o yml existente seria, na prática, não-editável: a origem só
+	 * conectava quando alguém digitava a URI de novo.
+	 */
+	const autoConnected = useRef(false);
+	useEffect(() => {
+		if (autoConnected.current) return;
+		const uri = initialForm?.source.uri;
+		const db = initialForm?.source.db;
+		if (!uri || !db) return;
+		autoConnected.current = true;
+
+		void (async () => {
+			if (await source.connect(uri)) await source.loadDb(db);
+		})();
+	}, [initialForm, source]);
+
 	const order = stepOrder(form.mode);
 	const index = order.indexOf(step);
 
@@ -123,6 +143,10 @@ export function Wizard({
 		copyIndexes: form.copyIndexes,
 		copyViews: form.copyViews,
 	});
+
+	function inspectorFor(current: Step) {
+		return current === "destination" ? destination : source;
+	}
 
 	const chips: Chip[] = [
 		{ label: "modo", value: form.mode },
@@ -279,17 +303,155 @@ export function Wizard({
 			</Panel>
 
 			{l.aside > 0 ? (
-				<Panel title="vai ser enviado" width={l.aside} height={l.body}>
-					<PlanPanel
-						plan={plan}
-						width={l.aside}
-						showNumbers={estimates.enabled}
-						totalCollections={source.state.overview?.collections.length ?? 0}
-					/>
-				</Panel>
+				showDbPanel(step) ? (
+					<Panel title="banco" width={l.aside} height={l.body}>
+						<DbPanel
+							width={l.aside}
+							summary={inspectorFor(step).state.summary}
+							connecting={inspectorFor(step).state.status === "connecting"}
+							// o banco EXIBIDO é o que está carregado (o cursor da lista já
+							// dispara o preview), não o que já foi confirmado no form
+							dbName={
+								inspectorFor(step).state.currentDb ??
+								(step === "destination" ? form.destination.db : form.source.db)
+							}
+							collections={
+								inspectorFor(step).state.overview?.collections.map(
+									(c) => c.name,
+								) ?? []
+							}
+							views={inspectorFor(step).state.overview?.views.length ?? 0}
+						/>
+					</Panel>
+				) : (
+					<Panel title="vai ser enviado" width={l.aside} height={l.body}>
+						<PlanPanel
+							plan={plan}
+							width={l.aside}
+							showNumbers={estimates.enabled}
+							totalCollections={source.state.overview?.collections.length ?? 0}
+						/>
+					</Panel>
+				)
 			) : null}
 		</Shell>
 	);
+}
+
+/**
+ * Retrato do banco assim que a conexão é aceita: o que existe lá dentro, antes
+ * de escolher qualquer coisa. Vem de UMA chamada `dbStats` (metadata), então
+ * aparece junto com a lista de collections e não custa varredura.
+ */
+function DbPanel({
+	width,
+	summary,
+	connecting,
+	dbName,
+	collections,
+	views,
+}: {
+	width: number;
+	summary?: DbSummary;
+	connecting: boolean;
+	dbName: string;
+	collections: string[];
+	views: number;
+}) {
+	if (connecting) return <Text color={theme.muted}>conectando…</Text>;
+	if (!dbName)
+		return (
+			<Text color={theme.muted} wrap="wrap">
+				informe a connection string para ver o que existe no banco
+			</Text>
+		);
+	if (!summary)
+		return <Text color={theme.muted}>escolha o banco para ver o resumo</Text>;
+
+	if (summary.error)
+		return (
+			<Box flexDirection="column">
+				<Text color={theme.warn} wrap="wrap">
+					sem permissão para ler as estatísticas deste banco
+				</Text>
+				<Box marginTop={1}>
+					<Stat
+						label="collections"
+						value={String(collections.length)}
+						width={width}
+					/>
+				</Box>
+			</Box>
+		);
+
+	// Amostra de nomes: dá para reconhecer o banco de relance, sem sair da tela.
+	const sample = collections.slice(0, 6);
+
+	return (
+		<Box flexDirection="column">
+			<Text color={theme.accent} bold wrap="truncate-end">
+				{dbName}
+			</Text>
+			<Box marginTop={1} flexDirection="column">
+				{/*
+				 * collections e views vêm da LISTA, não do dbStats: o dbStats conta
+				 * `system.views` como collection, e o número na tela tem que bater
+				 * com o que dá para selecionar no passo seguinte.
+				 */}
+				<Stat
+					label="collections"
+					value={String(collections.length)}
+					width={width}
+					tone="ok"
+				/>
+				<Stat label="views" value={String(views)} width={width} />
+				<Stat label="índices" value={String(summary.indexes)} width={width} />
+				<Stat
+					label="docs"
+					value={`~${formatCount(summary.objects)}`}
+					width={width}
+				/>
+				<Stat
+					label="dados"
+					value={formatBytes(summary.dataSize)}
+					width={width}
+				/>
+				<Stat
+					label="em disco"
+					value={formatBytes(summary.storageSize)}
+					width={width}
+					tone="muted"
+				/>
+				<Stat
+					label="idx disco"
+					value={formatBytes(summary.indexSize)}
+					width={width}
+					tone="muted"
+				/>
+			</Box>
+
+			{sample.length > 0 ? (
+				<Box marginTop={1} flexDirection="column">
+					<Text color={theme.border}>─ collections ─</Text>
+					{sample.map((name) => (
+						<Text key={name} color={theme.muted} wrap="truncate-end">
+							{name}
+						</Text>
+					))}
+					{collections.length > sample.length ? (
+						<Text color={theme.border}>
+							…e mais {collections.length - sample.length}
+						</Text>
+					) : null}
+				</Box>
+			) : null}
+		</Box>
+	);
+}
+
+/** Passos de conexão mostram o BANCO; os demais, o que será enviado. */
+function showDbPanel(step: Step): boolean {
+	return step === "mode" || step === "source" || step === "destination";
 }
 
 function PlanPanel({

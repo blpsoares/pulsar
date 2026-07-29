@@ -1,11 +1,13 @@
 command:
   sync:
     source:
-      uri: "source database uri"
-      db: "source database name"
+      uri: source database uri
+      db: source database name
     destination:
-      uri: "destination database uri"
-      db: "destination database name"
-    copyIndexes: false        # opcional: replica os índices secundários da origem
-    copyViews: false          # opcional: true = recria todas as views; ou ["v1","v2"] por nome
-    collections: ["collections", "name","to","sync"]
+      uri: destination database uri
+      db: destination database name
+    collections:
+      - collections
+      - name
+      - to
+      - sync

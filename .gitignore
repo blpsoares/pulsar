@@ -150,3 +150,4 @@ logs-*/
 
 # scratch do subagent-driven-development
 .superpowers/
+docs/demo/replica-sync.yml

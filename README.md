@@ -6,15 +6,41 @@ CLI for syncing data between MongoDB databases. It supports two modes: **migrate
 
 ---
 
+## Terminal UI (TUI)
+
+Running `pulsar` with no arguments opens the TUI: create and edit configs
+through a form, launch any mode, install as a background service, and read
+logs — no hand-written yml.
+
+![Creating a config in the TUI](docs/media/tui-wizard.gif)
+
+As soon as the connection string is accepted the TUI **actually connects** and
+shows what is in the database (collections, views, indexes, size) before you
+pick anything. Name search is incremental (`/`), and the right panel reports
+what will be transferred as you select.
+
+Operating an existing config — run it, install it as a service, read its log:
+
+![Operating from the TUI](docs/media/tui-ops.gif)
+
+> The recordings use this repository's test Mongo (`docker-compose-test.yml`),
+> so the URIs on screen are localhost. The scripts live in `docs/tape/` and can
+> be regenerated with `bun run rec:tui` (requires
+> [vhs](https://github.com/charmbracelet/vhs)).
+
+---
+
 ## Installation
 
-### Option 1 — local binary
+### Option 1 — install the command (recommended)
 
 ```sh
-bun run bin:dev
+bun run get:cli
 ```
 
-Compiles and copies the binary to `~/.local/bin/pulsar`.
+Builds and installs to `~/.local/bin/pulsar`, no sudo. It warns when that
+directory is not on your `PATH` and tells you which line to add where — a
+binary outside `PATH` is indistinguishable from one that was never installed.
 
 ### Option 2 — Docker
 

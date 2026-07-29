@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Db, MongoClient } from "mongodb";
 import { countExact, estimateMany } from "../src/core/inspect/collStats";
+import { dbSummary } from "../src/core/inspect/dbStats";
 import { indexSummaryMany } from "../src/core/inspect/indexSummary";
 import { inspectDb } from "../src/core/inspect/inspectDb";
 import { maskUri } from "../src/core/inspect/maskUri";
@@ -112,5 +113,27 @@ describe("probe de conexão", () => {
 		expect(maskUri("mongodb://localhost:27017")).toBe(
 			"mongodb://localhost:27017",
 		);
+	});
+});
+
+describe("resumo do banco (dbStats)", () => {
+	test("conta collections, views e índices numa chamada só", async () => {
+		const summary = await dbSummary(db);
+
+		expect(summary.error).toBeUndefined();
+		// 2 collections criadas no beforeAll + a __sync do teste anterior
+		expect(summary.collections).toBeGreaterThanOrEqual(2);
+		expect(summary.views).toBe(1);
+		// _id_ de cada collection + o índice n_1 criado no setup
+		expect(summary.indexes).toBeGreaterThanOrEqual(3);
+		expect(summary.objects).toBeGreaterThanOrEqual(4);
+		expect(summary.storageSize).toBeGreaterThan(0);
+	});
+
+	test("banco inexistente responde zerado, sem lançar", async () => {
+		const summary = await dbSummary(client.db("banco_que_nao_existe_pulsar"));
+		expect(summary.error).toBeUndefined();
+		expect(summary.collections).toBe(0);
+		expect(summary.objects).toBe(0);
 	});
 });

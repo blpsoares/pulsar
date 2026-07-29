@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { glyph, theme } from "../theme";
 
 /**
@@ -22,6 +22,12 @@ export type SelectItem<T> = {
 type Props<T> = {
 	items: SelectItem<T>[];
 	onSelect: (value: T, index: number) => void;
+	/**
+	 * Chamado quando o cursor PARA sobre um item (sem confirmar). Serve para
+	 * pré-visualizar o item destacado — ex.: o resumo do banco sob o cursor,
+	 * antes de escolhê-lo.
+	 */
+	onHighlight?: (value: T, index: number) => void;
 	focus?: boolean;
 	visible?: number;
 	/** índice inicial do cursor */
@@ -32,6 +38,7 @@ type Props<T> = {
 export function Select<T>({
 	items,
 	onSelect,
+	onHighlight,
 	focus = true,
 	visible = 10,
 	initialIndex = 0,
@@ -43,6 +50,15 @@ export function Select<T>({
 
 	// A lista pode encolher (filtro de busca) e deixar o cursor fora do range.
 	const cursor = Math.min(index, Math.max(0, items.length - 1));
+
+	// Dispara o preview do item destacado, inclusive do inicial. `onHighlight`
+	// costuma fazer I/O, então o efeito depende só do valor sob o cursor — não
+	// do array de itens, que é recriado a cada render.
+	const current = items[cursor];
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `current` representa o item; items muda de identidade a cada render
+	useEffect(() => {
+		if (current && !current.disabled) onHighlight?.(current.value, cursor);
+	}, [current?.label, cursor, onHighlight]);
 
 	useInput(
 		(input, key) => {

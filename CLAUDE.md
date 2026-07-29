@@ -22,6 +22,8 @@ bun run sys:info       # mostra CPU/RAM/swap/disco, explica cada limite e sugere
 bun run sys:info --apply  # idem + GRAVA os valores recomendados no docker-compose-limit.yml
 bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync ao lado das existentes (recursos recomendados pelo uso)
 pulsar compose up      # idem, via binário instalado (bin:dev)
+bun run get:cli        # compila e instala o comando em ~/.local/bin (avisa se estiver fora do PATH)
+bun run rec:tui        # regrava os GIFs da TUI em docs/media (precisa de vhs+ttyd+ffmpeg)
 pulsar                 # sem argumento: abre a TUI (Ink) — cria config, roda, instala serviço, lê log
 pulsar tui             # idem, explícito
 bun run src/cli.ts migrate configs/test.yml -p 4
@@ -304,18 +306,27 @@ que respeita o tema do terminal.
 
 **Layout de cockpit** (estilo k9s/lazygit): tela cheia em *alternate screen*
 (sai sem sujar o scrollback), com sidebar + painel central + painel de contexto
-visíveis ao mesmo tempo. `tab` alterna o painel com foco. As larguras vêm de
+visíveis ao mesmo tempo. `tab` alterna **apenas o foco**, nunca o conteúdo de um
+painel — trocar o que está na tela ao mudar de foco desorienta. As larguras vêm de
 `src/tui/layout.ts` (matemática pura, testada): abaixo de 96 colunas o painel da
 direita sai de cena antes de espremer a lista. **Ctrl+C e Ctrl+D encerram de
 qualquer tela** — o `render()` roda com `exitOnCtrlC: false` (para o filho
 receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
 
 - **Criar/editar config:** form guiado (modo → origem → destino → collections →
-  avançado → revisar). Conecta na origem de verdade, lista os bancos, e mostra
-  collections e views com **busca incremental** (`/`) e multi-seleção. Abrir um
-  yml existente **preserva os `filter`/`filterFile`** escritos à mão (a TUI
-  ainda não os edita, mas não os apaga). Valida com os mesmos schemas Zod do
-  `parseYml` **antes** de gravar, e grava atomicamente (tmp + rename).
+  avançado → revisar). Conecta na origem de verdade, lista os bancos **com
+  tamanho**, e mostra collections e views com **busca incremental** (`/`) e
+  multi-seleção. Abrir um yml existente **reconecta sozinho** pela URI do
+  arquivo (sem isso, o passo de collections viria vazio e o yml seria
+  não-editável na prática) e **preserva os `filter`/`filterFile`** escritos à
+  mão. Valida com os mesmos schemas Zod do `parseYml` **antes** de gravar, e
+  grava atomicamente (tmp + rename).
+- **Retrato do banco (`core/inspect/dbStats.ts`):** ao mover o cursor pela lista
+  de bancos, o painel da direita mostra collections, views, índices, docs (~) e
+  tamanho em disco — UMA chamada `dbStats`, que lê catálogo e responde em
+  milissegundos. As contagens de collections/views exibidas vêm da LISTA, não do
+  `dbStats`: ele conta `system.views` como collection e o número na tela tem que
+  bater com o que dá para selecionar.
 - **Estimativas (opt-in):** o painel `e` liga "show estimatives" e escolhe quais
   métricas puxar. Por padrão a tela não conta nada — `countDocuments` numa
   collection de 215M docs levaria minutos. Os números vêm de `$collStats`

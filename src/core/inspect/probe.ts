@@ -14,8 +14,11 @@ import { MongoClient } from "mongodb";
 
 export const PROBE_TIMEOUT_MS = 8000;
 
+/** Banco visível na sondagem, com o tamanho que o servidor já informa. */
+export type DatabaseInfo = { name: string; sizeOnDisk: number };
+
 export type ProbeResult =
-	| { ok: true; client: MongoClient; databases: string[] }
+	| { ok: true; client: MongoClient; databases: DatabaseInfo[] }
 	| { ok: false; error: string };
 
 /**
@@ -53,13 +56,16 @@ export async function probeConnection(
  * acesso a um banco só. Falhar aqui é normal — devolvemos lista vazia e a TUI
  * pede o nome do banco digitado.
  */
-async function listDatabases(client: MongoClient): Promise<string[]> {
+async function listDatabases(client: MongoClient): Promise<DatabaseInfo[]> {
 	try {
 		const { databases } = await client.db().admin().listDatabases();
 		return databases
-			.map((d) => String(d.name))
-			.filter((n) => !["admin", "local", "config"].includes(n))
-			.sort();
+			.filter((d) => !["admin", "local", "config"].includes(String(d.name)))
+			.map((d) => ({
+				name: String(d.name),
+				sizeOnDisk: Number(d.sizeOnDisk ?? 0),
+			}))
+			.sort((a, b) => a.name.localeCompare(b.name));
 	} catch {
 		return [];
 	}

@@ -93,7 +93,10 @@ export function Home({
 			onAction({ type: "quit" });
 			return;
 		}
-		if (pane === "list" && selected) {
+		// Atalhos de ação valem nos DOIS painéis: eles agem sobre a config
+		// selecionada, e exigir foco na lista para usá-los era uma pegadinha —
+		// a tecla simplesmente não fazia nada e nada explicava por quê.
+		if (selected) {
 			if (input === "r") {
 				onAction({ type: "run", file: selected.file });
 				return;

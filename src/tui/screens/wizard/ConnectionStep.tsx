@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { formatBytes } from "../../../core/inspect/collStats";
 import { Select } from "../../components/Select";
 import { Spinner } from "../../components/Spinner";
 import { TextInput } from "../../components/TextInput";
@@ -42,6 +43,8 @@ export function ConnectionStep({
 	onBack,
 }: Props) {
 	const [field, setField] = useState<Field>("uri");
+	// Evita recarregar o mesmo banco a cada render enquanto o cursor não anda.
+	const previewed = useRef<string | null>(null);
 	const { state, connect, loadDb } = inspector;
 	const connecting = state.status === "connecting";
 	const frame = useSpinner(connecting);
@@ -64,6 +67,17 @@ export function ConnectionStep({
 		if (ok) setField("db");
 	}
 
+	/**
+	 * Preview do banco sob o cursor: carrega collections/views/estatísticas sem
+	 * confirmar a escolha. É o que faz o painel da direita responder enquanto se
+	 * navega pela lista, em vez de só depois de escolher.
+	 */
+	function handleDbHighlight(name: string) {
+		if (!name || name === previewed.current) return;
+		previewed.current = name;
+		void loadDb(name);
+	}
+
 	async function handleDbConfirm(name: string) {
 		const clean = name.trim();
 		if (!clean) return;
@@ -80,17 +94,19 @@ export function ConnectionStep({
 					: "Para onde os dados vão. Este banco recebe escrita."}
 			</Text>
 
-			<Box marginTop={1}>
+			<Box marginTop={1} flexDirection="column">
 				<Text color={field === "uri" ? theme.accent : theme.label}>
-					{field === "uri" ? "❯ " : "  "}connection string{" "}
+					{field === "uri" ? "❯ " : "  "}connection string
 				</Text>
-				<TextInput
-					value={uri}
-					onChange={(value) => onChange({ uri: value, db })}
-					onSubmit={handleUriSubmit}
-					focus={field === "uri" && !connecting}
-					placeholder="mongodb+srv://user:senha@cluster.mongodb.net"
-				/>
+				<Box marginLeft={2}>
+					<TextInput
+						value={uri}
+						onChange={(value) => onChange({ uri: value, db })}
+						onSubmit={handleUriSubmit}
+						focus={field === "uri" && !connecting}
+						placeholder="mongodb+srv://user:senha@cluster.mongodb.net"
+					/>
+				</Box>
 			</Box>
 
 			{connecting ? (
@@ -122,15 +138,23 @@ export function ConnectionStep({
 						{canListDbs ? (
 							<Box marginLeft={2}>
 								<Select
-									items={state.databases.map((name) => ({
-										value: name,
-										label: name,
-										hint: name === db ? "atual" : undefined,
+									items={state.databases.map((info) => ({
+										value: info.name,
+										label: info.name,
+										// O tamanho vem de graça no listDatabases e é o que
+										// distingue produção de teste quando os nomes são parecidos.
+										hint: `${formatBytes(info.sizeOnDisk)}${info.name === db ? " · atual" : ""}`,
 									}))}
 									onSelect={(value) => handleDbConfirm(value)}
+									onHighlight={
+										kind === "source" ? handleDbHighlight : undefined
+									}
 									focus={field === "db"}
 									visible={8}
-									initialIndex={Math.max(0, state.databases.indexOf(db))}
+									initialIndex={Math.max(
+										0,
+										state.databases.findIndex((info) => info.name === db),
+									)}
 								/>
 							</Box>
 						) : (

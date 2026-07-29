@@ -181,7 +181,39 @@ export function ServicesScreen({
 				{ keys: "esc", label: "voltar" },
 			]}
 		>
+			{/*
+			 * `tab` alterna o FOCO entre os dois painéis da esquerda; o centro é
+			 * sempre o plano. Antes o tab trocava o conteúdo do centro (lista de
+			 * configs ↔ plano), e mudar o que está na tela ao mudar de foco
+			 * desorienta: some da vista justamente o que se está decidindo.
+			 */}
 			<Box flexDirection="column" width={SIDEBAR_WIDTH}>
+				<Panel
+					title="config"
+					width={SIDEBAR_WIDTH}
+					focused={pane === "config"}
+					height={Math.max(6, Math.min(configs.length + 3, l.body - 9))}
+				>
+					<Select
+						items={configs.map((c) => ({
+							value: c.file,
+							label: c.file,
+						}))}
+						onSelect={(f) => {
+							setFile(f);
+							setResult(null);
+							setActionLog([]);
+						}}
+						focus={pane === "config"}
+						emptyMessage="nenhuma config"
+						visible={Math.max(3, Math.min(configs.length, l.body - 12))}
+						initialIndex={Math.max(
+							0,
+							configs.findIndex((c) => c.file === file),
+						)}
+					/>
+				</Panel>
+
 				<Panel
 					title="backend"
 					width={SIDEBAR_WIDTH}

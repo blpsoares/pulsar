@@ -6,15 +6,40 @@ CLI para sincronização de dados entre bancos MongoDB. Suporta dois modos: **mi
 
 ---
 
+## Interface de terminal (TUI)
+
+Rodar `pulsar` sem argumento abre a TUI: criar e editar configs por formulário,
+disparar os modos, instalar em background e ler logs — sem escrever yml à mão.
+
+![Criando uma config na TUI](docs/media/tui-wizard.gif)
+
+Ao aceitar a connection string, a TUI **conecta de verdade** e mostra o que
+existe no banco (collections, views, índices, tamanho) antes de você escolher
+qualquer coisa. A busca por nome é incremental (`/`), e o painel da direita diz
+o que será enviado conforme você marca.
+
+Operar uma config que já existe — rodar, instalar como serviço, ler o log:
+
+![Operando pela TUI](docs/media/tui-ops.gif)
+
+> As gravações usam o Mongo de teste do próprio repositório
+> (`docker-compose-test.yml`); as URIs na tela são localhost. Os roteiros estão
+> em `docs/tape/` e são regeraveis com `bun run rec:tui` (precisa de
+> [vhs](https://github.com/charmbracelet/vhs)).
+
+---
+
 ## Instalação
 
-### Opção 1 — binário local
+### Opção 1 — instalar o comando (recomendado)
 
 ```sh
-bun run bin:dev
+bun run get:cli
 ```
 
-Compila e copia o binário para `~/.local/bin/pulsar`.
+Compila e instala em `~/.local/bin/pulsar`, sem sudo. Avisa se a pasta não
+estiver no seu `PATH` e diz qual linha adicionar em qual arquivo — binário fora
+do `PATH` é indistinguível de binário não instalado.
 
 ### Opção 2 — Docker
 
