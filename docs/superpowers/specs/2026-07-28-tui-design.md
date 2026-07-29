@@ -84,6 +84,26 @@ para sair da busca também voltaria de tela. Por isso o `CollectionPicker`
 trata inclusive as teclas que "pertencem" ao passo (`esc`, `e`) e as devolve
 por callback.
 
+### Layout de cockpit
+
+Tela cheia em *alternate screen* (o mesmo buffer de vim/htop/k9s), com sidebar,
+painel central e painel de contexto simultâneos; `tab` alterna o foco. A
+geometria vive em `src/tui/layout.ts` — pura e testada, fora do componente.
+Abaixo de 96 colunas o painel da direita é sacrificado antes de tudo: ele é
+contexto, não conteúdo, e espremer três painéis num terminal estreito deixaria
+a lista de collections com uma dúzia de caracteres.
+
+O `Box` do ink não sabe escrever título dentro da moldura, então o `Panel`
+desenha a linha de cima à mão (`╭─ título ───╮`) e usa `borderTop={false}` no
+Box abaixo. Como as larguras são conhecidas, a linha bate exatamente.
+
+### Saída global: Ctrl+C e Ctrl+D
+
+O `render()` roda com `exitOnCtrlC: false` para que um sync disparado pela TUI
+receba SIGTERM (e grave o resume token) antes de o processo morrer. Isso, porém,
+deixa a TUI **sem saída** se ninguém tratar o atalho — as telas internas só
+tratam `esc`, e `esc` na inicial não encerra. O handler global vive no `App`.
+
 ### `flexShrink` mora em `Box`, não em `Text`
 
 Quando a linha passa da largura do terminal, o yoga encolhe cada filho
@@ -140,7 +160,7 @@ o histórico em memória.
 
 ## Verificação
 
-- `test/tuiConfig.test.ts` (21) — build/parse/round-trip de yml, validação,
+- `test/tuiConfig.test.ts` (27) — build/parse/round-trip de yml, validação,
   plano de transferência, formatação.
 - `test/tuiService.test.ts` (25) — units do systemd, plists do launchd,
   ecosystem do pm2, LineBuffer, leitura de log em arquivo.

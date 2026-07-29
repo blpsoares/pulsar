@@ -25,56 +25,67 @@ import type {
 	ServiceSpec,
 	ServiceStatus,
 } from "../../core/service/types";
-import { Frame } from "../components/Frame";
 import { Select } from "../components/Select";
+import {
+	type Chip,
+	layout,
+	Panel,
+	Shell,
+	SIDEBAR_WIDTH,
+	Stat,
+} from "../components/Shell";
+import { useTerminalSize } from "../hooks/useTerminalSize";
 import { theme } from "../theme";
 
 /**
  * Rodar em background e subir no boot.
  *
- * A tela é honesta sobre o que cada backend consegue nesta máquina: o que não
- * está disponível aparece desabilitado com o motivo, e o plano completo
- * (arquivos que serão gravados + comandos que serão executados) é mostrado
- * ANTES de qualquer coisa acontecer. Instalar serviço é mexer no boot da
- * máquina do usuário — ele merece ver o que vai ser feito.
+ * Backends à esquerda (com o motivo quando indisponíveis), plano no centro,
+ * estado do serviço à direita. O plano — arquivos que serão gravados e comandos
+ * que serão executados — fica visível ANTES de qualquer efeito: instalar
+ * serviço mexe no boot da máquina, e o usuário merece ver o que vai acontecer.
  */
-
-type Step =
-	| { name: "pick-config" }
-	| { name: "pick-backend"; file: string }
-	| { name: "plan"; file: string; backend: Backend }
-	| { name: "result"; file: string; backend: Backend; result: InstallResult };
 
 export function ServicesScreen({
 	dir,
+	file: initialFile,
 	onExit,
 }: {
 	dir: string;
+	file?: string;
 	onExit: () => void;
 }) {
-	const [step, setStep] = useState<Step>({ name: "pick-config" });
-	const [autostart, setAutostart] = useState(true);
+	const { columns, rows } = useTerminalSize();
+	const l = layout(columns, rows);
+
+	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
+	const [file, setFile] = useState<string | undefined>(initialFile);
+	const [backend, setBackend] = useState<Backend | null>(null);
 	const [availability, setAvailability] = useState<
 		BackendAvailability[] | null
 	>(null);
+	const [autostart, setAutostart] = useState(true);
 	const [status, setStatus] = useState<ServiceStatus | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
+	const [result, setResult] = useState<InstallResult | null>(null);
 	const [actionLog, setActionLog] = useState<StepResult[]>([]);
+	const [pane, setPane] = useState<"backend" | "config">(
+		initialFile ? "backend" : "config",
+	);
 
 	useEffect(() => {
-		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then(
-			setAvailability,
-		);
+		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then((a) => {
+			setAvailability(a);
+			setBackend((b) => b ?? preferredBackend(a));
+		});
 	}, [dir]);
 
-	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
-
-	function specFor(file: string): ServiceSpec | null {
-		const path = resolve(dir, file);
+	function specFor(name: string): ServiceSpec | null {
+		const path = resolve(dir, name);
 		const loaded = loadConfigFile(path);
 		if (!loaded) return null;
 		return {
-			name: basename(file).replace(/\.ya?ml$/i, ""),
+			name: basename(name).replace(/\.ya?ml$/i, ""),
 			mode: loaded.form.mode,
 			configPath: path,
 			workingDir: dir,
@@ -82,187 +93,234 @@ export function ServicesScreen({
 		};
 	}
 
+	const spec = file ? specFor(file) : null;
+	const plan = spec && backend ? buildPlan(backend, spec) : null;
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: specFor deriva de file/dir/autostart, já listados
+	useEffect(() => {
+		if (!spec || !backend) return;
+		let alive = true;
+		void serviceStatus(backend, spec).then((s) => {
+			if (alive) setStatus(s);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [file, backend, dir, autostart]);
+
 	useInput((input, key) => {
 		if (busy) return;
 
 		if (key.escape) {
-			if (step.name === "pick-config") onExit();
-			else if (step.name === "pick-backend") setStep({ name: "pick-config" });
-			else if (step.name === "plan")
-				setStep({ name: "pick-backend", file: step.file });
-			else setStep({ name: "pick-config" });
+			onExit();
 			return;
 		}
+		if (key.tab) {
+			setPane((p) => (p === "backend" ? "config" : "backend"));
+			return;
+		}
+		if (input === "s") {
+			setAutostart((a) => !a);
+			return;
+		}
+		if (!spec || !backend || !plan || "error" in plan) return;
 
-		if (step.name === "pick-backend" && input === "s") setAutostart((a) => !a);
-
-		if (step.name === "plan") {
-			const spec = specFor(step.file);
-			if (!spec) return;
-
-			if (key.return) {
-				const plan = buildPlan(step.backend, spec);
-				if ("error" in plan) return;
-				setBusy("instalando…");
-				void installService(plan, spec).then((result) => {
-					setBusy(null);
-					setStep({ ...step, name: "result", result });
-					void refreshStatus(step.backend, spec);
-				});
-				return;
-			}
-			if (input === "x") {
-				setBusy("removendo…");
-				void uninstallService(step.backend, spec).then((results) => {
-					setBusy(null);
-					setActionLog(results);
-					void refreshStatus(step.backend, spec);
-				});
-				return;
-			}
-			if (input === "i" || input === "p" || input === "t") {
-				const action =
-					input === "i" ? "start" : input === "p" ? "stop" : "restart";
-				setBusy(`${action}…`);
-				void controlService(step.backend, spec, action).then((r) => {
-					setBusy(null);
-					setActionLog([r]);
-					void refreshStatus(step.backend, spec);
-				});
-			}
+		if (key.return) {
+			setBusy("instalando…");
+			void installService(plan, spec).then((r) => {
+				setBusy(null);
+				setResult(r);
+				void serviceStatus(backend, spec).then(setStatus);
+			});
+			return;
+		}
+		if (input === "x") {
+			setBusy("removendo…");
+			void uninstallService(backend, spec).then((r) => {
+				setBusy(null);
+				setActionLog(r);
+				setResult(null);
+				void serviceStatus(backend, spec).then(setStatus);
+			});
+			return;
+		}
+		if (input === "i" || input === "p" || input === "t") {
+			const action =
+				input === "i" ? "start" : input === "p" ? "stop" : "restart";
+			setBusy(`${action}…`);
+			void controlService(backend, spec, action).then((r) => {
+				setBusy(null);
+				setActionLog([r]);
+				void serviceStatus(backend, spec).then(setStatus);
+			});
 		}
 	});
 
-	async function refreshStatus(backend: Backend, spec: ServiceSpec) {
-		setStatus(await serviceStatus(backend, spec));
-	}
+	const chips: Chip[] = [
+		{ label: "config", value: file ?? "—", tone: file ? "muted" : "warn" },
+		{ label: "backend", value: backend ?? "detectando…" },
+		{
+			label: "boot",
+			value: autostart ? "sim" : "não",
+			tone: autostart ? "ok" : "muted",
+		},
+	];
 
-	// --- passo 1: escolher a config ---
-	if (step.name === "pick-config")
-		return (
-			<Frame
-				title="background e boot"
-				subtitle={dir}
-				hints={[
-					{ keys: "↑↓", label: "navegar" },
-					{ keys: "enter", label: "escolher" },
-					{ keys: "esc", label: "voltar" },
-				]}
+	return (
+		<Shell
+			chips={chips}
+			columns={columns}
+			rows={rows}
+			notice={busy ? { text: busy } : undefined}
+			hints={[
+				{ keys: "tab", label: "painel" },
+				{ keys: "enter", label: "instalar" },
+				{ keys: "i/p/t", label: "iniciar/parar/reiniciar" },
+				{ keys: "x", label: "remover" },
+				{ keys: "s", label: "boot" },
+				{ keys: "esc", label: "voltar" },
+			]}
+		>
+			<Box flexDirection="column" width={SIDEBAR_WIDTH}>
+				<Panel
+					title="backend"
+					width={SIDEBAR_WIDTH}
+					focused={pane === "backend"}
+					grow
+				>
+					{availability === null ? (
+						<Text color={theme.muted}>checando…</Text>
+					) : (
+						<Select
+							items={availability.map((a) => ({
+								value: a.backend,
+								label: a.backend,
+								disabled: !a.available,
+							}))}
+							onSelect={setBackend}
+							focus={pane === "backend"}
+							visible={6}
+							initialIndex={Math.max(
+								0,
+								availability.findIndex((a) => a.backend === backend),
+							)}
+						/>
+					)}
+				</Panel>
+			</Box>
+
+			<Panel
+				title={
+					pane === "config" ? "escolher config" : `plano · ${backend ?? ""}`
+				}
+				width={l.center}
+				height={l.body}
+				focused={pane === "config"}
 			>
-				<Text color={theme.muted}>Qual config vai virar serviço?</Text>
-				<Box marginTop={1}>
+				{pane === "config" ? (
 					<Select
 						items={configs.map((c) => ({
 							value: c.file,
 							label: c.file,
 							hint: `${c.kind}${c.destDb ? ` → ${c.destDb}` : ""}`,
 						}))}
-						onSelect={(file) => setStep({ name: "pick-backend", file })}
+						onSelect={(f) => {
+							setFile(f);
+							setResult(null);
+							setActionLog([]);
+							setPane("backend");
+						}}
+						focus
 						emptyMessage="nenhuma config nesta pasta — crie uma primeiro"
+						visible={l.panelRows - 1}
 					/>
-				</Box>
-			</Frame>
-		);
-
-	// --- passo 2: escolher o backend ---
-	if (step.name === "pick-backend") {
-		const preferred = availability ? preferredBackend(availability) : null;
-		return (
-			<Frame
-				title="background e boot · onde rodar"
-				subtitle={step.file}
-				hints={[
-					{ keys: "enter", label: "escolher" },
-					{ keys: "s", label: `iniciar no boot: ${autostart ? "sim" : "não"}` },
-					{ keys: "esc", label: "voltar" },
-				]}
-			>
-				{availability === null ? (
-					<Text color={theme.muted}>checando o que existe nesta máquina…</Text>
+				) : !file ? (
+					<Text color={theme.muted}>
+						tab para escolher a config que vira serviço
+					</Text>
+				) : !plan ? (
+					<Text color={theme.muted}>detectando backend…</Text>
+				) : "error" in plan ? (
+					<Text color={theme.error} wrap="wrap">
+						✖ {plan.error}
+					</Text>
 				) : (
-					<Box flexDirection="column">
-						<Select
-							items={availability.map((a) => ({
-								value: a.backend,
-								label:
-									a.backend +
-									(a.backend === preferred ? "  (recomendado aqui)" : ""),
-								hint: a.available
-									? describeBackend(a.backend)
-									: `indisponível — ${a.reason}${a.fix ? ` · ${a.fix}` : ""}`,
-								disabled: !a.available,
-							}))}
-							onSelect={(backend) => {
-								setStep({ name: "plan", file: step.file, backend });
-								const spec = specFor(step.file);
-								if (spec) void refreshStatus(backend, spec);
-							}}
-							initialIndex={Math.max(
-								0,
-								availability.findIndex((a) => a.backend === preferred),
-							)}
-						/>
-						<Box marginTop={1}>
-							<Text color={autostart ? theme.ok : theme.muted}>
-								{autostart ? "[x]" : "[ ]"} iniciar junto com o sistema
-							</Text>
-						</Box>
-					</Box>
+					<PlanView plan={plan} result={result} actionLog={actionLog} />
 				)}
-			</Frame>
-		);
-	}
+			</Panel>
 
-	// --- passos 3 e 4: plano, instalação e controle ---
-	const spec = specFor(step.file);
-	if (!spec)
-		return (
-			<Frame
-				title="background e boot"
-				hints={[{ keys: "esc", label: "voltar" }]}
-				status={{ text: `não consegui ler ${step.file}`, tone: "error" }}
-			>
-				<Text> </Text>
-			</Frame>
-		);
+			{l.aside > 0 ? (
+				<Panel title="serviço" width={l.aside} height={l.body}>
+					<StatusPanel
+						status={status}
+						width={l.aside}
+						availability={availability}
+						backend={backend}
+					/>
+				</Panel>
+			) : null}
+		</Shell>
+	);
+}
 
-	const plan = buildPlan(step.backend, spec);
-
+function PlanView({
+	plan,
+	result,
+	actionLog,
+}: {
+	plan: InstallPlan;
+	result: InstallResult | null;
+	actionLog: StepResult[];
+}) {
 	return (
-		<Frame
-			title={`background · ${step.backend}`}
-			subtitle={`${step.file} · ${spec.mode}`}
-			hints={[
-				{ keys: "enter", label: "instalar" },
-				{ keys: "i/p/t", label: "iniciar/parar/reiniciar" },
-				{ keys: "x", label: "remover" },
-				{ keys: "esc", label: "voltar" },
-			]}
-			status={
-				busy
-					? { text: busy }
-					: status
-						? {
-								text: `serviço ${status.name}: ${status.installed ? "instalado" : "não instalado"}${status.installed ? ` · ${status.running ? "rodando" : "parado"} · boot: ${status.enabled ? "sim" : "não"}` : ""}${status.detail ? ` · ${status.detail}` : ""}`,
-								tone: status.running ? "ok" : undefined,
-							}
-						: undefined
-			}
-		>
-			{"error" in plan ? (
-				<Text color={theme.error}>✖ {plan.error}</Text>
-			) : (
-				<PlanView plan={plan} />
-			)}
+		<Box flexDirection="column">
+			<Text color={theme.border}>─ arquivos ─</Text>
+			{plan.files.map((f) => (
+				<Text key={f.path} color={theme.muted} wrap="truncate-middle">
+					{f.path}
+				</Text>
+			))}
 
-			{step.name === "result" ? <ResultView result={step.result} /> : null}
+			<Text color={theme.border}>─ comandos ─</Text>
+			{plan.steps.map((s) => (
+				<Text key={s.cmd + s.args.join()} wrap="truncate-end">
+					<Text color={theme.label}>
+						{s.cmd} {s.args.join(" ")}
+					</Text>
+					<Text color={theme.muted}> — {s.why}</Text>
+				</Text>
+			))}
 
-			{actionLog.length > 0 ? (
+			{plan.manualSteps.length > 0 ? (
+				<>
+					<Text color={theme.warn}>─ você roda à mão (pedem sudo) ─</Text>
+					{plan.manualSteps.map((s) => (
+						<Text key={s.cmd + s.args.join()} wrap="truncate-end">
+							<Text color={theme.warn}>
+								{s.cmd} {s.args.join(" ")}
+							</Text>
+							<Text color={theme.muted}> — {s.why}</Text>
+						</Text>
+					))}
+				</>
+			) : null}
+
+			{plan.notes.map((n) => (
+				<Text key={n} color={theme.muted} wrap="wrap">
+					· {n}
+				</Text>
+			))}
+
+			{result ? (
 				<Box flexDirection="column" marginTop={1}>
-					{actionLog.map((r) => (
+					<Text color={result.ok ? theme.ok : theme.error}>
+						{result.ok ? "✔ instalado" : "✖ parou num passo obrigatório"}
+					</Text>
+					{result.results.map((r) => (
 						<Text
 							key={r.step.cmd + r.step.args.join()}
-							color={r.ok ? theme.ok : theme.error}
+							color={r.ok ? theme.muted : theme.error}
+							wrap="truncate-end"
 						>
 							{r.ok ? "✔" : "✖"} {r.step.cmd} {r.step.args.join(" ")}
 							{r.output ? ` — ${firstLine(r.output)}` : ""}
@@ -270,97 +328,95 @@ export function ServicesScreen({
 					))}
 				</Box>
 			) : null}
-		</Frame>
+
+			{actionLog.length > 0 ? (
+				<Box flexDirection="column" marginTop={1}>
+					{actionLog.map((r) => (
+						<Text
+							key={r.step.cmd + r.step.args.join()}
+							color={r.ok ? theme.ok : theme.error}
+							wrap="truncate-end"
+						>
+							{r.ok ? "✔" : "✖"} {r.step.cmd} {r.step.args.join(" ")}
+							{r.output ? ` — ${firstLine(r.output)}` : ""}
+						</Text>
+					))}
+				</Box>
+			) : null}
+		</Box>
 	);
 }
 
-function PlanView({ plan }: { plan: InstallPlan }) {
+function StatusPanel({
+	status,
+	width,
+	availability,
+	backend,
+}: {
+	status: ServiceStatus | null;
+	width: number;
+	availability: BackendAvailability[] | null;
+	backend: Backend | null;
+}) {
+	const unavailable = availability?.find(
+		(a) => a.backend === backend && !a.available,
+	);
+
 	return (
 		<Box flexDirection="column">
-			<Text color={theme.accent}>arquivos que serão gravados</Text>
-			{plan.files.map((f) => (
-				<Text key={f.path} color={theme.muted}>
-					{"  "}
-					{f.path}
-				</Text>
-			))}
-
-			<Box marginTop={1} flexDirection="column">
-				<Text color={theme.accent}>comandos que serão executados</Text>
-				{plan.steps.map((s) => (
-					<Text key={s.cmd + s.args.join()} color={theme.muted}>
-						{"  "}
-						{s.cmd} {s.args.join(" ")}
-						<Text color={theme.muted}> — {s.why}</Text>
+			{status === null ? (
+				<Text color={theme.muted}>—</Text>
+			) : (
+				<>
+					<Text color={theme.accent} bold wrap="truncate-end">
+						{status.name}
 					</Text>
-				))}
-			</Box>
-
-			{plan.manualSteps.length > 0 ? (
-				<Box marginTop={1} flexDirection="column">
-					<Text color={theme.warn}>
-						você precisa rodar à mão (pedem sudo — a TUI não executa)
-					</Text>
-					{plan.manualSteps.map((s) => (
-						<Text key={s.cmd + s.args.join()}>
-							{"  "}
-							<Text color={theme.label}>
-								{s.cmd} {s.args.join(" ")}
+					<Box marginTop={1} flexDirection="column">
+						<Stat
+							label="instalado"
+							value={status.installed ? "sim" : "não"}
+							width={width}
+							tone={status.installed ? "ok" : "muted"}
+						/>
+						<Stat
+							label="rodando"
+							value={status.running ? "sim" : "não"}
+							width={width}
+							tone={status.running ? "ok" : "muted"}
+						/>
+						<Stat
+							label="no boot"
+							value={status.enabled ? "sim" : "não"}
+							width={width}
+							tone={status.enabled ? "ok" : "muted"}
+						/>
+					</Box>
+					{status.detail ? (
+						<Box marginTop={1}>
+							<Text color={theme.muted} wrap="wrap">
+								{status.detail}
 							</Text>
-							<Text color={theme.muted}> — {s.why}</Text>
-						</Text>
-					))}
-				</Box>
-			) : null}
+						</Box>
+					) : null}
+				</>
+			)}
 
-			{plan.notes.length > 0 ? (
+			{unavailable ? (
 				<Box marginTop={1} flexDirection="column">
-					{plan.notes.map((n) => (
-						<Text key={n} color={theme.muted}>
-							· {n}
+					<Text color={theme.warn} wrap="wrap">
+						{unavailable.reason}
+					</Text>
+					{unavailable.fix ? (
+						<Text color={theme.muted} wrap="wrap">
+							{unavailable.fix}
 						</Text>
-					))}
+					) : null}
 				</Box>
 			) : null}
 		</Box>
 	);
-}
-
-function ResultView({ result }: { result: InstallResult }) {
-	return (
-		<Box flexDirection="column" marginTop={1}>
-			<Text color={result.ok ? theme.ok : theme.error}>
-				{result.ok
-					? "✔ instalado"
-					: "✖ a instalação parou num passo obrigatório"}
-			</Text>
-			{result.results.map((r) => (
-				<Text
-					key={r.step.cmd + r.step.args.join()}
-					color={r.ok ? theme.muted : theme.error}
-				>
-					{"  "}
-					{r.ok ? "✔" : "✖"} {r.step.cmd} {r.step.args.join(" ")}
-					{r.output ? ` — ${firstLine(r.output)}` : ""}
-				</Text>
-			))}
-		</Box>
-	);
-}
-
-function describeBackend(backend: Backend): string {
-	switch (backend) {
-		case "systemd":
-			return "unit de usuário em ~/.config/systemd/user (sem sudo)";
-		case "launchd":
-			return "LaunchAgent em ~/Library/LaunchAgents (sobe no login)";
-		case "pm2":
-			return "gerenciador de processos, igual em Linux e macOS";
-		case "docker":
-			return "container com cerca de RAM/CPU, herdando o compose base";
-	}
 }
 
 function firstLine(text: string): string {
-	return text.split("\n")[0]?.slice(0, 100) ?? "";
+	return text.split("\n")[0]?.slice(0, 80) ?? "";
 }

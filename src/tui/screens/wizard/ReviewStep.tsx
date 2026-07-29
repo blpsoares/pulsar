@@ -27,6 +27,8 @@ type Props = {
 	preserved?: Map<string, CollectionEntryRaw>;
 	/** caminho do yml aberto para edição; salvar por cima é o default */
 	existingPath?: string;
+	/** quantas linhas do preview cabem no painel (vem do layout) */
+	previewRows: number;
 	onSaved: (path: string, action: "run" | "stay") => void;
 	onBack: () => void;
 };
@@ -35,6 +37,7 @@ export function ReviewStep({
 	form,
 	preserved,
 	existingPath,
+	previewRows,
 	onSaved,
 	onBack,
 }: Props) {
@@ -126,16 +129,10 @@ export function ReviewStep({
 				) : null}
 			</Box>
 
-			<Box
-				flexDirection="column"
-				marginTop={1}
-				borderStyle="round"
-				borderColor={theme.muted}
-				paddingX={1}
-			>
+			<Box flexDirection="column" marginTop={1}>
 				{preview
 					.split("\n")
-					.slice(0, 24)
+					.slice(0, Math.max(4, previewRows))
 					.map((line, i) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: linha de preview não reordena
 						<Text key={i} color={theme.muted}>

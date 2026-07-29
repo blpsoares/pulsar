@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
-import { Spinner } from "../../components/Frame";
 import { Select } from "../../components/Select";
+import { Spinner } from "../../components/Spinner";
 import { TextInput } from "../../components/TextInput";
 import type { useInspector } from "../../hooks/useInspector";
 import { useSpinner } from "../../hooks/useSpinner";

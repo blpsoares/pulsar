@@ -10,6 +10,8 @@ import { toYaml, validateConfig } from "../src/core/config/writeConfig";
 import { formatBytes, formatCount } from "../src/core/inspect/collStats";
 import { filterEntries, isInternalName } from "../src/core/inspect/inspectDb";
 import { buildTransferPlan } from "../src/core/inspect/summary";
+import { CHROME_ROWS, layout } from "../src/tui/layout";
+import { gradient } from "../src/tui/theme";
 
 function syncForm() {
 	const f = emptyForm("sync");
@@ -297,5 +299,49 @@ describe("helpers de exibição", () => {
 		expect(formatBytes(1536 * 1024 * 1024)).toBe("1.5 GB");
 		expect(formatCount(999)).toBe("999");
 		expect(formatCount(215_000_000)).toBe("215M");
+	});
+});
+
+describe("layout do cockpit", () => {
+	test("as três colunas somam a largura da tela", () => {
+		const l = layout(120, 38);
+		expect(l.sidebar + l.center + l.aside).toBe(120);
+		expect(l.narrow).toBe(false);
+	});
+
+	test("terminal estreito sacrifica o painel de contexto, não a lista", () => {
+		const l = layout(80, 30);
+		expect(l.aside).toBe(0);
+		expect(l.narrow).toBe(true);
+		expect(l.sidebar + l.center).toBe(80);
+		// a lista continua utilizável
+		expect(l.center).toBeGreaterThan(40);
+	});
+
+	test("altura desconta cabeçalho e barra de teclas", () => {
+		const l = layout(120, 38);
+		expect(l.body).toBe(38 - CHROME_ROWS);
+		expect(l.panelRows).toBeLessThan(l.body);
+	});
+
+	test("janela minúscula não gera largura ou altura negativa", () => {
+		const l = layout(20, 4);
+		expect(l.center).toBeGreaterThan(0);
+		expect(l.body).toBeGreaterThan(0);
+		expect(l.panelRows).toBeGreaterThan(0);
+	});
+});
+
+describe("gradiente da marca", () => {
+	test("gera uma cor por caractere, do ciano ao índigo", () => {
+		const colors = gradient(6);
+		expect(colors).toHaveLength(6);
+		expect(colors[0]).toBe("#22d3ee");
+		expect(colors.at(-1)).toBe("#818cf8");
+		expect(colors.every((c) => /^#[0-9a-f]{6}$/.test(c))).toBe(true);
+	});
+
+	test("um caractere só não quebra a interpolação", () => {
+		expect(gradient(1)).toEqual(["#22d3ee"]);
 	});
 });

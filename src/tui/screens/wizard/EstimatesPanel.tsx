@@ -3,13 +3,16 @@ import { useState } from "react";
 import { glyph, theme } from "../../theme";
 
 /**
- * Painel "show estimatives": liga/desliga a coleta de números e escolhe QUAIS
- * métricas puxar.
+ * Opções de "show estimatives": liga/desliga a coleta de números e escolhe
+ * QUAIS métricas puxar.
+ *
+ * Mora na sidebar, sempre visível — não é um modal. Assim o usuário vê o que
+ * está ligado enquanto navega na lista, em vez de abrir uma janela para
+ * lembrar.
  *
  * É opt-in porque cada métrica marcada custa uma rodada de comandos por
- * collection (um `$collStats` e/ou um `listIndexes` para cada uma). Num banco
- * com 200 collections isso são centenas de idas ao cluster — aceitável quando
- * o usuário pediu, indefensável como comportamento automático ao abrir a tela.
+ * collection. Num banco com 200 collections são centenas de idas ao cluster:
+ * aceitável quando pedido, indefensável ao abrir a tela.
  */
 
 export type EstimateOptions = {
@@ -26,32 +29,24 @@ export const DEFAULT_ESTIMATE_OPTIONS: EstimateOptions = {
 	indexes: false,
 };
 
-const ROWS: { key: keyof EstimateOptions; label: string; hint: string }[] = [
-	{
-		key: "enabled",
-		label: "show estimatives",
-		hint: "liga a coleta de números",
-	},
-	{ key: "docs", label: "documentos", hint: "$collStats — aproximado" },
-	{ key: "size", label: "tamanho em disco", hint: "$collStats" },
-	{
-		key: "indexes",
-		label: "índices",
-		hint: "listIndexes por collection — mais lento",
-	},
+const ROWS: { key: keyof EstimateOptions; label: string }[] = [
+	{ key: "enabled", label: "estimativas" },
+	{ key: "docs", label: "documentos" },
+	{ key: "size", label: "tamanho" },
+	{ key: "indexes", label: "índices" },
 ];
 
-export function EstimatesPanel({
+export function EstimatesOptions({
 	options,
 	onChange,
 	onClose,
-	focus = true,
+	focused,
 	loading = false,
 }: {
 	options: EstimateOptions;
 	onChange: (next: EstimateOptions) => void;
 	onClose: () => void;
-	focus?: boolean;
+	focused: boolean;
 	loading?: boolean;
 }) {
 	const [cursor, setCursor] = useState(0);
@@ -74,53 +69,41 @@ export function EstimatesPanel({
 				const row = ROWS[cursor];
 				if (!row) return;
 				const next = { ...options, [row.key]: !options[row.key] };
-				// Marcar uma métrica com o painel desligado não faria nada visível;
+				// Marcar uma métrica com a coleta desligada não faria nada visível;
 				// ligar junto é o que o usuário quis dizer.
 				if (row.key !== "enabled" && next[row.key]) next.enabled = true;
 				onChange(next);
 			}
 		},
-		{ isActive: focus },
+		{ isActive: focused },
 	);
 
 	return (
-		<Box
-			flexDirection="column"
-			borderStyle="round"
-			borderColor={theme.muted}
-			paddingX={1}
-		>
-			<Text color={theme.accent} bold>
-				estimativas
-			</Text>
+		<Box flexDirection="column">
 			{ROWS.map((row, i) => {
-				const active = i === cursor;
+				const active = focused && i === cursor;
 				const on = options[row.key];
 				const dim = row.key !== "enabled" && !options.enabled;
 				return (
-					<Box key={row.key}>
-						<Text color={active ? theme.selection : undefined}>
-							{active ? `${glyph.cursor} ` : "  "}
-							<Text color={on ? theme.ok : theme.muted}>
-								{on ? glyph.boxChecked : glyph.boxUnchecked}
-							</Text>{" "}
-							<Text
-								color={dim ? theme.muted : undefined}
-								bold={row.key === "enabled"}
-							>
-								{row.label}
-							</Text>
-						</Text>
-						<Text color={theme.muted}>
-							{"  "}
-							{row.hint}
-						</Text>
-					</Box>
+					<Text
+						key={row.key}
+						color={active ? theme.selection : dim ? theme.border : undefined}
+					>
+						{active ? "▍" : " "}
+						<Text color={on ? theme.ok : theme.muted}>
+							{on ? glyph.checked : glyph.unchecked}
+						</Text>{" "}
+						<Text bold={row.key === "enabled"}>{row.label}</Text>
+					</Text>
 				);
 			})}
 			<Box marginTop={1}>
-				<Text color={theme.muted}>
-					{loading ? "carregando…" : "espaço marca · enter/esc fecha"}
+				<Text color={theme.muted} wrap="wrap">
+					{loading
+						? "carregando…"
+						: focused
+							? "espaço marca · esc volta"
+							: "e para editar"}
 				</Text>
 			</Box>
 		</Box>

@@ -298,6 +298,14 @@ Interface de terminal em **Ink** que cobre o ciclo inteiro sem editar yml à mã
 não mudaram, e o import do módulo é dinâmico — quem roda `pulsar sync` num
 container não carrega react/ink.
 
+**Layout de cockpit** (estilo k9s/lazygit): tela cheia em *alternate screen*
+(sai sem sujar o scrollback), com sidebar + painel central + painel de contexto
+visíveis ao mesmo tempo. `tab` alterna o painel com foco. As larguras vêm de
+`src/tui/layout.ts` (matemática pura, testada): abaixo de 96 colunas o painel da
+direita sai de cena antes de espremer a lista. **Ctrl+C e Ctrl+D encerram de
+qualquer tela** — o `render()` roda com `exitOnCtrlC: false` (para o filho
+receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
+
 - **Criar/editar config:** form guiado (modo → origem → destino → collections →
   avançado → revisar). Conecta na origem de verdade, lista os bancos, e mostra
   collections e views com **busca incremental** (`/`) e multi-seleção. Abrir um

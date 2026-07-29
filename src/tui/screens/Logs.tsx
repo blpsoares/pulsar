@@ -15,165 +15,210 @@ import { levelOf } from "../../core/run/logLines";
 import { detectBackends, preferredBackend } from "../../core/service/detect";
 import { agentLabel } from "../../core/service/launchd";
 import { type Backend, serviceName } from "../../core/service/types";
-import { Frame } from "../components/Frame";
-import { Select } from "../components/Select";
+import {
+	type Chip,
+	layout,
+	Panel,
+	Shell,
+	SIDEBAR_WIDTH,
+	Stat,
+} from "../components/Shell";
 import { useProcess } from "../hooks/useProcess";
-import { theme } from "../theme";
+import { useTerminalSize } from "../hooks/useTerminalSize";
+import { glyph, theme } from "../theme";
 
 /**
- * Duas leituras de log, que respondem a perguntas diferentes:
+ * Duas leituras de log, lado a lado com a lista de fontes:
  *
- * - ARQUIVO (`./logs/*.log`): o histórico que o winston grava sempre, mesmo
- *   quando ninguém está olhando e independente de verbose. É onde se investiga
- *   o que aconteceu ontem às 3h.
- * - AO VIVO: o stdout do serviço que está rodando AGORA em background, lido
- *   pelo seguidor nativo do supervisor (journalctl/pm2/docker/tail).
+ * - ARQUIVO (`./logs/*.log`): o histórico que o winston grava sempre, mesmo sem
+ *   ninguém olhando. É onde se investiga o que aconteceu ontem às 3h.
+ * - AO VIVO: o stdout do serviço rodando AGORA em background, pelo seguidor
+ *   nativo do supervisor (journalctl/pm2/docker/tail).
  *
- * Elas não se substituem: o arquivo não tem o que o supervisor imprimiu antes
- * do pulsar inicializar o logger, e o supervisor não guarda o histórico
+ * Uma não substitui a outra: o arquivo não tem o que o supervisor imprimiu
+ * antes do logger inicializar, e o supervisor não guarda o histórico
  * rotacionado.
  */
 
-const VIEWPORT = 20;
 const POLL_MS = 1000;
 
-type View =
-	| { name: "menu" }
-	| { name: "pick-file" }
-	| { name: "file"; path: string }
-	| { name: "pick-live" }
-	| { name: "live"; label: string };
+type Source =
+	| { kind: "file"; path: string; name: string }
+	| { kind: "live"; file: string };
 
 export function LogsScreen({
 	dir,
+	file,
 	onExit,
 }: {
 	dir: string;
+	file?: string;
 	onExit: () => void;
 }) {
-	const [view, setView] = useState<View>({ name: "menu" });
+	const { columns, rows } = useTerminalSize();
+	const l = layout(columns, rows);
 
-	// Sem isto o menu de logs não tinha saída: o Select não trata esc, e a única
-	// forma de voltar ao início seria matar a TUI.
-	useInput(
-		(_input, key) => {
-			if (key.escape) onExit();
-		},
-		{ isActive: view.name === "menu" },
-	);
-
-	if (view.name === "menu")
-		return (
-			<Frame
-				title="logs"
-				subtitle={dir}
-				hints={[
-					{ keys: "↑↓", label: "navegar" },
-					{ keys: "enter", label: "abrir" },
-					{ keys: "esc", label: "voltar" },
-				]}
-			>
-				<Select
-					items={[
-						{
-							value: "file" as const,
-							label: "logs gravados",
-							hint: "./logs/*.log — histórico completo, sobrevive a restart",
-						},
-						{
-							value: "live" as const,
-							label: "ao vivo",
-							hint: "stdout do serviço rodando agora em background",
-						},
-					]}
-					onSelect={(v) =>
-						setView(
-							v === "file" ? { name: "pick-file" } : { name: "pick-live" },
-						)
-					}
-				/>
-			</Frame>
-		);
-
-	if (view.name === "pick-file")
-		return (
-			<FilePicker
-				dir={dir}
-				onPick={(path) => setView({ name: "file", path })}
-				onBack={() => setView({ name: "menu" })}
-			/>
-		);
-
-	if (view.name === "file")
-		return (
-			<FileViewer
-				path={view.path}
-				onBack={() => setView({ name: "pick-file" })}
-			/>
-		);
-
-	if (view.name === "pick-live")
-		return (
-			<LivePicker
-				dir={dir}
-				onBack={() => setView({ name: "menu" })}
-				onPick={(label) => setView({ name: "live", label })}
-			/>
-		);
-
-	return (
-		<LiveViewer
-			dir={dir}
-			label={view.label}
-			onBack={() => setView({ name: "pick-live" })}
-		/>
-	);
-}
-
-function FilePicker({
-	dir,
-	onPick,
-	onBack,
-}: {
-	dir: string;
-	onPick: (path: string) => void;
-	onBack: () => void;
-}) {
 	const files = listLogFiles(dir);
-	useInput((_i, key) => {
-		if (key.escape) onBack();
+	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
+
+	const sources: Source[] = [
+		...files.map((f) => ({
+			kind: "file" as const,
+			path: f.path,
+			name: f.name,
+		})),
+		...configs.map((c) => ({ kind: "live" as const, file: c.file })),
+	];
+
+	const [index, setIndex] = useState(() => {
+		if (!file) return 0;
+		const i = sources.findIndex((s) => s.kind === "live" && s.file === file);
+		return i >= 0 ? i : 0;
+	});
+	const [pane, setPane] = useState<"sources" | "content">("content");
+
+	const source = sources[Math.min(index, sources.length - 1)];
+
+	useInput((input, key) => {
+		if (key.escape) {
+			onExit();
+			return;
+		}
+		if (key.tab) {
+			setPane((p) => (p === "sources" ? "content" : "sources"));
+			return;
+		}
+		if (pane !== "sources" || sources.length === 0) return;
+		if (key.upArrow) setIndex((i) => (i === 0 ? sources.length - 1 : i - 1));
+		if (key.downArrow) setIndex((i) => (i === sources.length - 1 ? 0 : i + 1));
 	});
 
 	return (
-		<Frame
-			title="logs gravados"
-			subtitle={`${dir}/logs`}
+		<Shell
+			chips={chipsFor(source, dir)}
+			columns={columns}
+			rows={rows}
 			hints={[
-				{ keys: "enter", label: "abrir" },
+				{ keys: "tab", label: "painel" },
+				{ keys: "↑↓", label: pane === "sources" ? "fonte" : "rolar" },
+				{ keys: "/", label: "buscar" },
+				{ keys: "f", label: "seguir" },
+				{ keys: "g", label: "fim" },
 				{ keys: "esc", label: "voltar" },
 			]}
 		>
-			<Select
-				items={files.map((f) => ({
-					value: f.path,
-					label: f.name,
-					hint: `${formatBytes(f.size)} · ${new Date(f.modifiedAt).toLocaleString()}`,
-				}))}
-				onSelect={onPick}
-				emptyMessage="nenhum arquivo em ./logs — rode algo primeiro"
-			/>
-		</Frame>
+			<Panel
+				title="fontes"
+				width={SIDEBAR_WIDTH}
+				height={l.body}
+				focused={pane === "sources"}
+			>
+				<SourceList
+					sources={sources}
+					index={index}
+					focused={pane === "sources"}
+				/>
+			</Panel>
+
+			{!source ? (
+				<Panel title="logs" width={l.center} height={l.body}>
+					<Text color={theme.muted}>
+						nenhum log em ./logs e nenhuma config nesta pasta
+					</Text>
+				</Panel>
+			) : source.kind === "file" ? (
+				<FileViewer
+					key={source.path}
+					path={source.path}
+					width={l.center}
+					aside={l.aside}
+					height={l.body}
+					visibleRows={l.panelRows - 1}
+					focused={pane === "content"}
+				/>
+			) : (
+				<LiveViewer
+					key={source.file}
+					dir={dir}
+					file={source.file}
+					width={l.center}
+					aside={l.aside}
+					height={l.body}
+					visibleRows={l.panelRows - 1}
+				/>
+			)}
+		</Shell>
+	);
+}
+
+function SourceList({
+	sources,
+	index,
+	focused,
+}: {
+	sources: Source[];
+	index: number;
+	focused: boolean;
+}) {
+	if (sources.length === 0)
+		return <Text color={theme.muted}>nada para ler</Text>;
+
+	let lastKind: string | null = null;
+
+	return (
+		<Box flexDirection="column">
+			{sources.map((s, i) => {
+				const active = i === index;
+				const header = s.kind !== lastKind ? s.kind : null;
+				lastKind = s.kind;
+				const label = s.kind === "file" ? s.name : basename(s.file);
+
+				return (
+					<Box key={`${s.kind}:${label}`} flexDirection="column">
+						{header ? (
+							<Text color={theme.border}>
+								{header === "file" ? "─ arquivo ─" : "─ ao vivo ─"}
+							</Text>
+						) : null}
+						<Text
+							color={
+								active ? (focused ? theme.selection : theme.label) : theme.muted
+							}
+							bold={active}
+							wrap="truncate-end"
+						>
+							{active ? "▍" : " "}
+							{label}
+						</Text>
+					</Box>
+				);
+			})}
+		</Box>
 	);
 }
 
 /**
  * Visualizador com "seguir" por polling de offset. `fs.watch` seria mais
- * elegante, mas é notoriamente inconsistente entre plataformas (e não dispara
- * em arquivo montado por volume de container, justamente o caso do pulsar em
- * docker). Ler o delta a cada segundo é previsível e custa quase nada, porque
- * `readSince` lê só o que cresceu.
+ * elegante, mas é inconsistente entre plataformas e não dispara em arquivo
+ * montado por volume de container — justamente o caso do pulsar em docker. Ler
+ * o delta a cada segundo é previsível e custa quase nada, porque `readSince` lê
+ * só o que cresceu.
  */
-function FileViewer({ path, onBack }: { path: string; onBack: () => void }) {
+function FileViewer({
+	path,
+	width,
+	aside,
+	height,
+	visibleRows,
+	focused,
+}: {
+	path: string;
+	width: number;
+	aside: number;
+	height: number;
+	visibleRows: number;
+	focused: boolean;
+}) {
 	const initial = useRef(tailFile(path, 500));
 	const [lines, setLines] = useState<string[]>(initial.current.lines);
 	const offsetRef = useRef(initial.current.size);
@@ -193,75 +238,65 @@ function FileViewer({ path, onBack }: { path: string; onBack: () => void }) {
 		return () => clearInterval(id);
 	}, [path, follow]);
 
-	useInput((input, key) => {
-		if (searching) {
-			if (key.return || key.escape) {
-				setSearching(false);
+	useInput(
+		(input, key) => {
+			if (searching) {
+				if (key.return || key.escape) {
+					setSearching(false);
+					return;
+				}
+				if (key.backspace || key.delete) {
+					setQuery((q) => q.slice(0, -1));
+					return;
+				}
+				if (input && !key.ctrl && !key.meta && !key.tab)
+					setQuery((q) => q + input);
 				return;
 			}
-			if (key.backspace || key.delete) {
-				setQuery((q) => q.slice(0, -1));
+			if (input === "/") {
+				setSearching(true);
 				return;
 			}
-			if (input && !key.ctrl && !key.meta) setQuery((q) => q + input);
-			return;
-		}
-
-		if (key.escape) {
-			onBack();
-			return;
-		}
-		if (input === "/") {
-			setSearching(true);
-			return;
-		}
-		if (input === "f") {
-			setFollow((f) => !f);
-			return;
-		}
-		if (key.upArrow) {
-			// Rolar para trás desliga o "seguir": senão a tela pularia de volta
-			// para o fim a cada linha nova, e ler o passado seria impossível.
-			setFollow(false);
-			setScroll((s) => s + 1);
-			return;
-		}
-		if (key.downArrow) setScroll((s) => Math.max(0, s - 1));
-		if (input === "g") {
-			setScroll(0);
-			setFollow(true);
-		}
-	});
+			if (input === "f") {
+				setFollow((f) => !f);
+				return;
+			}
+			if (key.upArrow) {
+				// Rolar para trás desliga o "seguir": senão a tela pularia de volta
+				// ao fim a cada linha nova, e ler o passado seria impossível.
+				setFollow(false);
+				setScroll((s) => s + 1);
+				return;
+			}
+			if (key.downArrow) setScroll((s) => Math.max(0, s - 1));
+			if (input === "g") {
+				setScroll(0);
+				setFollow(true);
+			}
+		},
+		{ isActive: focused },
+	);
 
 	const filtered = filterLines(lines, query);
 	const end = Math.max(0, filtered.length - scroll);
-	const visible = filtered.slice(Math.max(0, end - VIEWPORT), end);
+	const visible = filtered.slice(Math.max(0, end - visibleRows), end);
+	const counts = countLevels(filtered);
 
 	return (
-		<Frame
-			title={`log · ${basename(path)}`}
-			subtitle={`${filtered.length} linhas${query ? ` com "${query}"` : ""}`}
-			hints={[
-				{ keys: "↑↓", label: "rolar" },
-				{ keys: "/", label: "buscar" },
-				{ keys: "f", label: `seguir: ${follow ? "on" : "off"}` },
-				{ keys: "g", label: "ir pro fim" },
-				{ keys: "esc", label: "voltar" },
-			]}
-			status={
-				searching
-					? { text: `busca: ${query}▌` }
-					: follow
-						? { text: "seguindo o arquivo", tone: "ok" }
-						: { text: `pausado · ${scroll} linhas acima do fim`, tone: "warn" }
-			}
-		>
-			<Box
-				flexDirection="column"
-				borderStyle="round"
-				borderColor={theme.muted}
-				paddingX={1}
-				minHeight={VIEWPORT + 2}
+		<>
+			<Panel
+				title={`${basename(path)}${query ? ` · "${query}"` : ""}`}
+				width={width}
+				height={height}
+				focused={focused}
+				footer={
+					searching ? (
+						<Text color={theme.accent}>
+							busca: {query}
+							<Text inverse> </Text>
+						</Text>
+					) : undefined
+				}
 			>
 				{visible.length === 0 ? (
 					<Text color={theme.muted}>
@@ -275,61 +310,72 @@ function FileViewer({ path, onBack }: { path: string; onBack: () => void }) {
 						</Text>
 					))
 				)}
-			</Box>
-		</Frame>
-	);
-}
+			</Panel>
 
-/** Descobre quais serviços dá para seguir: cruza as configs da pasta com o backend disponível. */
-function LivePicker({
-	dir,
-	onPick,
-	onBack,
-}: {
-	dir: string;
-	onPick: (file: string) => void;
-	onBack: () => void;
-}) {
-	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
-	useInput((_i, key) => {
-		if (key.escape) onBack();
-	});
-
-	return (
-		<Frame
-			title="log ao vivo"
-			subtitle={dir}
-			hints={[
-				{ keys: "enter", label: "seguir" },
-				{ keys: "esc", label: "voltar" },
-			]}
-		>
-			<Text color={theme.muted}>
-				De qual serviço? (precisa ter sido instalado em background)
-			</Text>
-			<Box marginTop={1}>
-				<Select
-					items={configs.map((c) => ({
-						value: c.file,
-						label: c.file,
-						hint: `${c.kind}${c.destDb ? ` → ${c.destDb}` : ""}`,
-					}))}
-					onSelect={onPick}
-					emptyMessage="nenhuma config nesta pasta"
-				/>
-			</Box>
-		</Frame>
+			{aside > 0 ? (
+				<Panel title="arquivo" width={aside} height={height}>
+					<Stat label="linhas" value={String(filtered.length)} width={aside} />
+					<Stat
+						label="tamanho"
+						value={formatBytes(offsetRef.current)}
+						width={aside}
+						tone="muted"
+					/>
+					<Stat
+						label="seguindo"
+						value={follow ? "sim" : "não"}
+						width={aside}
+						tone={follow ? "ok" : "warn"}
+					/>
+					{scroll > 0 ? (
+						<Stat
+							label="acima do fim"
+							value={String(scroll)}
+							width={aside}
+							tone="warn"
+						/>
+					) : null}
+					<Box marginTop={1} flexDirection="column">
+						<Text color={theme.border}>─ níveis ─</Text>
+						<Stat
+							label="erro"
+							value={String(counts.error)}
+							width={aside}
+							tone={counts.error > 0 ? "error" : "muted"}
+						/>
+						<Stat
+							label="aviso"
+							value={String(counts.warn)}
+							width={aside}
+							tone={counts.warn > 0 ? "warn" : "muted"}
+						/>
+						<Stat
+							label="info"
+							value={String(counts.info)}
+							width={aside}
+							tone="muted"
+						/>
+					</Box>
+				</Panel>
+			) : null}
+		</>
 	);
 }
 
 function LiveViewer({
 	dir,
-	label,
-	onBack,
+	file,
+	width,
+	aside,
+	height,
+	visibleRows,
 }: {
 	dir: string;
-	label: string;
-	onBack: () => void;
+	file: string;
+	width: number;
+	aside: number;
+	height: number;
+	visibleRows: number;
 }) {
 	const proc = useProcess(1000);
 	const [backend, setBackend] = useState<Backend | null>(null);
@@ -349,10 +395,10 @@ function LiveViewer({
 			}
 			setBackend(chosen);
 
-			const path = resolve(dir, label);
+			const path = resolve(dir, file);
 			const loaded = loadConfigFile(path);
 			const spec = {
-				name: basename(label).replace(/\.ya?ml$/i, ""),
+				name: basename(file).replace(/\.ya?ml$/i, ""),
 				mode: loaded?.form.mode ?? ("sync" as const),
 				configPath: path,
 				workingDir: dir,
@@ -367,41 +413,21 @@ function LiveViewer({
 				{ cwd: dir },
 			);
 		})();
-	}, [dir, label, proc]);
+	}, [dir, file, proc]);
 
-	useInput((_i, key) => {
-		if (key.escape) {
-			proc.stop();
-			onBack();
-		}
-	});
-
-	const visible = proc.lines.slice(-VIEWPORT);
+	const visible = proc.lines.slice(-visibleRows);
 
 	return (
-		<Frame
-			title={`ao vivo · ${basename(label)}`}
-			subtitle={backend ? `via ${backend}` : "detectando supervisor…"}
-			hints={[{ keys: "esc", label: "parar de seguir e voltar" }]}
-			status={
-				error
-					? { text: error, tone: "error" }
-					: proc.state === "failed"
-						? {
-								text: "o seguidor encerrou — o serviço está instalado e rodando?",
-								tone: "warn",
-							}
-						: undefined
-			}
-		>
-			<Box
-				flexDirection="column"
-				borderStyle="round"
-				borderColor={theme.muted}
-				paddingX={1}
-				minHeight={VIEWPORT + 2}
+		<>
+			<Panel
+				title={`ao vivo · ${basename(file)}`}
+				width={width}
+				height={height}
+				focused={proc.running}
 			>
-				{visible.length === 0 ? (
+				{error ? (
+					<Text color={theme.error}>{error}</Text>
+				) : visible.length === 0 ? (
 					<Text color={theme.muted}>aguardando linhas…</Text>
 				) : (
 					visible.map((line, i) => (
@@ -411,9 +437,61 @@ function LiveViewer({
 						</Text>
 					))
 				)}
-			</Box>
-		</Frame>
+			</Panel>
+
+			{aside > 0 ? (
+				<Panel title="seguidor" width={aside} height={height}>
+					<Stat label="backend" value={backend ?? "…"} width={aside} />
+					<Stat
+						label="estado"
+						value={proc.running ? "seguindo" : "parado"}
+						width={aside}
+						tone={proc.running ? "ok" : "warn"}
+					/>
+					<Stat
+						label="linhas"
+						value={String(proc.lines.length)}
+						width={aside}
+					/>
+					{proc.state === "failed" ? (
+						<Box marginTop={1}>
+							<Text color={theme.warn} wrap="wrap">
+								o seguidor encerrou — o serviço está instalado e rodando?
+							</Text>
+						</Box>
+					) : null}
+				</Panel>
+			) : null}
+		</>
 	);
+}
+
+function chipsFor(source: Source | undefined, dir: string): Chip[] {
+	if (!source) return [{ label: "pasta", value: basename(dir), tone: "muted" }];
+	return source.kind === "file"
+		? [
+				{ label: "modo", value: "arquivo", tone: "muted" },
+				{ label: "fonte", value: source.name },
+			]
+		: [
+				{ label: "modo", value: "ao vivo", tone: "ok" },
+				{ label: "fonte", value: basename(source.file) },
+			];
+}
+
+function countLevels(lines: string[]): {
+	error: number;
+	warn: number;
+	info: number;
+} {
+	const counts = { error: 0, warn: 0, info: 0 };
+	for (const line of lines) {
+		const level = levelOf(line);
+		if (level === "error") counts.error++;
+		else if (level === "warn") counts.warn++;
+		else counts.info++;
+	}
+	return counts;
 }
 
 function colorFor(line: string): string | undefined {
@@ -423,3 +501,6 @@ function colorFor(line: string): string | undefined {
 	if (level === "debug") return theme.muted;
 	return undefined;
 }
+
+/** Reexportado só para manter o glifo do cursor consistente entre telas. */
+export const CURSOR = glyph.cursor;

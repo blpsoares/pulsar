@@ -4,20 +4,27 @@ import { useState } from "react";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import { levelOf } from "../../core/run/logLines";
 import { argsFor, pulsarCommand } from "../../core/run/pulsarCommand";
-import { Frame } from "../components/Frame";
+import {
+	type Chip,
+	layout,
+	Panel,
+	Shell,
+	SIDEBAR_WIDTH,
+	Stat,
+} from "../components/Shell";
 import { useProcess } from "../hooks/useProcess";
 import { useSpinner } from "../hooks/useSpinner";
-import { theme } from "../theme";
+import { useTerminalSize } from "../hooks/useTerminalSize";
+import { glyph, theme } from "../theme";
 
 /**
- * Roda uma config em primeiro plano, com a saída ao vivo dentro da TUI.
+ * Execução em primeiro plano: opções à esquerda, saída ao vivo no centro,
+ * números à direita.
  *
- * A janela de log mostra as últimas linhas e mais nada: um `sync` fica no ar
- * por dias, e a TUI não é o lugar de guardar esse histórico — quem quer o
- * histórico completo abre a tela de logs, que lê os arquivos do winston.
+ * A janela de saída mostra só as últimas linhas — um `sync` fica no ar por
+ * dias, e guardar esse histórico não é papel da TUI. Quem quer o histórico
+ * completo usa a tela de logs, que lê os arquivos do winston.
  */
-
-const VIEWPORT = 16;
 
 export function RunnerScreen({
 	file,
@@ -28,6 +35,9 @@ export function RunnerScreen({
 	onExit: () => void;
 	onInstallService: () => void;
 }) {
+	const { columns, rows } = useTerminalSize();
+	const l = layout(columns, rows);
+
 	const loaded = loadConfigFile(file);
 	const mode = loaded?.form.mode ?? "sync";
 	const [verbose, setVerbose] = useState(false);
@@ -35,27 +45,22 @@ export function RunnerScreen({
 	const proc = useProcess();
 	const frame = useSpinner(proc.running);
 
-	function run() {
-		const extra: string[] = [];
-		if (verbose && mode === "sync") extra.push("--verbose");
-		if (full && mode === "sync") extra.push("--full");
-		proc.start(pulsarCommand(argsFor(mode, file, extra)));
-	}
-
 	useInput((input, key) => {
 		if (proc.running) {
-			// Enquanto roda, só existe uma decisão: parar. Sair da tela com o
-			// processo vivo esconderia um sync ativo do usuário.
+			// Com processo vivo a única decisão é parar: sair da tela esconderia
+			// um sync ativo do usuário.
 			if (input === "s" || key.escape) proc.stop();
 			return;
 		}
-
 		if (key.escape) {
 			onExit();
 			return;
 		}
 		if (key.return) {
-			run();
+			const extra: string[] = [];
+			if (verbose && mode === "sync") extra.push("--verbose");
+			if (full && mode === "sync") extra.push("--full");
+			proc.start(pulsarCommand(argsFor(mode, file, extra)));
 			return;
 		}
 		if (input === "v" && mode === "sync") setVerbose((v) => !v);
@@ -65,29 +70,44 @@ export function RunnerScreen({
 
 	if (!loaded)
 		return (
-			<Frame
-				title="rodar"
+			<Shell
+				chips={[{ label: "erro", value: basename(file), tone: "error" }]}
+				columns={columns}
+				rows={rows}
 				hints={[{ keys: "esc", label: "voltar" }]}
-				status={{ text: `não consegui ler ${file}`, tone: "error" }}
 			>
-				<Text color={theme.muted}>
-					O arquivo existe e é uma config do pulsar (command.sync/migrate/ttl)?
-				</Text>
-			</Frame>
+				<Panel title="rodar" width={columns} height={l.body}>
+					<Text color={theme.error}>não consegui ler {file}</Text>
+					<Text color={theme.muted}>
+						o arquivo é uma config do pulsar (command.sync/migrate/ttl)?
+					</Text>
+				</Panel>
+			</Shell>
 		);
 
-	const visible = proc.lines.slice(-VIEWPORT);
+	const chips: Chip[] = [
+		{ label: "config", value: basename(file), tone: "muted" },
+		{ label: "modo", value: mode },
+		{
+			label: "estado",
+			value: stateLabel(proc.state),
+			tone: stateTone(proc.state),
+		},
+	];
+
+	const visible = proc.lines.slice(-(l.panelRows - 1));
 
 	return (
-		<Frame
-			title={`rodar · ${mode}`}
-			subtitle={basename(file)}
+		<Shell
+			chips={chips}
+			columns={columns}
+			rows={rows}
 			hints={
 				proc.running
-					? [{ keys: "s", label: "parar (SIGTERM, salva o progresso)" }]
+					? [{ keys: "s", label: "parar (SIGTERM — salva o progresso)" }]
 					: [
-							{ keys: "enter", label: "rodar aqui" },
-							{ keys: "b", label: "rodar em background" },
+							{ keys: "enter", label: "rodar" },
+							{ keys: "b", label: "background" },
 							...(mode === "sync"
 								? [
 										{ keys: "v", label: "verbose" },
@@ -97,52 +117,129 @@ export function RunnerScreen({
 							{ keys: "esc", label: "voltar" },
 						]
 			}
-			status={statusLine(proc, frame)}
 		>
-			<Box flexDirection="column">
-				<Box>
+			<Panel title="opções" width={SIDEBAR_WIDTH} height={l.body}>
+				{mode === "sync" ? (
+					<>
+						<Toggle on={verbose} label="verbose" keyHint="v" />
+						<Toggle on={full} label="--full" keyHint="f" tone="warn" />
+					</>
+				) : (
+					<Text color={theme.muted}>sem opções para {mode}</Text>
+				)}
+				<Box marginTop={1} flexDirection="column">
+					<Text color={theme.border}>─ origem ─</Text>
+					<Text wrap="truncate-end">{loaded.form.source.db}</Text>
+					{mode !== "ttl" ? (
+						<>
+							<Text color={theme.border}>─ destino ─</Text>
+							<Text wrap="truncate-end">{loaded.form.destination.db}</Text>
+						</>
+					) : null}
+				</Box>
+			</Panel>
+
+			<Panel
+				title="saída"
+				width={l.center}
+				height={l.body}
+				focused={proc.running}
+			>
+				{visible.length === 0 ? (
 					<Text color={theme.muted}>
-						{loaded.form.source.db}
-						{mode !== "ttl" ? ` → ${loaded.form.destination.db}` : ""} ·{" "}
-						{loaded.form.collections.length} collections
+						{proc.state === "idle" ? "enter para rodar" : "sem saída ainda…"}
+					</Text>
+				) : (
+					visible.map((line, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: log é append-only
+						<Text key={i} color={colorFor(line)} wrap="truncate-end">
+							{line || " "}
+						</Text>
+					))
+				)}
+			</Panel>
+
+			{l.aside > 0 ? (
+				<Panel title="execução" width={l.aside} height={l.body}>
+					<RunStats
+						proc={proc}
+						frame={frame}
+						width={l.aside}
+						collections={loaded.form.collections.length}
+					/>
+				</Panel>
+			) : null}
+		</Shell>
+	);
+}
+
+function Toggle({
+	on,
+	label,
+	keyHint,
+	tone,
+}: {
+	on: boolean;
+	label: string;
+	keyHint: string;
+	tone?: "warn";
+}) {
+	return (
+		<Text color={on ? (tone === "warn" ? theme.warn : theme.ok) : theme.muted}>
+			{on ? glyph.checked : glyph.unchecked} {label}{" "}
+			<Text color={theme.border}>({keyHint})</Text>
+		</Text>
+	);
+}
+
+function RunStats({
+	proc,
+	frame,
+	width,
+	collections,
+}: {
+	proc: ReturnType<typeof useProcess>;
+	frame: number;
+	width: number;
+	collections: number;
+}) {
+	const secs = proc.startedAt
+		? Math.floor((Date.now() - proc.startedAt) / 1000)
+		: 0;
+
+	return (
+		<Box flexDirection="column">
+			<Text color={stateTextColor(proc.state)} bold>
+				{proc.running ? `${glyph.spinner[frame % glyph.spinner.length]} ` : ""}
+				{stateLabel(proc.state)}
+			</Text>
+			<Box marginTop={1} flexDirection="column">
+				<Stat
+					label="tempo"
+					value={proc.startedAt ? formatDuration(secs) : "—"}
+					width={width}
+				/>
+				<Stat label="linhas" value={String(proc.lines.length)} width={width} />
+				<Stat label="colls" value={String(collections)} width={width} />
+				{proc.exitCode !== null ? (
+					<Stat
+						label="código"
+						value={String(proc.exitCode)}
+						width={width}
+						tone={proc.exitCode === 0 ? "ok" : "error"}
+					/>
+				) : null}
+			</Box>
+
+			{proc.running ? (
+				<Box marginTop={1}>
+					<Text color={theme.muted} wrap="wrap">
+						parar com <Text color={theme.accent}>s</Text> envia SIGTERM: o
+						pulsar grava o resume token antes de sair.
 					</Text>
 				</Box>
-
-				{mode === "sync" && !proc.running ? (
-					<Box marginTop={1}>
-						<Text color={verbose ? theme.ok : theme.muted}>
-							{verbose ? "[x]" : "[ ]"} verbose
-						</Text>
-						<Text color={full ? theme.warn : theme.muted}>
-							{"   "}
-							{full ? "[x]" : "[ ]"} --full (re-dumpa tudo, ignora os carimbos)
-						</Text>
-					</Box>
-				) : null}
-
-				<Box
-					flexDirection="column"
-					marginTop={1}
-					borderStyle="round"
-					borderColor={theme.muted}
-					paddingX={1}
-					minHeight={VIEWPORT + 2}
-				>
-					{visible.length === 0 ? (
-						<Text color={theme.muted}>
-							{proc.state === "idle" ? "enter para rodar" : "sem saída ainda…"}
-						</Text>
-					) : (
-						visible.map((line, i) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: log é append-only, o índice é estável
-							<Text key={i} color={colorFor(line)} wrap="truncate-end">
-								{line || " "}
-							</Text>
-						))
-					)}
-				</Box>
-			</Box>
-		</Frame>
+			) : null}
+		</Box>
 	);
 }
 
@@ -154,30 +251,26 @@ function colorFor(line: string): string | undefined {
 	return undefined;
 }
 
-function statusLine(
-	proc: ReturnType<typeof useProcess>,
-	frame: number,
-): { text: string; tone?: "ok" | "warn" | "error" } | undefined {
-	if (proc.state === "running") {
-		const secs = proc.startedAt
-			? Math.floor((Date.now() - proc.startedAt) / 1000)
-			: 0;
-		const spin = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-		return {
-			text: `${spin[frame % spin.length]} rodando há ${formatDuration(secs)}`,
-		};
-	}
-	if (proc.state === "exited")
-		return {
-			text: `processo encerrado (código ${proc.exitCode ?? 0})`,
-			tone: "ok",
-		};
-	if (proc.state === "failed")
-		return {
-			text: `processo falhou (código ${proc.exitCode ?? "?"}) — veja as linhas acima`,
-			tone: "error",
-		};
-	return undefined;
+function stateLabel(state: ReturnType<typeof useProcess>["state"]): string {
+	if (state === "running") return "rodando";
+	if (state === "exited") return "encerrado";
+	if (state === "failed") return "falhou";
+	return "parado";
+}
+
+function stateTone(
+	state: ReturnType<typeof useProcess>["state"],
+): Chip["tone"] {
+	if (state === "running") return "ok";
+	if (state === "failed") return "error";
+	if (state === "exited") return "muted";
+	return "muted";
+}
+
+function stateTextColor(state: ReturnType<typeof useProcess>["state"]): string {
+	if (state === "running") return theme.ok;
+	if (state === "failed") return theme.error;
+	return theme.muted;
 }
 
 function formatDuration(seconds: number): string {
