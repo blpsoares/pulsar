@@ -330,8 +330,11 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   arrisca engolir teclas. Rastrear cliques **rouba a seleção de texto nativa**
   do terminal; por isso `ctrl+c` COPIA o item em foco (via OSC 52, que funciona
   através de SSH, com pbcopy/wl-copy/xclip como reforço) e `m` na tela inicial
-  desliga o mouse quando você quiser selecionar com o mouse mesmo. **Sair é `q`
-  ou ctrl+d.**
+  desliga o mouse quando você quiser selecionar com o mouse mesmo. **Sair é `q` (na
+  tela inicial) ou `ctrl+d` (de qualquer lugar).** O `ctrl+d` é acrescentado à
+  barra de teclas pelo próprio `Shell`, não por cada tela: uma tela que
+  esquecesse de anunciá-lo deixaria o usuário preso sem saber como sair — foi
+  o que aconteceu no passo "modo", que ainda por cima não tratava `esc`.
 - **Navegação:** `tab` alterna o painel em foco. No wizard, o trilho de
   **passos** é focável e clicável — é o que torna um yml existente realmente
   editável: dá para pular direto para "origem" ou "avançado" em vez de apertar

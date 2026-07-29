@@ -152,6 +152,18 @@ export function Wizard({
 			setAsideFocus(false);
 			return;
 		}
+		/**
+		 * `esc` no passo MODO. Os outros passos tratam o esc por conta própria
+		 * (e alguns o usam para sair da busca ou de um sub-painel, então o
+		 * wizard NÃO pode tratá-lo por cima — seria voltar de tela junto). O
+		 * passo de modo era o único sem tratador: a tela ficava sem saída, com
+		 * a barra de teclas ainda prometendo "esc sair".
+		 */
+		if (key.escape && step === "mode") {
+			onExit();
+			return;
+		}
+
 		if (!railFocus) return;
 
 		if (key.upArrow) setRailIndex((i) => (i === 0 ? order.length - 1 : i - 1));
@@ -631,7 +643,7 @@ function hintsFor(step: Step, asideFocus: boolean, railFocus: boolean): Hint[] {
 			return [
 				{ keys: "↑↓", label: "navegar" },
 				{ keys: "enter", label: "escolher" },
-				{ keys: "esc", label: "sair" },
+				{ keys: "esc", label: "voltar ao início" },
 			];
 		case "source":
 		case "destination":

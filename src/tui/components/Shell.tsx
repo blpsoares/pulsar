@@ -291,7 +291,12 @@ function KeyBar({
 				{notice?.text ?? " "}
 			</Text>
 			<Text wrap="truncate-end">
-				{hints.map((h, i) => (
+				{/*
+				 * A saída é acrescentada pelo Shell, não por cada tela: uma tela que
+				 * esquecesse de anunciá-la (ou que a anunciasse errado) deixaria o
+				 * usuário preso sem saber como sair. Aqui isso é impossível.
+				 */}
+				{[...hints, { keys: "ctrl+d", label: "sair da TUI" }].map((h, i) => (
 					<Text key={h.keys}>
 						{i > 0 ? <Text color={theme.border}>{" · "}</Text> : null}
 						<Text color={theme.accent} bold>
