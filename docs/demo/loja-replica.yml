@@ -1,6 +1,3 @@
-# Config de DEMONSTRAÇÃO — usada nas gravações da TUI (docs/tape/*.tape).
-# Aponta para os containers de teste do repositório (docker-compose-test.yml),
-# nunca para um cluster real: nenhuma credencial mora aqui.
 command:
   sync:
     source:
@@ -9,8 +6,8 @@ command:
     destination:
       uri: mongodb://127.0.0.1:27021
       db: replica
-    copyIndexes: true
     collections:
       - users
       - orders
       - pagamentos
+    copyIndexes: true

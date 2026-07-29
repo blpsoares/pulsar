@@ -322,6 +322,24 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   corta a varredura, a tela **avisa** em vez de deixar concluir que a config não
   existe. `detectConfigs` segue não-recursivo por padrão — o `compose up` depende
   disso.
+- **Mouse e cópia:** a TUI é clicável — item de lista, cabeçalho de seção,
+  passo do wizard e painel (clicar dá foco); roda do mouse rola as listas. Os
+  eventos chegam pelo `useInput` do ink, **não** por um listener em
+  `process.stdin`: o ink 7 lê o stdin em modo `readable` (pull), e registrar um
+  `on("data")` disputa os bytes com ele — o listener não recebe nada e ainda
+  arrisca engolir teclas. Rastrear cliques **rouba a seleção de texto nativa**
+  do terminal; por isso `ctrl+c` COPIA o item em foco (via OSC 52, que funciona
+  através de SSH, com pbcopy/wl-copy/xclip como reforço) e `m` na tela inicial
+  desliga o mouse quando você quiser selecionar com o mouse mesmo. **Sair é `q`
+  ou ctrl+d.**
+- **Navegação:** `tab` alterna o painel em foco. No wizard, o trilho de
+  **passos** é focável e clicável — é o que torna um yml existente realmente
+  editável: dá para pular direto para "origem" ou "avançado" em vez de apertar
+  `esc` até voltar.
+- **Lista agrupada:** as configs achadas na varredura recursiva aparecem
+  agrupadas por pasta, com seções que abrem e fecham (`←/→`, enter ou clique).
+  A navegação percorre LINHAS ACHATADAS (cabeçalhos + itens visíveis), então
+  seta para baixo atravessa seções sem estado de "em que nível estou".
 - **Criar/editar config:** form guiado (modo → origem → destino → collections →
   avançado → revisar). Conecta na origem de verdade, lista os bancos **com
   tamanho**, e mostra collections e views com **busca incremental** (`/`) e

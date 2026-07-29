@@ -73,7 +73,7 @@ export function ServicesScreen({
 	const [pane, setPane] = useState<"backend" | "config">(
 		initialFile ? "backend" : "config",
 	);
-	const l = layout(columns, rows, Boolean(busy));
+	const l = layout(columns, rows);
 
 	useEffect(() => {
 		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then((a) => {

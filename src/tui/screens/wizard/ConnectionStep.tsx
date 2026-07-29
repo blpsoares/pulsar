@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useRef, useState } from "react";
 import { formatBytes } from "../../../core/inspect/collStats";
+import { maskUri } from "../../../core/inspect/maskUri";
 import { Select } from "../../components/Select";
 import { Spinner } from "../../components/Spinner";
 import { TextInput } from "../../components/TextInput";
@@ -29,9 +30,14 @@ type Props = {
 	/** chamado quando o banco foi confirmado e o passo pode avançar */
 	onDone: () => void;
 	onBack: () => void;
+	/** false quando o foco está no trilho de passos */
+	focused: boolean;
 };
 
 type Field = "uri" | "db";
+
+/** Valor sentinela do item "digitar outro nome" na lista de bancos. */
+const TYPE_NEW = "\u0000novo";
 
 export function ConnectionStep({
 	kind,
@@ -41,8 +47,15 @@ export function ConnectionStep({
 	inspector,
 	onDone,
 	onBack,
+	focused,
 }: Props) {
 	const [field, setField] = useState<Field>("uri");
+	/**
+	 * Banco por DIGITAÇÃO em vez de escolha na lista. Serve para dois casos
+	 * reais: o destino que ainda não existe (o Mongo cria na primeira escrita) e
+	 * a origem cujo usuário não tem permissão de listar bancos, mas sabe o nome.
+	 */
+	const [typing, setTyping] = useState(false);
 	// Evita recarregar o mesmo banco a cada render enquanto o cursor não anda.
 	const previewed = useRef<string | null>(null);
 	const { state, connect, loadDb } = inspector;
@@ -53,13 +66,20 @@ export function ConnectionStep({
 
 	useInput(
 		(_input, key) => {
-			if (key.escape) onBack();
+			if (key.escape) {
+				if (typing) {
+					setTyping(false);
+					return;
+				}
+				onBack();
+				return;
+			}
 			// Tab volta para a URI para corrigir sem refazer o passo.
 			if (key.tab && state.status === "connected") {
 				setField((f) => (f === "uri" ? "db" : "uri"));
 			}
 		},
-		{ isActive: !connecting },
+		{ isActive: !connecting && focused },
 	);
 
 	async function handleUriSubmit(value: string) {
@@ -99,13 +119,20 @@ export function ConnectionStep({
 					{field === "uri" ? "❯ " : "  "}connection string
 				</Text>
 				<Box marginLeft={2}>
-					<TextInput
-						value={uri}
-						onChange={(value) => onChange({ uri: value, db })}
-						onSubmit={handleUriSubmit}
-						focus={field === "uri" && !connecting}
-						placeholder="mongodb+srv://user:senha@cluster.mongodb.net"
-					/>
+					{state.status === "connected" && field !== "uri" ? (
+						// Depois de conectar, a URI vira exibição mascarada: a senha do
+						// Atlas não precisa ficar na tela (nem em print, nem em gravação).
+						// Basta voltar o foco para o campo (tab) para editá-la de novo.
+						<Text color={theme.muted}>{maskUri(uri)}</Text>
+					) : (
+						<TextInput
+							value={uri}
+							onChange={(value) => onChange({ uri: value, db })}
+							onSubmit={handleUriSubmit}
+							focus={field === "uri" && !connecting && focused}
+							placeholder="mongodb+srv://user:senha@cluster.mongodb.net"
+						/>
+					)}
 				</Box>
 			</Box>
 
@@ -138,16 +165,40 @@ export function ConnectionStep({
 						{canListDbs ? (
 							<Box marginLeft={2}>
 								<Select
-									items={state.databases.map((info) => ({
-										value: info.name,
-										label: info.name,
-										// O tamanho vem de graça no listDatabases e é o que
-										// distingue produção de teste quando os nomes são parecidos.
-										hint: `${formatBytes(info.sizeOnDisk)}${info.name === db ? " · atual" : ""}`,
-									}))}
-									onSelect={(value) => handleDbConfirm(value)}
+									items={[
+										...state.databases.map((info) => ({
+											value: info.name,
+											label: info.name,
+											// O tamanho vem de graça no listDatabases e é o que
+											// distingue produção de teste quando os nomes são parecidos.
+											hint: `${formatBytes(info.sizeOnDisk)}${info.name === db ? " · atual" : ""}`,
+										})),
+										{
+											value: TYPE_NEW,
+											label:
+												kind === "destination"
+													? "＋ criar banco novo"
+													: "＋ digitar outro nome",
+											hint:
+												kind === "destination"
+													? "o Mongo cria na primeira escrita"
+													: "quando o banco não aparece na lista",
+										},
+									]}
+									onSelect={(value) => {
+										if (value === TYPE_NEW) {
+											setTyping(true);
+											onChange({ uri, db: "" });
+											return;
+										}
+										void handleDbConfirm(value);
+									}}
 									onHighlight={
-										kind === "source" ? handleDbHighlight : undefined
+										kind === "source"
+											? (value) => {
+													if (value !== TYPE_NEW) handleDbHighlight(value);
+												}
+											: undefined
 									}
 									focus={field === "db"}
 									visible={8}
@@ -163,7 +214,7 @@ export function ConnectionStep({
 									value={db}
 									onChange={(value) => onChange({ uri, db: value })}
 									onSubmit={handleDbConfirm}
-									focus={field === "db"}
+									focus={field === "db" && focused}
 									placeholder="nome-do-banco"
 								/>
 							</Box>

@@ -1,7 +1,9 @@
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
+import { buildConfig } from "../../core/config/buildConfig";
 import { emptyForm, type FormState } from "../../core/config/formState";
 import type { CollectionEntryRaw } from "../../core/config/loadConfig";
+import { toYaml } from "../../core/config/writeConfig";
 import { formatBytes, formatCount } from "../../core/inspect/collStats";
 import type { DbSummary } from "../../core/inspect/dbStats";
 import type { TuiMode } from "../../core/inspect/summary";
@@ -18,6 +20,8 @@ import {
 } from "../components/Shell";
 import { useInspector } from "../hooks/useInspector";
 import { useTerminalSize } from "../hooks/useTerminalSize";
+import { useClickable } from "../mouse/MouseProvider";
+import { isMouseInput } from "../mouse/parse";
 import { glyph, theme } from "../theme";
 import { AdvancedStep } from "./wizard/AdvancedStep";
 import { CollectionsStep } from "./wizard/CollectionsStep";
@@ -98,6 +102,15 @@ export function Wizard({
 		DEFAULT_ESTIMATE_OPTIONS,
 	);
 	const [asideFocus, setAsideFocus] = useState(false);
+	/**
+	 * Foco no trilho de passos. É o que transforma o wizard num FORM navegável:
+	 * abrir um yml existente caía na revisão, e a única forma de editar era
+	 * apertar `esc` até voltar ao campo — ninguém adivinha isso. Com o trilho
+	 * focável (tab, setas, enter — ou clique), dá para pular direto para
+	 * qualquer seção e mexer só no que interessa.
+	 */
+	const [railFocus, setRailFocus] = useState(false);
+	const [railIndex, setRailIndex] = useState(0);
 
 	const source = useInspector();
 	const destination = useInspector();
@@ -124,6 +137,42 @@ export function Wizard({
 
 	const order = stepOrder(form.mode);
 	const index = order.indexOf(step);
+
+	function goTo(target: Step) {
+		setStep(target);
+		setRailFocus(false);
+		setAsideFocus(false);
+	}
+
+	useInput((input, key) => {
+		if (isMouseInput(input)) return;
+
+		if (key.tab) {
+			setRailFocus((f) => !f);
+			setAsideFocus(false);
+			return;
+		}
+		if (!railFocus) return;
+
+		if (key.upArrow) setRailIndex((i) => (i === 0 ? order.length - 1 : i - 1));
+		else if (key.downArrow)
+			setRailIndex((i) => (i === order.length - 1 ? 0 : i + 1));
+		else if (key.return) goTo(order[railIndex] as Step);
+		else if (key.escape) setRailFocus(false);
+	});
+
+	// O trilho abre sempre no passo atual, não onde parou da última vez.
+	useEffect(() => {
+		if (railFocus) setRailIndex(index);
+	}, [railFocus, index]);
+
+	const railRef = useClickable({
+		onClick: ({ row }) => {
+			// linha 0 do painel é a borda/título; os itens começam na 1
+			const target = order[row - 1];
+			if (target) goTo(target);
+		},
+	});
 
 	function back() {
 		if (index <= 0) onExit();
@@ -170,24 +219,38 @@ export function Wizard({
 			chips={chips}
 			columns={columns}
 			rows={rows}
-			hints={hintsFor(step, asideFocus)}
+			hints={hintsFor(step, asideFocus, railFocus)}
+			copy={() => copyTargetFor(step, form)}
 		>
 			<Box flexDirection="column" width={SIDEBAR_WIDTH}>
-				<Panel title="passos" width={SIDEBAR_WIDTH} height={order.length + 3}>
-					{order.map((s, i) => (
-						<Text
-							key={s}
-							color={
-								s === step ? theme.accent : i < index ? theme.ok : theme.muted
-							}
-							bold={s === step}
-						>
-							{s === step ? "▍" : " "}
-							{i < index ? glyph.checked : s === step ? "◈" : glyph.unchecked}{" "}
-							{STEP_LABEL[s]}
-						</Text>
-					))}
-				</Panel>
+				<Box ref={railRef} flexDirection="column">
+					<Panel
+						title="passos"
+						width={SIDEBAR_WIDTH}
+						height={order.length + 3}
+						focused={railFocus}
+					>
+						{order.map((s, i) => (
+							<Text
+								key={s}
+								color={
+									railFocus && i === railIndex
+										? theme.selection
+										: s === step
+											? theme.accent
+											: i < index
+												? theme.ok
+												: theme.muted
+								}
+								bold={s === step || (railFocus && i === railIndex)}
+							>
+								{railFocus && i === railIndex ? "▍" : s === step ? "▍" : " "}
+								{i < index ? glyph.checked : s === step ? "◈" : glyph.unchecked}{" "}
+								{STEP_LABEL[s]}
+							</Text>
+						))}
+					</Panel>
+				</Box>
 
 				{step === "collections" ? (
 					<Panel
@@ -217,7 +280,7 @@ export function Wizard({
 				title={STEP_LABEL[step]}
 				width={l.center}
 				height={l.body}
-				focused={!asideFocus}
+				focused={!asideFocus && !railFocus}
 			>
 				{step === "mode" ? (
 					<Box flexDirection="column">
@@ -233,6 +296,7 @@ export function Wizard({
 									setForm((f) => ({ ...f, mode }));
 									setStep("source");
 								}}
+								focus={!railFocus}
 								initialIndex={MODES.findIndex((m) => m.value === form.mode)}
 							/>
 						</Box>
@@ -241,6 +305,7 @@ export function Wizard({
 
 				{step === "source" ? (
 					<ConnectionStep
+						focused={!railFocus}
 						kind="source"
 						uri={form.source.uri}
 						db={form.source.db}
@@ -253,6 +318,7 @@ export function Wizard({
 
 				{step === "destination" ? (
 					<ConnectionStep
+						focused={!railFocus}
 						kind="destination"
 						uri={form.destination.uri}
 						db={form.destination.db}
@@ -273,13 +339,14 @@ export function Wizard({
 						onOpenEstimates={() => setAsideFocus(true)}
 						onDone={next}
 						onBack={back}
-						focused={!asideFocus}
+						focused={!asideFocus && !railFocus}
 						visibleRows={l.panelRows - 2}
 					/>
 				) : null}
 
 				{step === "advanced" ? (
 					<AdvancedStep
+						focused={!railFocus}
 						form={form}
 						onChange={setForm}
 						views={views}
@@ -290,6 +357,7 @@ export function Wizard({
 
 				{step === "review" ? (
 					<ReviewStep
+						focused={!railFocus}
 						form={form}
 						preserved={preserved}
 						existingPath={existingPath}
@@ -535,7 +603,22 @@ function describeMode(mode: TuiMode): string {
 	return "cria índices TTL nas collections escolhidas. não copia dados.";
 }
 
-function hintsFor(step: Step, asideFocus: boolean): Hint[] {
+/** O que Ctrl+C leva desta tela, conforme o passo. */
+function copyTargetFor(step: Step, form: FormState): string | null {
+	if (step === "source") return form.source.uri || null;
+	if (step === "destination") return form.destination.uri || null;
+	if (step === "collections") return form.collections.join("\n") || null;
+	if (step === "review") return toYaml(buildConfig(form));
+	return null;
+}
+
+function hintsFor(step: Step, asideFocus: boolean, railFocus: boolean): Hint[] {
+	if (railFocus)
+		return [
+			{ keys: "↑↓", label: "passo" },
+			{ keys: "enter", label: "ir para o passo" },
+			{ keys: "tab", label: "voltar ao conteúdo" },
+		];
 	if (asideFocus)
 		return [
 			{ keys: "↑↓", label: "navegar" },
@@ -559,6 +642,7 @@ function hintsFor(step: Step, asideFocus: boolean): Hint[] {
 			];
 		case "collections":
 			return [
+				{ keys: "tab", label: "passos" },
 				{ keys: "espaço", label: "marcar" },
 				{ keys: "/", label: "buscar" },
 				{ keys: "a/n", label: "todas/nenhuma" },
@@ -569,6 +653,7 @@ function hintsFor(step: Step, asideFocus: boolean): Hint[] {
 			];
 		case "advanced":
 			return [
+				{ keys: "tab", label: "passos" },
 				{ keys: "espaço", label: "ligar/desligar" },
 				{ keys: "enter", label: "editar/seguir" },
 				{ keys: "v", label: "views" },
@@ -576,6 +661,7 @@ function hintsFor(step: Step, asideFocus: boolean): Hint[] {
 			];
 		case "review":
 			return [
+				{ keys: "tab", label: "editar (passos)" },
 				{ keys: "enter", label: "salvar" },
 				{ keys: "r", label: "salvar e rodar" },
 				{ keys: "e", label: "nome do arquivo" },

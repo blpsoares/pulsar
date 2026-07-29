@@ -1,5 +1,6 @@
 import { render } from "ink";
 import { App } from "./App";
+import { MouseProvider } from "./mouse/MouseProvider";
 
 /**
  * Entrypoint da TUI.
@@ -42,12 +43,17 @@ export async function startTui(dir = process.cwd()): Promise<void> {
 	process.once("SIGTERM", restore);
 	process.once("uncaughtException", restore);
 
-	const instance = render(<App dir={dir} />, {
-		// O Ctrl+C é tratado no App: ele desmonta os componentes, e é o desmonte
-		// que manda SIGTERM num sync disparado pela TUI (que então grava o resume
-		// token). Deixar o ink matar na hora deixaria filho órfão.
-		exitOnCtrlC: false,
-	});
+	const instance = render(
+		<MouseProvider>
+			<App dir={dir} />
+		</MouseProvider>,
+		{
+			// O Ctrl+C é tratado no App: ele desmonta os componentes, e é o desmonte
+			// que manda SIGTERM num sync disparado pela TUI (que então grava o resume
+			// token). Deixar o ink matar na hora deixaria filho órfão.
+			exitOnCtrlC: false,
+		},
+	);
 
 	try {
 		await instance.waitUntilExit();

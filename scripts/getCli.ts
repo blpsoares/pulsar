@@ -4,6 +4,7 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
+	renameSync,
 	statSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
@@ -46,10 +47,22 @@ if (build.exitCode !== 0) {
 mkdirSync(TARGET_DIR, { recursive: true });
 
 const target = join(TARGET_DIR, BIN_NAME);
-copyFileSync(BUILD_OUT, target);
-// O bit de execução não sobrevive a todo sistema de arquivos (e a cópia por
-// cima de um arquivo antigo pode herdar o modo dele).
-chmodSync(target, 0o755);
+
+/**
+ * Instalação ATÔMICA: copia para um arquivo temporário ao lado e renomeia por
+ * cima.
+ *
+ * Escrever direto no destino falha com ETXTBSY quando o binário está EM USO —
+ * e é exatamente o que acontece ao reinstalar com a TUI aberta em outro
+ * terminal. O rename troca a entrada do diretório: o processo em execução
+ * segue com o inode antigo (intacto) e a próxima execução pega o novo.
+ */
+const staging = `${target}.new`;
+copyFileSync(BUILD_OUT, staging);
+// O bit de execução não sobrevive a todo sistema de arquivos, e uma cópia por
+// cima de arquivo antigo poderia herdar o modo dele.
+chmodSync(staging, 0o755);
+renameSync(staging, target);
 
 ok(`instalado em ${chalk.bold(target)} (${mib(target)})`);
 

@@ -1,12 +1,11 @@
-# Config de DEMONSTRAÇÃO — ver loja-replica.yml.
 command:
   ttl:
     source:
       uri: mongodb://127.0.0.1:27021
       db: replica
-    defaults:
-      field: __migratedAt
-      expire: 30d
     collections:
       - logs_acesso
       - sessoes
+    defaults:
+      field: __migratedAt
+      expire: 30d

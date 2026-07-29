@@ -31,6 +31,8 @@ type Props = {
 	previewRows: number;
 	onSaved: (path: string, action: "run" | "stay") => void;
 	onBack: () => void;
+	/** false quando o foco está no trilho de passos */
+	focused: boolean;
 };
 
 export function ReviewStep({
@@ -40,6 +42,7 @@ export function ReviewStep({
 	previewRows,
 	onSaved,
 	onBack,
+	focused,
 }: Props) {
 	const [fileName, setFileName] = useState(
 		existingPath ??
@@ -110,18 +113,24 @@ export function ReviewStep({
 			}
 			if (key.return) save("stay");
 		},
-		{ isActive: true },
+		{ isActive: focused },
 	);
 
 	return (
 		<Box flexDirection="column">
 			<Box>
+				<Text color={theme.muted} wrap="truncate-end">
+					revisão — para mudar qualquer campo,{" "}
+					<Text color={theme.accent}>tab</Text> abre os passos (ou clique neles)
+				</Text>
+			</Box>
+			<Box marginTop={1}>
 				<Text color={theme.label}>arquivo: </Text>
 				<TextInput
 					value={fileName}
 					onChange={setFileName}
 					onSubmit={() => setEditingName(false)}
-					focus={editingName}
+					focus={editingName && focused}
 					placeholder="config.yml"
 				/>
 				{!editingName ? (

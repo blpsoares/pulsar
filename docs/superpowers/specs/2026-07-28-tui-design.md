@@ -115,6 +115,34 @@ devolve `truncated` e a tela avisa.
 `detectConfigs` continua **não-recursivo por padrão**: o `pulsar compose up`
 depende de olhar só o diretório do projeto.
 
+### Mouse: eventos pelo `useInput`, não por `process.stdin`
+
+O ink 7 lê o stdin com `on('readable')` + `read()` (pull). Registrar um
+`stdin.on('data')` coloca o stream em modo flowing e disputa os bytes: medido,
+o listener não recebia NADA e ainda arriscava engolir teclas do ink. Como o ink
+entrega a sequência de mouse inteira como se fosse texto digitado (`[<0;10;5M`,
+sem o ESC), o provider assina `useInput` e interpreta ali.
+
+Corolário obrigatório: todo handler que consome texto precisa ignorar essas
+sequências (`isMouseInput`), senão clicar com a busca aberta digita
+`[<0;10;5M` dentro dela.
+
+Hit-testing: cada área clicável registra um `ref`; a posição absoluta sai da
+soma dos offsets do yoga subindo até a raiz (verificado contra a tela). Ganha a
+MENOR área que contém o ponto, para o item vencer o painel que o contém.
+
+**Tradeoff que o usuário precisa saber:** rastrear cliques tira do terminal a
+seleção de texto nativa. Daí `ctrl+c` copiar (OSC 52 primeiro — funciona por
+SSH — com pbcopy/wl-copy/xclip como reforço) e `m` desligar o mouse. Sair passou
+a ser `q`/ctrl+d, anunciados na barra de teclas.
+
+### Linha de aviso sempre reservada
+
+`CHROME_ROWS` inclui a linha de aviso mesmo quando não há aviso. Calcular a
+altura conforme ele exista custou um bug real: o toast do "copiado" aparecia
+DEPOIS do layout, empurrava painéis de altura fixa para fora da tela e a
+mensagem não era vista. Uma linha a menos vale a geometria constante.
+
 ### Paleta ancorada na marca
 
 A identidade (accent, seleção, borda, gradiente do wordmark) sai do roxo

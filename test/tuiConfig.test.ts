@@ -325,7 +325,7 @@ describe("layout do cockpit", () => {
 		expect(l.center).toBeGreaterThan(40);
 	});
 
-	test("altura desconta cabeçalho e barra de teclas", () => {
+	test("altura desconta cabeçalho, aviso e barra de teclas", () => {
 		const l = layout(120, 38);
 		expect(l.body).toBe(38 - CHROME_ROWS);
 		expect(l.panelRows).toBeLessThan(l.body);

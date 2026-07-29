@@ -1,6 +1,8 @@
-import { Box, Text } from "ink";
-import type { ReactNode } from "react";
+import { Box, Text, useInput } from "ink";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { copyToClipboard, describeCopy } from "../../core/clipboard";
 import { SIDEBAR_WIDTH } from "../layout";
+import { isMouseInput } from "../mouse/parse";
 import { glyph, gradient, theme } from "../theme";
 
 export type { Layout } from "../layout";
@@ -176,6 +178,7 @@ export function Shell({
 	columns,
 	rows,
 	notice,
+	copy,
 }: {
 	chips: Chip[];
 	hints: Hint[];
@@ -183,16 +186,74 @@ export function Shell({
 	columns: number;
 	rows: number;
 	notice?: { text: string; tone?: "ok" | "warn" | "error" };
+	/**
+	 * O que Ctrl+C copia nesta tela. Fica no Shell (e não em cada tela) porque
+	 * o atalho e o aviso de "copiado" são os mesmos em toda a TUI.
+	 */
+	copy?: () => string | null;
 }) {
+	const toast = useCopyShortcut(copy);
+
 	return (
 		<Box flexDirection="column" width={columns} height={rows}>
 			<Header chips={chips} columns={columns} />
 			<Box flexDirection="row" flexGrow={1}>
 				{children}
 			</Box>
-			<KeyBar hints={hints} notice={notice} />
+			<KeyBar hints={hints} notice={toast ?? notice} />
 		</Box>
 	);
+}
+
+/**
+ * Ctrl+C copia o que a tela indicar.
+ *
+ * Ele NÃO encerra mais a TUI: sair é `q` ou Ctrl+D, ambos anunciados na barra
+ * de teclas. A troca é deliberada — num app de tela cheia, com mouse ligado, a
+ * seleção nativa do terminal não funciona, e sem um atalho de cópia não haveria
+ * como levar uma URI ou um caminho para fora daqui.
+ */
+function useCopyShortcut(
+	copy?: () => string | null,
+): { text: string; tone: "ok" | "warn" } | undefined {
+	const [toast, setToast] = useState<
+		{ text: string; tone: "ok" | "warn" } | undefined
+	>();
+	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (timer.current) clearTimeout(timer.current);
+		},
+		[],
+	);
+
+	const show = (text: string, tone: "ok" | "warn") => {
+		setToast({ text, tone });
+		if (timer.current) clearTimeout(timer.current);
+		timer.current = setTimeout(() => setToast(undefined), 2500);
+	};
+
+	useInput((input, key) => {
+		if (isMouseInput(input)) return;
+		if (!key.ctrl || input !== "c") return;
+
+		const value = copy?.();
+		if (!value) {
+			show("nada para copiar nesta tela", "warn");
+			return;
+		}
+
+		const result = copyToClipboard(value);
+		show(
+			result.ok
+				? `copiado: ${describeCopy(value)}`
+				: "não consegui copiar (terminal sem OSC 52 e sem pbcopy/wl-copy/xclip)",
+			result.ok ? "ok" : "warn",
+		);
+	});
+
+	return toast;
 }
 
 function Header({ chips, columns }: { chips: Chip[]; columns: number }) {
@@ -225,11 +286,10 @@ function KeyBar({
 }) {
 	return (
 		<Box flexDirection="column">
-			{notice ? (
-				<Text color={toneColor(notice.tone)} wrap="truncate-end">
-					{notice.text}
-				</Text>
-			) : null}
+			{/* linha sempre presente — ver CHROME_ROWS em layout.ts */}
+			<Text color={toneColor(notice?.tone)} wrap="truncate-end">
+				{notice?.text ?? " "}
+			</Text>
 			<Text wrap="truncate-end">
 				{hints.map((h, i) => (
 					<Text key={h.keys}>

@@ -12,7 +12,7 @@ import { shortUri } from "../../core/inspect/maskUri";
 import { detectBackends, preferredBackend } from "../../core/service/detect";
 import { serviceStatus } from "../../core/service/manager";
 import type { Backend, ServiceStatus } from "../../core/service/types";
-import { windowRange } from "../components/Select";
+import { buildRows, ConfigTree, type TreeRow } from "../components/ConfigTree";
 import {
 	type Chip,
 	layout,
@@ -22,7 +22,9 @@ import {
 	Stat,
 } from "../components/Shell";
 import { useTerminalSize } from "../hooks/useTerminalSize";
-import { glyph, theme } from "../theme";
+import { useClickable, useMouse } from "../mouse/MouseProvider";
+import { isMouseInput } from "../mouse/parse";
+import { theme } from "../theme";
 
 /**
  * Cockpit inicial: menu à esquerda, configs da pasta no centro, detalhe da
@@ -64,11 +66,13 @@ export function Home({
 	notice?: string;
 }) {
 	const { columns, rows } = useTerminalSize();
+	const mouse = useMouse();
 
 	const [reloadKey, setReloadKey] = useState(0);
 	const [pane, setPane] = useState<"menu" | "list">("list");
 	const [menuIndex, setMenuIndex] = useState(0);
-	const [listIndex, setListIndex] = useState(0);
+	const [rowIndex, setRowIndex] = useState(0);
+	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
 	/**
 	 * Varredura RECURSIVA a partir do diretório atual: o usuário não precisa
@@ -82,12 +86,35 @@ export function Home({
 		[dir, reloadKey],
 	);
 	const configs = scan.configs.filter((c) => c.kind !== "desconhecido");
-	const l = layout(columns, rows, Boolean(notice) || scan.truncated);
+	const l = layout(columns, rows);
 
-	const selected = configs[Math.min(listIndex, configs.length - 1)];
+	const treeRows = buildRows(configs, collapsed);
+	const cursor = Math.min(rowIndex, Math.max(0, treeRows.length - 1));
+	const currentRow = treeRows[cursor];
+	// O painel de detalhe segue o ITEM sob o cursor; sobre um cabeçalho de
+	// seção, mantém o último item visto para a tela não piscar em branco.
+	const selected =
+		currentRow?.kind === "item"
+			? currentRow.config
+			: lastItemBefore(treeRows, cursor);
 	const status = useServiceStatus(dir, selected?.file);
 
+	function toggleGroup(groupDir: string) {
+		setCollapsed((prev) => {
+			const next = new Set(prev);
+			if (next.has(groupDir)) next.delete(groupDir);
+			else next.add(groupDir);
+			return next;
+		});
+	}
+
+	function activate(row: TreeRow) {
+		if (row.kind === "group") toggleGroup(row.dir);
+		else onAction({ type: "open", file: row.config.file });
+	}
+
 	useInput((input, key) => {
+		if (isMouseInput(input)) return;
 		if (key.tab) {
 			setPane((p) => (p === "menu" ? "list" : "menu"));
 			return;
@@ -98,6 +125,13 @@ export function Home({
 		}
 		if (input === "q") {
 			onAction({ type: "quit" });
+			return;
+		}
+		if (input === "m") {
+			// Desligar o mouse devolve a SELEÇÃO DE TEXTO nativa do terminal, que o
+			// rastreamento de cliques necessariamente rouba. Fica aqui, na tela sem
+			// campo de texto, para a tecla não colidir com digitação.
+			mouse.toggle();
 			return;
 		}
 		// Atalhos de ação valem nos DOIS painéis: eles agem sobre a config
@@ -141,12 +175,29 @@ export function Home({
 			return;
 		}
 
-		if (configs.length === 0) return;
+		if (treeRows.length === 0) return;
 		if (key.upArrow)
-			setListIndex((i) => (i === 0 ? configs.length - 1 : i - 1));
+			setRowIndex(cursor === 0 ? treeRows.length - 1 : cursor - 1);
 		if (key.downArrow)
-			setListIndex((i) => (i === configs.length - 1 ? 0 : i + 1));
-		if (key.return && selected) onAction({ type: "open", file: selected.file });
+			setRowIndex(cursor === treeRows.length - 1 ? 0 : cursor + 1);
+		if (key.leftArrow && currentRow) {
+			// ← fecha a seção da linha atual, mesmo estando sobre um item dela
+			setCollapsed((prev) => new Set(prev).add(currentRow.dir));
+			return;
+		}
+		if (key.rightArrow && currentRow?.kind === "group" && currentRow.collapsed)
+			toggleGroup(currentRow.dir);
+		if ((key.return || input === " ") && currentRow) activate(currentRow);
+	});
+
+	// Clicar no painel da lista também traz o foco para ele.
+	const listRef = useClickable({ onClick: () => setPane("list") });
+	const menuRef = useClickable({
+		onClick: ({ row }) => {
+			setPane("menu");
+			const item = MENU[row - 1];
+			if (item) setMenuIndex(row - 1);
+		},
 	});
 
 	const chips: Chip[] = [
@@ -181,37 +232,59 @@ export function Home({
 							}
 						: undefined
 			}
+			copy={() => (selected ? resolve(dir, selected.file) : null)}
 			hints={[
 				{ keys: "tab", label: "painel" },
 				{ keys: "↑↓", label: "navegar" },
-				{ keys: "enter", label: pane === "menu" ? "abrir" : "editar" },
+				{
+					keys: "enter",
+					label: pane === "menu" ? "abrir" : "editar/abrir seção",
+				},
+				{ keys: "←→", label: "fechar/abrir seção" },
 				{ keys: "r", label: "rodar" },
 				{ keys: "b", label: "background" },
 				{ keys: "l", label: "logs" },
+				{ keys: "ctrl+c", label: "copiar caminho" },
+				{
+					keys: "m",
+					label: `mouse ${mouse.enabled ? "on" : "off"}`,
+				},
 				{ keys: "q", label: "sair" },
 			]}
 		>
-			<Sidebar
-				items={MENU}
-				activeKey={MENU[menuIndex]?.key ?? "new"}
-				height={l.body}
-				focused={pane === "menu"}
-			/>
-
-			<Panel
-				title={`configs · ${basename(dir) || dir}`}
-				width={l.center}
-				height={l.body}
-				focused={pane === "list"}
-			>
-				<ConfigList
-					configs={configs}
-					index={listIndex}
-					width={l.center}
-					visible={l.panelRows - 1}
-					focused={pane === "list"}
+			<Box ref={menuRef} flexDirection="column">
+				<Sidebar
+					items={MENU}
+					activeKey={MENU[menuIndex]?.key ?? "new"}
+					height={l.body}
+					focused={pane === "menu"}
 				/>
-			</Panel>
+			</Box>
+
+			<Box ref={listRef} flexDirection="column">
+				<Panel
+					title={`configs · ${basename(dir) || dir}`}
+					width={l.center}
+					height={l.body}
+					focused={pane === "list"}
+				>
+					<ConfigTree
+						rows={treeRows}
+						index={cursor}
+						width={l.center}
+						visible={l.panelRows - 1}
+						focused={pane === "list"}
+						onActivate={(row) => {
+							setPane("list");
+							activate(row);
+						}}
+						onHighlight={(i) => {
+							setPane("list");
+							setRowIndex(i);
+						}}
+					/>
+				</Panel>
+			</Box>
 
 			{l.aside > 0 ? (
 				<Panel title="detalhe" width={l.aside} height={l.body}>
@@ -219,63 +292,6 @@ export function Home({
 				</Panel>
 			) : null}
 		</Shell>
-	);
-}
-
-function ConfigList({
-	configs,
-	index,
-	width,
-	visible,
-	focused,
-}: {
-	configs: DetectedConfig[];
-	index: number;
-	width: number;
-	visible: number;
-	focused: boolean;
-}) {
-	if (configs.length === 0)
-		return (
-			<Box flexDirection="column">
-				<Text color={theme.muted}>nenhuma config do pulsar nesta pasta.</Text>
-				<Text color={theme.muted}>
-					tecle <Text color={theme.accent}>tab</Text> e escolha{" "}
-					<Text color={theme.accent}>nova config</Text> para criar a primeira.
-				</Text>
-			</Box>
-		);
-
-	const { start, end } = windowRange(index, configs.length, visible);
-	// -4 de padding/borda, -22 das colunas de modo e destino
-	const nameWidth = Math.max(12, width - 26);
-
-	return (
-		<Box flexDirection="column">
-			<Text color={theme.border}>
-				{"  "}
-				{pad("arquivo", nameWidth - 2)}
-				{pad("modo", 9)}destino
-			</Text>
-			{configs.slice(start, end).map((c, i) => {
-				const active = start + i === index;
-				return (
-					<Text
-						key={c.file}
-						color={
-							active ? (focused ? theme.selection : theme.label) : undefined
-						}
-						bold={active}
-						wrap="truncate-end"
-					>
-						{active ? `${glyph.cursor} ` : "  "}
-						{pad(c.file, nameWidth - 2)}
-						<Text color={kindColor(c.kind)}>{pad(c.kind, 9)}</Text>
-						<Text color={theme.muted}>{c.destDb ?? c.sourceDb ?? "—"}</Text>
-					</Text>
-				);
-			})}
-		</Box>
 	);
 }
 
@@ -421,21 +437,22 @@ function useServiceStatus(dir: string, file?: string): ServiceStatus | null {
 	return status;
 }
 
-function kindColor(kind: string): string {
-	if (kind === "sync") return theme.accent;
-	if (kind === "migrate") return theme.warn;
-	return theme.ok;
+/** Item mais próximo acima do cursor — usado quando ele está num cabeçalho. */
+function lastItemBefore(
+	rows: TreeRow[],
+	index: number,
+): DetectedConfig | undefined {
+	for (let i = index; i >= 0; i--) {
+		const row = rows[i];
+		if (row?.kind === "item") return row.config;
+	}
+	return rows.find((r) => r.kind === "item")?.config;
 }
 
 function viewsLabel(copyViews: boolean | string[] | undefined): string {
 	if (copyViews === true) return "todas";
 	if (Array.isArray(copyViews)) return String(copyViews.length);
 	return "não";
-}
-
-function pad(text: string, width: number): string {
-	if (text.length >= width) return `${text.slice(0, Math.max(0, width - 1))}…`;
-	return text + " ".repeat(width - text.length);
 }
 
 function safeSize(path: string): number {

@@ -1,5 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
+import { useClickable } from "../mouse/MouseProvider";
+import { isMouseInput } from "../mouse/parse";
 import { glyph, theme } from "../theme";
 
 /**
@@ -60,9 +62,38 @@ export function Select<T>({
 		if (current && !current.disabled) onHighlight?.(current.value, cursor);
 	}, [current?.label, cursor, onHighlight]);
 
+	const { start, end } = windowRange(cursor, items.length, visible);
+
+	/**
+	 * Clique e roda do mouse. A conversão de linha para item usa a MESMA janela
+	 * do render (`start`), então clicar numa lista rolada acerta o item que está
+	 * embaixo do cursor, e não o de mesmo índice no topo.
+	 *
+	 * O primeiro clique num item que não está sob o cursor apenas MOVE o cursor;
+	 * confirmar exige clicar de novo (ou enter). Isso evita disparar uma ação
+	 * destrutiva num clique de passagem.
+	 */
+	const ref = useClickable({
+		onClick: ({ row }) => {
+			const offset = start > 0 ? 1 : 0; // linha "↑ N acima"
+			const target = start + row - offset;
+			const item = items[target];
+			if (!item || item.disabled) return;
+
+			if (target === cursor) onSelect(item.value, target);
+			else setIndex(target);
+		},
+		onWheel: (direction) => {
+			if (items.length === 0) return;
+			setIndex((i) =>
+				Math.max(0, Math.min(items.length - 1, i + direction * 3)),
+			);
+		},
+	});
+
 	useInput(
 		(input, key) => {
-			if (items.length === 0) return;
+			if (items.length === 0 || isMouseInput(input)) return;
 
 			if (key.upArrow || input === "k") {
 				setIndex(cursor === 0 ? items.length - 1 : cursor - 1);
@@ -83,10 +114,8 @@ export function Select<T>({
 	if (items.length === 0)
 		return <Text color={theme.muted}>{emptyMessage}</Text>;
 
-	const { start, end } = windowRange(cursor, items.length, visible);
-
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" ref={ref}>
 			{start > 0 && <Text color={theme.muted}> ↑ {start} acima</Text>}
 			{items.slice(start, end).map((item, i) => {
 				const active = start + i === cursor;

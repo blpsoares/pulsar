@@ -49,7 +49,10 @@ export function App({ dir }: { dir: string }) {
 	 * SIGTERM no filho em `useProcess`.
 	 */
 	useInput((input, key) => {
-		if (key.ctrl && (input === "c" || input === "d")) exit();
+		// Ctrl+D encerra. Ctrl+C passou a COPIAR (tratado no Shell): num app de
+		// tela cheia com mouse ligado não há seleção nativa, então um atalho de
+		// cópia é essencial — e a saída continua garantida por Ctrl+D e por `q`.
+		if (key.ctrl && input === "d") exit();
 	});
 
 	function openConfig(file: string) {

@@ -181,12 +181,15 @@ export function AdvancedStep({
 	views,
 	onDone,
 	onBack,
+	focused,
 }: {
 	form: FormState;
 	onChange: (next: FormState) => void;
 	views: DbEntry[];
 	onDone: () => void;
 	onBack: () => void;
+	/** false quando o foco está no trilho de passos */
+	focused: boolean;
 }) {
 	const rows = rowsFor(form);
 	const [cursor, setCursor] = useState(0);
@@ -229,7 +232,7 @@ export function AdvancedStep({
 				else onDone();
 			}
 		},
-		{ isActive: true },
+		{ isActive: focused },
 	);
 
 	if (viewPicker)
@@ -269,7 +272,7 @@ export function AdvancedStep({
 									value={r.get(form)}
 									onChange={(value) => onChange(r.set(form, value))}
 									onSubmit={() => setEditing(false)}
-									focus={editing && active}
+									focus={editing && active && focused}
 									placeholder={r.placeholder}
 								/>
 							) : (

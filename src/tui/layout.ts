@@ -8,8 +8,16 @@
 
 export const SIDEBAR_WIDTH = 19;
 export const ASIDE_WIDTH = 24;
-/** cabeçalho (3) + barra de teclas (1) + margem (1) */
-export const CHROME_ROWS = 5;
+/**
+ * cabeçalho (3) + linha de aviso (1) + barra de teclas (1) + margem (1).
+ *
+ * A linha de aviso é reservada SEMPRE, mesmo vazia. Calcular a altura conforme
+ * exista ou não aviso parece econômico e cria um bug inteiro: um aviso que
+ * aparece depois (o "copiado" do Ctrl+C, por exemplo) empurraria os painéis —
+ * que têm altura fixa — para fora da tela, e a mensagem simplesmente não seria
+ * vista. Uma linha a menos vale a geometria constante.
+ */
+export const CHROME_ROWS = 6;
 
 export type Layout = {
 	sidebar: number;
@@ -31,20 +39,11 @@ export type Layout = {
  * a lista de collections com uma dúzia de caracteres, que é pior do que não ter
  * o resumo à vista.
  */
-export function layout(
-	columns: number,
-	rows: number,
-	/**
-	 * A barra de teclas ganha uma linha quando há aviso. Sem descontá-la aqui, os
-	 * painéis (que têm altura FIXA) passam da altura da tela e o ink quebra a
-	 * moldura na última linha.
-	 */
-	hasNotice = false,
-): Layout {
+export function layout(columns: number, rows: number): Layout {
 	const narrow = columns < 96;
 	const aside = narrow ? 0 : ASIDE_WIDTH;
 	const center = Math.max(20, columns - SIDEBAR_WIDTH - aside);
-	const body = Math.max(6, rows - CHROME_ROWS - (hasNotice ? 1 : 0));
+	const body = Math.max(6, rows - CHROME_ROWS);
 
 	return {
 		sidebar: SIDEBAR_WIDTH,
