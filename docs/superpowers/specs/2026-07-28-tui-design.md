@@ -34,8 +34,10 @@ renderizar componente, no mesmo estilo dos testes que já existiam.
 src/tui/
   index.tsx              # render(<App/>); exige TTY
   App.tsx                # roteador de telas (união discriminada em useState)
-  theme.ts               # paleta ANSI-16 e glifos
-  components/            # Frame, Select, TextInput, CollectionPicker
+  theme.ts               # paleta (identidade em hex, estados em ANSI-16) e glifos
+  layout.ts              # geometria do cockpit — pura, testada
+  components/            # Shell (cabeçalho/Panel/Sidebar/Stat), Select,
+                         # TextInput, CollectionPicker, Spinner
   hooks/                 # useInspector (Mongo), useProcess (filho), useSpinner
   screens/               # Home, Wizard, Runner, Services, Logs
     wizard/              # ConnectionStep, CollectionsStep, EstimatesPanel,
