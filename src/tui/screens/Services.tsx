@@ -243,34 +243,19 @@ export function ServicesScreen({
 				</Panel>
 			</Box>
 
+			{/*
+			 * O centro é SEMPRE o plano. Antes ele alternava para uma segunda lista
+			 * de configs quando o foco ia para a esquerda — duplicando a lista que
+			 * já está lá e fazendo o `tab` mudar o conteúdo da tela, não só o foco.
+			 */}
 			<Panel
-				title={
-					pane === "config" ? "escolher config" : `plano · ${backend ?? ""}`
-				}
+				title={`plano${backend ? ` · ${backend}` : ""}`}
 				width={l.center}
 				height={l.body}
-				focused={pane === "config"}
 			>
-				{pane === "config" ? (
-					<Select
-						items={configs.map((c) => ({
-							value: c.file,
-							label: c.file,
-							hint: `${c.kind}${c.destDb ? ` → ${c.destDb}` : ""}`,
-						}))}
-						onSelect={(f) => {
-							setFile(f);
-							setResult(null);
-							setActionLog([]);
-							setPane("backend");
-						}}
-						focus
-						emptyMessage="nenhuma config nesta pasta — crie uma primeiro"
-						visible={l.panelRows - 1}
-					/>
-				) : !file ? (
+				{!file ? (
 					<Text color={theme.muted}>
-						tab para escolher a config que vira serviço
+						escolha a config no painel da esquerda (tab alterna o foco)
 					</Text>
 				) : !plan ? (
 					<Text color={theme.muted}>detectando backend…</Text>

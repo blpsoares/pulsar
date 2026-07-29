@@ -125,7 +125,12 @@ export function Select<T>({
 					// cabe. Sem isso o ink come letras do NOME do item.
 					<Box key={item.label}>
 						<Box flexShrink={0}>
-							<Text color={active ? theme.selection : undefined}>
+							{/* truncate e não wrap: um item por linha mantém a conta de
+							    linhas do painel igual à do hit-testing do clique */}
+							<Text
+								color={active ? theme.selection : undefined}
+								wrap="truncate-end"
+							>
 								{active ? `${glyph.cursor} ` : "  "}
 								<Text
 									color={

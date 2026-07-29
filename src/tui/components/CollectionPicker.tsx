@@ -7,6 +7,7 @@ import {
 } from "../../core/inspect/collStats";
 import type { CollIndexes } from "../../core/inspect/indexSummary";
 import { type DbEntry, filterEntries } from "../../core/inspect/inspectDb";
+import { useClickable } from "../mouse/MouseProvider";
 import { glyph, theme } from "../theme";
 import { windowRange } from "./Select";
 
@@ -136,7 +137,7 @@ export function CollectionPicker({
 				return;
 			}
 			if (input === "a") {
-				onSelectAll(filtered.map((e) => e.name));
+				toggleAll();
 				return;
 			}
 			if (input === "n") {
@@ -155,8 +156,36 @@ export function CollectionPicker({
 
 	const { start, end } = windowRange(pos, filtered.length, visible);
 
+	const allSelected =
+		filtered.length > 0 && filtered.every((e) => selected.has(e.name));
+
+	/**
+	 * Controle explícito de "todas". A tecla `a` sempre existiu, mas ficava
+	 * escondida no meio da barra de atalhos — quem não leu a barra marcava as
+	 * collections uma por uma. Aqui ele é uma linha visível e clicável, e mostra
+	 * o estado atual (todas marcadas ou não).
+	 */
+	const allRef = useClickable({
+		onClick: () => toggleAll(),
+	});
+
+	function toggleAll() {
+		if (allSelected) onClear();
+		else onSelectAll(filtered.map((e) => e.name));
+	}
+
 	return (
 		<Box flexDirection="column">
+			<Box ref={allRef}>
+				<Text color={allSelected ? theme.ok : theme.muted}>
+					{allSelected ? glyph.boxChecked : glyph.boxUnchecked}
+				</Text>
+				<Text color={theme.label}>
+					{" "}
+					{query ? "marcar todas as filtradas" : "marcar todas"}
+				</Text>
+				<Text color={theme.border}> (a · n limpa · clique)</Text>
+			</Box>
 			<Box>
 				<Text color={searching ? theme.accent : theme.muted}>busca: </Text>
 				<Text>
