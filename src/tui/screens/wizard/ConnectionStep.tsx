@@ -162,7 +162,8 @@ export function ConnectionStep({
 							{field === "db" ? "❯ " : "  "}banco
 						</Text>
 
-						{canListDbs ? (
+						{/* `typing` troca a lista pelo campo livre — é o "criar banco novo" */}
+						{canListDbs && !typing ? (
 							<Box marginLeft={2}>
 								<Select
 									items={[
@@ -200,7 +201,7 @@ export function ConnectionStep({
 												}
 											: undefined
 									}
-									focus={field === "db"}
+									focus={field === "db" && focused}
 									visible={8}
 									initialIndex={Math.max(
 										0,
@@ -209,7 +210,7 @@ export function ConnectionStep({
 								/>
 							</Box>
 						) : (
-							<Box marginLeft={2}>
+							<Box marginLeft={2} flexDirection="column">
 								<TextInput
 									value={db}
 									onChange={(value) => onChange({ uri, db: value })}
@@ -217,6 +218,19 @@ export function ConnectionStep({
 									focus={field === "db" && focused}
 									placeholder="nome-do-banco"
 								/>
+								{db.trim() &&
+								!state.databases.some((info) => info.name === db.trim()) ? (
+									<Text color={theme.warn}>
+										{kind === "destination"
+											? `"${db.trim()}" ainda não existe — será criado na primeira escrita`
+											: `"${db.trim()}" não está entre os bancos visíveis`}
+									</Text>
+								) : null}
+								{typing ? (
+									<Text color={theme.muted}>
+										enter confirma · esc volta para a lista
+									</Text>
+								) : null}
 							</Box>
 						)}
 					</Box>
