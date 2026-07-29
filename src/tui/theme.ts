@@ -6,18 +6,27 @@
  * - **Estados** (ok/warn/error/muted) em cores NOMEADAS do ANSI-16, que
  *   respeitam o tema do terminal do usuário — o mesmo verde funciona em fundo
  *   claro e escuro.
- * - **Identidade** (accent, borda, gradiente do wordmark) em hex, porque o
- *   ciano padrão do ANSI muda demais entre temas e a marca ficaria irreconhecível.
- *   O chalk rebaixa hex para 256/16 cores sozinho, então terminal antigo degrada
- *   em vez de quebrar.
+ * - **Identidade** (accent, borda, gradiente do wordmark) em hex, ancorada no
+ *   roxo da marca — o mesmo `#9b00ff` que o banner do figlet usa em
+ *   `utils/showCliTitle.ts`. Hex e não `magenta` do ANSI porque o magenta muda
+ *   demais entre temas de terminal e a marca ficaria irreconhecível. O chalk
+ *   rebaixa hex para 256/16 cores sozinho, então terminal antigo degrada em vez
+ *   de quebrar.
  */
+
+/** Roxo da marca, igual ao do banner da CLI. */
+const BRAND_RGB = [155, 0, 255] as const;
 export const theme = {
-	/** identidade: títulos, painel em foco, teclas */
-	accent: "#22d3ee",
-	/** item sob o cursor */
-	selection: "#67e8f9",
-	/** molduras e réguas — visível, mas nunca competindo com o conteúdo */
-	border: "#3f4a5a",
+	/**
+	 * Identidade: títulos, painel em foco, teclas. Um tom acima do `BRAND`
+	 * porque `#9b00ff` puro, em texto pequeno sobre fundo escuro, fica denso
+	 * demais para ler — a marca cheia vive no wordmark, que é grande.
+	 */
+	accent: "#b44dff",
+	/** item sob o cursor — o roxo mais claro da escala, para saltar da lista */
+	selection: "#e0b3ff",
+	/** molduras e réguas: violeta dessaturado, presente sem competir */
+	border: "#4a3a5c",
 	ok: "green",
 	warn: "yellow",
 	error: "red",
@@ -25,9 +34,12 @@ export const theme = {
 	label: "white",
 } as const;
 
-/** Extremos do gradiente do wordmark: ciano → índigo. */
-const GRADIENT_FROM = [34, 211, 238] as const;
-const GRADIENT_TO = [129, 140, 248] as const;
+/** Extremos do gradiente do wordmark: roxo da marca → magenta. */
+const GRADIENT_FROM = BRAND_RGB;
+const GRADIENT_TO = [255, 92, 244] as const;
+
+/** O roxo da marca em hex — mesma fonte do gradiente, sem literal duplicado. */
+export const BRAND = rgb(BRAND_RGB);
 
 /** N cores interpoladas — usado para colorir o wordmark caractere a caractere. */
 export function gradient(steps: number): string[] {

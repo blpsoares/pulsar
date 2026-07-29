@@ -298,6 +298,10 @@ Interface de terminal em **Ink** que cobre o ciclo inteiro sem editar yml à mã
 não mudaram, e o import do módulo é dinâmico — quem roda `pulsar sync` num
 container não carrega react/ink.
 
+Paleta ancorada no roxo da marca (`#9b00ff`, o mesmo do banner em
+`utils/showCliTitle.ts`); estados (ok/aviso/erro) seguem em ANSI-16 nomeado,
+que respeita o tema do terminal.
+
 **Layout de cockpit** (estilo k9s/lazygit): tela cheia em *alternate screen*
 (sai sem sujar o scrollback), com sidebar + painel central + painel de contexto
 visíveis ao mesmo tempo. `tab` alterna o painel com foco. As larguras vêm de

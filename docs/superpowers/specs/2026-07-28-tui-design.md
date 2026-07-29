@@ -34,7 +34,7 @@ renderizar componente, no mesmo estilo dos testes que já existiam.
 src/tui/
   index.tsx              # render(<App/>); exige TTY
   App.tsx                # roteador de telas (união discriminada em useState)
-  theme.ts               # paleta (identidade em hex, estados em ANSI-16) e glifos
+  theme.ts               # paleta: roxo da marca (#9b00ff) em hex, estados em ANSI-16
   layout.ts              # geometria do cockpit — pura, testada
   components/            # Shell (cabeçalho/Panel/Sidebar/Stat), Select,
                          # TextInput, CollectionPicker, Spinner
@@ -98,6 +98,21 @@ a lista de collections com uma dúzia de caracteres.
 O `Box` do ink não sabe escrever título dentro da moldura, então o `Panel`
 desenha a linha de cima à mão (`╭─ título ───╮`) e usa `borderTop={false}` no
 Box abaixo. Como as larguras são conhecidas, a linha bate exatamente.
+
+### Paleta ancorada na marca
+
+A identidade (accent, seleção, borda, gradiente do wordmark) sai do roxo
+`#9b00ff` — o MESMO valor que o banner do figlet já usava em
+`utils/showCliTitle.ts`, não um roxo parecido. `BRAND` e o início do gradiente
+derivam de uma constante só, para não haver duas verdades sobre a cor da
+ferramenta.
+
+Hex e não `magenta` do ANSI porque o magenta nomeado muda demais entre temas de
+terminal e a marca ficaria irreconhecível; o chalk rebaixa hex para 256/16
+cores sozinho. O accent do texto (`#b44dff`) é um tom acima do brand: `#9b00ff`
+puro em texto pequeno sobre fundo escuro fica denso demais para ler — a marca
+cheia vive no wordmark, que é grande. Os ESTADOS (ok/warn/error) seguem em
+ANSI-16 nomeado: verde de sucesso não deve virar roxo.
 
 ### Saída global: Ctrl+C e Ctrl+D
 

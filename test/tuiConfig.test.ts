@@ -333,15 +333,16 @@ describe("layout do cockpit", () => {
 });
 
 describe("gradiente da marca", () => {
-	test("gera uma cor por caractere, do ciano ao índigo", () => {
+	test("gera uma cor por caractere, do roxo da marca ao magenta", () => {
 		const colors = gradient(6);
 		expect(colors).toHaveLength(6);
-		expect(colors[0]).toBe("#22d3ee");
-		expect(colors.at(-1)).toBe("#818cf8");
+		// começa exatamente no roxo do banner da CLI (utils/showCliTitle.ts)
+		expect(colors[0]).toBe("#9b00ff");
+		expect(colors.at(-1)).toBe("#ff5cf4");
 		expect(colors.every((c) => /^#[0-9a-f]{6}$/.test(c))).toBe(true);
 	});
 
 	test("um caractere só não quebra a interpolação", () => {
-		expect(gradient(1)).toEqual(["#22d3ee"]);
+		expect(gradient(1)).toEqual(["#9b00ff"]);
 	});
 });
