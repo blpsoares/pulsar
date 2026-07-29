@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
-import { ASIDE_WIDTH, CHROME_ROWS, SIDEBAR_WIDTH } from "../layout";
+import { SIDEBAR_WIDTH } from "../layout";
 import { glyph, gradient, theme } from "../theme";
 
 export type { Layout } from "../layout";

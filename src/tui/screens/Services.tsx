@@ -56,9 +56,10 @@ export function ServicesScreen({
 	onExit: () => void;
 }) {
 	const { columns, rows } = useTerminalSize();
-	const l = layout(columns, rows);
 
-	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
+	const configs = detectConfigs(dir, { recursive: true }).filter(
+		(c) => c.kind !== "desconhecido",
+	);
 	const [file, setFile] = useState<string | undefined>(initialFile);
 	const [backend, setBackend] = useState<Backend | null>(null);
 	const [availability, setAvailability] = useState<
@@ -72,6 +73,7 @@ export function ServicesScreen({
 	const [pane, setPane] = useState<"backend" | "config">(
 		initialFile ? "backend" : "config",
 	);
+	const l = layout(columns, rows, Boolean(busy));
 
 	useEffect(() => {
 		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then((a) => {

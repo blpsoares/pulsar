@@ -313,6 +313,15 @@ direita sai de cena antes de espremer a lista. **Ctrl+C e Ctrl+D encerram de
 qualquer tela** — o `render()` roda com `exitOnCtrlC: false` (para o filho
 receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
 
+- **Descoberta recursiva:** a TUI varre da pasta atual **para baixo** procurando
+  ymls do pulsar — não é preciso `cd` até onde a config mora; o caminho relativo
+  aparece na lista. A varredura tem tetos de profundidade, de pastas ignoradas
+  (`node_modules`, ocultas, `logs`…), de arquivos e **de tempo** (400ms): medido,
+  varrer uma HOME real levava 1,3s e a partir de `/` não terminava, porque o
+  custo está em percorrer pastas, não em ler os poucos ymls. Quando algum teto
+  corta a varredura, a tela **avisa** em vez de deixar concluir que a config não
+  existe. `detectConfigs` segue não-recursivo por padrão — o `compose up` depende
+  disso.
 - **Criar/editar config:** form guiado (modo → origem → destino → collections →
   avançado → revisar). Conecta na origem de verdade, lista os bancos **com
   tamanho**, e mostra collections e views com **busca incremental** (`/`) e

@@ -59,7 +59,9 @@ export function LogsScreen({
 	const l = layout(columns, rows);
 
 	const files = listLogFiles(dir);
-	const configs = detectConfigs(dir).filter((c) => c.kind !== "desconhecido");
+	const configs = detectConfigs(dir, { recursive: true }).filter(
+		(c) => c.kind !== "desconhecido",
+	);
 
 	const sources: Source[] = [
 		...files.map((f) => ({
@@ -79,7 +81,7 @@ export function LogsScreen({
 
 	const source = sources[Math.min(index, sources.length - 1)];
 
-	useInput((input, key) => {
+	useInput((_input, key) => {
 		if (key.escape) {
 			onExit();
 			return;

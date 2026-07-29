@@ -1,5 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import yaml from "js-yaml";
+import {
+	detectConfigs,
+	detectConfigsWithMeta,
+} from "../src/core/compose/detectConfigs";
 import { buildConfig } from "../src/core/config/buildConfig";
 import { emptyForm, validateForm } from "../src/core/config/formState";
 import {
@@ -344,5 +351,67 @@ describe("gradiente da marca", () => {
 
 	test("um caractere só não quebra a interpolação", () => {
 		expect(gradient(1)).toEqual(["#9b00ff"]);
+	});
+});
+
+describe("varredura recursiva de configs", () => {
+	const root = mkdtempSync(join(tmpdir(), "pulsar-scan-"));
+
+	beforeAll(() => {
+		const write = (rel: string, body: string) => {
+			mkdirSync(dirname(join(root, rel)), { recursive: true });
+			writeFileSync(join(root, rel), body);
+		};
+		const sync = (db: string) =>
+			`command:\n  sync:\n    source: { uri: u, db: a }\n    destination: { uri: u2, db: ${db} }\n`;
+
+		write("raiz.yml", sync("r"));
+		write("configs/prod.yml", sync("p"));
+		write("infra/k8s/deep.yml", sync("d"));
+		write("node_modules/pacote/config.yml", sync("nao"));
+		write(".git/oculto.yml", sync("nao"));
+		write("logs/ignorado.yml", sync("nao"));
+	});
+
+	afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+	test("sem recursive, enxerga só o diretório informado", () => {
+		expect(detectConfigs(root).map((c) => c.file)).toEqual(["raiz.yml"]);
+	});
+
+	test("com recursive, acha as configs em subpastas", () => {
+		const files = detectConfigs(root, { recursive: true }).map((c) => c.file);
+		expect(files).toContain("raiz.yml");
+		expect(files).toContain(join("configs", "prod.yml"));
+		expect(files).toContain(join("infra", "k8s", "deep.yml"));
+	});
+
+	test("pula node_modules, pastas ocultas e logs", () => {
+		const files = detectConfigs(root, { recursive: true }).map((c) => c.file);
+		expect(files.some((f) => f.includes("node_modules"))).toBe(false);
+		expect(files.some((f) => f.includes(".git"))).toBe(false);
+		expect(files.some((f) => f.includes("logs"))).toBe(false);
+	});
+
+	test("caminho devolvido é relativo ao diretório da varredura", () => {
+		const files = detectConfigs(root, { recursive: true }).map((c) => c.file);
+		expect(files.every((f) => !f.startsWith("/"))).toBe(true);
+	});
+
+	test("orçamento de tempo zerado corta a varredura e avisa", () => {
+		const result = detectConfigsWithMeta(root, {
+			recursive: true,
+			budgetMs: 0,
+		});
+		expect(result.truncated).toBe(true);
+	});
+
+	test("teto de arquivos é respeitado", () => {
+		const result = detectConfigsWithMeta(root, {
+			recursive: true,
+			maxFiles: 1,
+		});
+		expect(result.configs.length).toBeLessThanOrEqual(1);
+		expect(result.truncated).toBe(true);
 	});
 });

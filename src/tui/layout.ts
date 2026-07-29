@@ -31,11 +31,20 @@ export type Layout = {
  * a lista de collections com uma dúzia de caracteres, que é pior do que não ter
  * o resumo à vista.
  */
-export function layout(columns: number, rows: number): Layout {
+export function layout(
+	columns: number,
+	rows: number,
+	/**
+	 * A barra de teclas ganha uma linha quando há aviso. Sem descontá-la aqui, os
+	 * painéis (que têm altura FIXA) passam da altura da tela e o ink quebra a
+	 * moldura na última linha.
+	 */
+	hasNotice = false,
+): Layout {
 	const narrow = columns < 96;
 	const aside = narrow ? 0 : ASIDE_WIDTH;
 	const center = Math.max(20, columns - SIDEBAR_WIDTH - aside);
-	const body = Math.max(6, rows - CHROME_ROWS);
+	const body = Math.max(6, rows - CHROME_ROWS - (hasNotice ? 1 : 0));
 
 	return {
 		sidebar: SIDEBAR_WIDTH,

@@ -4,7 +4,7 @@ import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import {
 	type DetectedConfig,
-	detectConfigs,
+	detectConfigsWithMeta,
 } from "../../core/compose/detectConfigs";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import { formatBytes } from "../../core/inspect/collStats";
@@ -64,18 +64,25 @@ export function Home({
 	notice?: string;
 }) {
 	const { columns, rows } = useTerminalSize();
-	const l = layout(columns, rows);
 
 	const [reloadKey, setReloadKey] = useState(0);
 	const [pane, setPane] = useState<"menu" | "list">("list");
 	const [menuIndex, setMenuIndex] = useState(0);
 	const [listIndex, setListIndex] = useState(0);
 
+	/**
+	 * Varredura RECURSIVA a partir do diretório atual: o usuário não precisa
+	 * navegar até a pasta das configs para a TUI enxergá-las. Os limites da
+	 * varredura (profundidade, node_modules e afins, teto de arquivos) estão em
+	 * `detectConfigs` — abrir a TUI não pode custar um `find` na home.
+	 */
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey é a dependência — incrementá-lo relê o diretório
-	const configs = useMemo(
-		() => detectConfigs(dir).filter((c) => c.kind !== "desconhecido"),
+	const scan = useMemo(
+		() => detectConfigsWithMeta(dir, { recursive: true }),
 		[dir, reloadKey],
 	);
+	const configs = scan.configs.filter((c) => c.kind !== "desconhecido");
+	const l = layout(columns, rows, Boolean(notice) || scan.truncated);
 
 	const selected = configs[Math.min(listIndex, configs.length - 1)];
 	const status = useServiceStatus(dir, selected?.file);
@@ -162,7 +169,18 @@ export function Home({
 			chips={chips}
 			columns={columns}
 			rows={rows}
-			notice={notice ? { text: notice, tone: "warn" } : undefined}
+			notice={
+				notice
+					? { text: notice, tone: "warn" }
+					: scan.truncated
+						? {
+								// Varredura cortada sem aviso faria o usuário concluir que a
+								// config dele não existe.
+								text: `varredura parcial (${scan.dirsVisited} pastas): abra a TUI mais perto das suas configs para ver todas`,
+								tone: "warn",
+							}
+						: undefined
+			}
 			hints={[
 				{ keys: "tab", label: "painel" },
 				{ keys: "↑↓", label: "navegar" },

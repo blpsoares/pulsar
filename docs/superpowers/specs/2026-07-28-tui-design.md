@@ -99,6 +99,22 @@ O `Box` do ink não sabe escrever título dentro da moldura, então o `Panel`
 desenha a linha de cima à mão (`╭─ título ───╮`) e usa `borderTop={false}` no
 Box abaixo. Como as larguras são conhecidas, a linha bate exatamente.
 
+### Descoberta recursiva de configs, com orçamento
+
+A TUI varre da pasta atual para baixo: obrigar o usuário a `cd` até a pasta das
+configs é atrito sem contrapartida. O que não é opcional são os limites —
+medição real: raiz do projeto 5ms, HOME 1,3s, `/` não terminava. O gargalo é
+percorrer diretórios, não ler ymls, então só limitar profundidade e nº de
+arquivos não resolve. Entram também teto de diretórios (4000) e **de tempo**
+(400ms); com eles, o pior caso medido (`/`) cai para ~85ms.
+
+Uma varredura cortada em silêncio é pior que uma varredura curta: o usuário
+concluiria que a config dele não existe. Por isso `detectConfigsWithMeta`
+devolve `truncated` e a tela avisa.
+
+`detectConfigs` continua **não-recursivo por padrão**: o `pulsar compose up`
+depende de olhar só o diretório do projeto.
+
 ### Paleta ancorada na marca
 
 A identidade (accent, seleção, borda, gradiente do wordmark) sai do roxo
