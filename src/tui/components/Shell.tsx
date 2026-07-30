@@ -157,6 +157,7 @@ export function Sidebar({
 						key={item.key}
 						color={active ? theme.accent : theme.muted}
 						bold={active}
+						wrap="truncate-end"
 					>
 						{active ? "▍" : " "}
 						{item.icon} {item.label}

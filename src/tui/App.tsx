@@ -9,6 +9,7 @@ import {
 import { Home } from "./screens/Home";
 import { LogsScreen } from "./screens/Logs";
 import { RunnerScreen } from "./screens/Runner";
+import { RunningScreen } from "./screens/Running";
 import { ServicesScreen } from "./screens/Services";
 import { Wizard } from "./screens/Wizard";
 
@@ -32,7 +33,8 @@ type Route =
 	// `file` vem preenchido quando a ação partiu de uma config selecionada na
 	// tela inicial — a tela pula direto para ela em vez de pedir de novo.
 	| { name: "logs"; file?: string }
-	| { name: "services"; file?: string };
+	| { name: "services"; file?: string }
+	| { name: "running" };
 
 export function App({ dir }: { dir: string }) {
 	const [route, setRoute] = useState<Route>({ name: "home" });
@@ -96,6 +98,9 @@ export function App({ dir }: { dir: string }) {
 							case "logs":
 								setRoute({ name: "logs", file: action.file });
 								break;
+							case "running":
+								setRoute({ name: "running" });
+								break;
 							case "services":
 								setRoute({ name: "services", file: action.file });
 								break;
@@ -133,6 +138,16 @@ export function App({ dir }: { dir: string }) {
 					dir={dir}
 					file={route.file}
 					onExit={() => setRoute({ name: "home" })}
+				/>
+			);
+
+		case "running":
+			return (
+				<RunningScreen
+					dir={dir}
+					onExit={() => setRoute({ name: "home" })}
+					onInstall={() => setRoute({ name: "services" })}
+					onLogs={() => setRoute({ name: "logs" })}
 				/>
 			);
 

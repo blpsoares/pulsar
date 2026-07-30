@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { describeCopy } from "../src/core/clipboard";
+import {
+	parseDockerPs,
+	parseLaunchdList,
+	parsePm2List,
+	parseSystemdUnits,
+} from "../src/core/service/discover";
 import { buildRows } from "../src/tui/components/ConfigTree";
 import { isMouseInput, parseMouse } from "../src/tui/mouse/parse";
 
@@ -85,7 +91,9 @@ describe("árvore de configs", () => {
 		const group = rows.find((r) => r.kind === "group" && r.dir === "configs");
 		expect(group).toMatchObject({ collapsed: true, count: 2 });
 		expect(
-			rows.some((r) => r.kind === "item" && r.config.file.startsWith("configs/")),
+			rows.some(
+				(r) => r.kind === "item" && r.config.file.startsWith("configs/"),
+			),
 		).toBe(false);
 	});
 
@@ -105,5 +113,82 @@ describe("descrição do que foi copiado", () => {
 		expect(describeCopy("uma\nlinha  só")).toBe("uma linha só");
 		expect(describeCopy("x".repeat(80)).endsWith("…")).toBe(true);
 		expect(describeCopy("x".repeat(80)).length).toBeLessThanOrEqual(46);
+	});
+});
+
+describe("descoberta de serviços", () => {
+	test("systemd: lê nome e estado, ignorando o que não é do pulsar", () => {
+		const stdout = [
+			"pulsar-ads.service        loaded active   running pulsar sync (ads)",
+			"● pulsar-velho.service    loaded failed   dead    pulsar sync (velho)",
+			"outra-coisa.service       loaded active   running nada a ver",
+		].join("\n");
+
+		const found = parseSystemdUnits(stdout);
+		expect(found.map((s) => s.name)).toEqual(["pulsar-ads", "pulsar-velho"]);
+		expect(found[0]?.running).toBe(true);
+		expect(found[1]?.running).toBe(false);
+		expect(found[0]?.backend).toBe("systemd");
+	});
+
+	test("systemd: cabeçalho e linhas vazias não viram serviço", () => {
+		expect(parseSystemdUnits("UNIT LOAD ACTIVE SUB DESCRIPTION\n\n")).toEqual(
+			[],
+		);
+	});
+
+	test("pm2: só apps com prefixo pulsar-, online = no ar", () => {
+		const stdout = JSON.stringify([
+			{ name: "pulsar-x", pm2_env: { status: "online", autorestart: true } },
+			{ name: "pulsar-y", pm2_env: { status: "stopped", autorestart: false } },
+			{ name: "outro-app", pm2_env: { status: "online" } },
+		]);
+
+		const found = parsePm2List(stdout);
+		expect(found).toHaveLength(2);
+		expect(found[0]).toMatchObject({
+			name: "pulsar-x",
+			running: true,
+			enabled: true,
+		});
+		expect(found[1]).toMatchObject({
+			name: "pulsar-y",
+			running: false,
+			enabled: false,
+		});
+	});
+
+	test("pm2: saída inválida não derruba a varredura", () => {
+		expect(parsePm2List("não é json")).toEqual([]);
+	});
+
+	test("docker: 'Up ...' é no ar; política de restart marca o boot", () => {
+		const stdout = [
+			"pulsar-sync-a\tUp 3 hours\tunless-stopped",
+			"pulsar-sync-b\tExited (0) 2 days ago\tno",
+			"outro\tUp 1 hour\talways",
+		].join("\n");
+
+		const found = parseDockerPs(stdout);
+		expect(found).toHaveLength(2);
+		expect(found[0]).toMatchObject({ running: true, enabled: true });
+		expect(found[1]).toMatchObject({ running: false, enabled: false });
+	});
+
+	test("launchd: PID '-' significa carregado mas parado", () => {
+		const stdout = [
+			"PID\tStatus\tLabel",
+			"1234\t0\tcom.pulsar.ads",
+			"-\t0\tcom.pulsar.parado",
+			"999\t0\tcom.apple.outra",
+		].join("\n");
+
+		const found = parseLaunchdList(stdout);
+		expect(found.map((s) => s.name)).toEqual([
+			"com.pulsar.ads",
+			"com.pulsar.parado",
+		]);
+		expect(found[0]?.running).toBe(true);
+		expect(found[1]?.running).toBe(false);
 	});
 });

@@ -1,0 +1,23 @@
+command:
+  sync:
+    source:
+      uri: mongodb+srv://agentistics:akUdbhA4aiEtKgiM@olivaras.npjhxdt.mongodb.net/
+      db: agentistics
+    destination:
+      uri: mongodb+srv://agentistics:akUdbhA4aiEtKgiM@olivaras.npjhxdt.mongodb.net/
+      db: teste
+    collections:
+      - accounts
+      - config
+      - init
+      - memberStats
+      - sessions
+      - tags
+      - teams
+      - tokens
+      - workflows
+      - audit
+    copyIndexes: true
+    copyViews: true
+    logging:
+      verbose: true

@@ -12,6 +12,7 @@ import { shortUri } from "../../core/inspect/maskUri";
 import { detectBackends, preferredBackend } from "../../core/service/detect";
 import { serviceStatus } from "../../core/service/manager";
 import type { Backend, ServiceStatus } from "../../core/service/types";
+import { type Action, ActionMenu } from "../components/ActionMenu";
 import { buildRows, ConfigTree, type TreeRow } from "../components/ConfigTree";
 import {
 	type Chip,
@@ -21,6 +22,7 @@ import {
 	Sidebar,
 	Stat,
 } from "../components/Shell";
+import { useBackgroundStart } from "../hooks/useBackgroundStart";
 import { useTerminalSize } from "../hooks/useTerminalSize";
 import { useClickable, useMouse } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
@@ -44,14 +46,19 @@ export type HomeAction =
 	| { type: "open"; file: string }
 	| { type: "run"; file: string }
 	| { type: "services"; file?: string }
+	| { type: "running" }
 	| { type: "logs"; file?: string }
 	| { type: "quit" };
 
+/**
+ * Só ações GLOBAIS. Os verbos que agem sobre uma config (rodar, editar, subir
+ * em background) saíram daqui: exigiam deixar o arquivo certo selecionado na
+ * lista e só então escolher o verbo do outro lado da tela, sem nada ligando as
+ * duas metades. Agora eles vivem no menu do próprio arquivo (enter/clique).
+ */
 const MENU = [
 	{ key: "new", label: "nova config", icon: "✚" },
-	{ key: "run", label: "rodar", icon: "▶" },
-	{ key: "open", label: "editar", icon: "✎" },
-	{ key: "services", label: "background", icon: "⬢" },
+	{ key: "running", label: "background", icon: "⬢" },
 	{ key: "logs", label: "logs", icon: "▤" },
 	{ key: "quit", label: "sair", icon: "⏻" },
 ];
@@ -73,6 +80,9 @@ export function Home({
 	const [menuIndex, setMenuIndex] = useState(0);
 	const [rowIndex, setRowIndex] = useState(0);
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+	/** menu de ações do arquivo sob o cursor (aberto por enter/clique) */
+	const [menuFor, setMenuFor] = useState<string | null>(null);
+	const background = useBackgroundStart(dir);
 
 	/**
 	 * Varredura RECURSIVA a partir do diretório atual: o usuário não precisa
@@ -109,12 +119,16 @@ export function Home({
 	}
 
 	function activate(row: TreeRow) {
+		// cabeçalho abre/fecha a seção; arquivo abre o menu de ações DELE
 		if (row.kind === "group") toggleGroup(row.dir);
-		else onAction({ type: "open", file: row.config.file });
+		else setMenuFor(row.config.file);
 	}
 
 	useInput((input, key) => {
 		if (isMouseInput(input)) return;
+		// Com o menu do arquivo aberto, é ELE que responde: a mesma tecla valendo
+		// nos dois lugares foi o bug que já apareceu no seletor de collections.
+		if (menuFor) return;
 		if (key.tab) {
 			setPane((p) => (p === "menu" ? "list" : "menu"));
 			return;
@@ -143,6 +157,11 @@ export function Home({
 				return;
 			}
 			if (input === "b") {
+				// atalho direto: sobe em background com o backend nativo da máquina
+				void background.start(selected.file);
+				return;
+			}
+			if (input === "g") {
 				onAction({ type: "services", file: selected.file });
 				return;
 			}
@@ -161,16 +180,9 @@ export function Home({
 				if (!item) return;
 				if (item.key === "new") onAction({ type: "new" });
 				else if (item.key === "quit") onAction({ type: "quit" });
-				else if (item.key === "services")
-					onAction({ type: "services", file: selected?.file });
+				else if (item.key === "running") onAction({ type: "running" });
 				else if (item.key === "logs")
 					onAction({ type: "logs", file: selected?.file });
-				else if (selected)
-					onAction(
-						item.key === "run"
-							? { type: "run", file: selected.file }
-							: { type: "open", file: selected.file },
-					);
 			}
 			return;
 		}
@@ -221,16 +233,23 @@ export function Home({
 			columns={columns}
 			rows={rows}
 			notice={
-				notice
-					? { text: notice, tone: "warn" }
-					: scan.truncated
+				background.busy
+					? { text: "instalando e subindo o serviço…" }
+					: background.result
 						? {
-								// Varredura cortada sem aviso faria o usuário concluir que a
-								// config dele não existe.
-								text: `varredura parcial (${scan.dirsVisited} pastas): abra a TUI mais perto das suas configs para ver todas`,
-								tone: "warn",
+								text: background.result.message,
+								tone: background.result.ok ? "ok" : "error",
 							}
-						: undefined
+						: notice
+							? { text: notice, tone: "warn" }
+							: scan.truncated
+								? {
+										// Varredura cortada sem aviso faria o usuário concluir que a
+										// config dele não existe.
+										text: `varredura parcial (${scan.dirsVisited} pastas): abra a TUI mais perto das suas configs para ver todas`,
+										tone: "warn",
+									}
+								: undefined
 			}
 			copy={() => (selected ? resolve(dir, selected.file) : null)}
 			hints={[
@@ -238,11 +257,11 @@ export function Home({
 				{ keys: "↑↓", label: "navegar" },
 				{
 					keys: "enter",
-					label: pane === "menu" ? "abrir" : "editar/abrir seção",
+					label: pane === "menu" ? "abrir" : "ações do arquivo",
 				},
 				{ keys: "←→", label: "fechar/abrir seção" },
 				{ keys: "r", label: "rodar" },
-				{ keys: "b", label: "background" },
+				{ keys: "b", label: "subir em background" },
 				{ keys: "l", label: "logs" },
 				{ keys: "ctrl+c", label: "copiar caminho" },
 				{
@@ -268,21 +287,40 @@ export function Home({
 					height={l.body}
 					focused={pane === "list"}
 				>
-					<ConfigTree
-						rows={treeRows}
-						index={cursor}
-						width={l.center}
-						visible={l.panelRows - 1}
-						focused={pane === "list"}
-						onActivate={(row) => {
-							setPane("list");
-							activate(row);
-						}}
-						onHighlight={(i) => {
-							setPane("list");
-							setRowIndex(i);
-						}}
-					/>
+					{menuFor ? (
+						<ActionMenu
+							title={menuFor}
+							width={l.center}
+							actions={actionsFor(status)}
+							onClose={() => setMenuFor(null)}
+							onPick={(action) => {
+								const file = menuFor;
+								setMenuFor(null);
+								if (!file) return;
+								if (action === "e") onAction({ type: "open", file });
+								else if (action === "r") onAction({ type: "run", file });
+								else if (action === "b") void background.start(file);
+								else if (action === "g") onAction({ type: "services", file });
+								else if (action === "l") onAction({ type: "logs", file });
+							}}
+						/>
+					) : (
+						<ConfigTree
+							rows={treeRows}
+							index={cursor}
+							width={l.center}
+							visible={l.panelRows - 1}
+							focused={pane === "list"}
+							onActivate={(row) => {
+								setPane("list");
+								activate(row);
+							}}
+							onHighlight={(i) => {
+								setPane("list");
+								setRowIndex(i);
+							}}
+						/>
+					)}
 				</Panel>
 			</Box>
 
@@ -435,6 +473,32 @@ function useServiceStatus(dir: string, file?: string): ServiceStatus | null {
 	}, [dir, file, backend]);
 
 	return status;
+}
+
+/**
+ * Ações do arquivo sob o cursor. A dica de "gerenciar" muda conforme já exista
+ * serviço instalado — é a informação que decide se você vem aqui para instalar
+ * ou para parar/remover.
+ */
+function actionsFor(status: ServiceStatus | null): Action[] {
+	return [
+		{ key: "e", label: "editar config", hint: "abre o form" },
+		{ key: "r", label: "rodar aqui", hint: "primeiro plano, saída ao vivo" },
+		{
+			key: "b",
+			label: "iniciar em background",
+			hint: "instala o serviço e liga no boot",
+			warn: true,
+		},
+		{
+			key: "g",
+			label: "gerenciar background",
+			hint: status?.installed
+				? "instalado — parar, remover, trocar backend"
+				: "escolher backend e ver o plano",
+		},
+		{ key: "l", label: "ver logs", hint: "gravados e ao vivo" },
+	];
 }
 
 /** Item mais próximo acima do cursor — usado quando ele está num cabeçalho. */

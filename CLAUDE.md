@@ -335,6 +335,20 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   barra de teclas pelo próprio `Shell`, não por cada tela: uma tela que
   esquecesse de anunciá-lo deixaria o usuário preso sem saber como sair — foi
   o que aconteceu no passo "modo", que ainda por cima não tratava `esc`.
+- **Ações no ITEM, não numa barra de verbos:** enter (ou clique) sobre uma
+  config abre o menu DELA — editar, rodar aqui, iniciar em background, gerenciar
+  background, ver logs. Antes os verbos ficavam na sidebar e era preciso deixar
+  o arquivo certo selecionado na lista para então escolher o verbo do outro lado
+  da tela; duas metades sem nada ligando uma à outra. A sidebar ficou só com o
+  que é global (nova config, background, logs, sair).
+- **`b` sobe em background num passo** (`hooks/useBackgroundStart.ts`): instala
+  com o backend nativo da máquina, liga no boot e sobe — dizendo no rodapé se
+  ficou faltando um comando com sudo. A tela de background segue existindo para
+  escolher backend, ver o plano completo ou remover.
+- **Tela "background" (`screens/Running.tsx`)** lista o que está no ar em
+  QUALQUER supervisor (`core/service/discover.ts` varre systemd, pm2, docker e
+  launchd), com estado, boot e i/p/t para iniciar/parar/reiniciar. Responde "isso
+  aqui está rodando?" sem partir de uma config.
 - **Navegação:** `tab` alterna o painel em foco. No wizard, o trilho de
   **passos** é focável e clicável — é o que torna um yml existente realmente
   editável: dá para pular direto para "origem" ou "avançado" em vez de apertar
