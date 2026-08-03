@@ -127,7 +127,13 @@ export function ServicesScreen({
 
 		if (key.return) {
 			setBusy("instalando…");
-			void installService(plan, spec).then((r) => {
+			// A saída do passo vira o texto do "ocupado": no docker a primeira
+			// construção leva MINUTOS, e uma tela parada em "instalando…" durante
+			// todo esse tempo é indistinguível de uma tela travada.
+			void installService(plan, spec, (line) => {
+				const clean = line.trim().slice(0, 80);
+				if (clean) setBusy(clean);
+			}).then((r) => {
 				setBusy(null);
 				setResult(r);
 				void serviceStatus(backend, spec).then(setStatus);

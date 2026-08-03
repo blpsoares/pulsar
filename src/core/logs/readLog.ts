@@ -139,7 +139,10 @@ export function logWindow(
 	const clamped = Math.max(0, Math.min(max, Math.trunc(scroll)));
 	const end = lines.length - clamped;
 
-	return { visible: lines.slice(Math.max(0, end - rows), end), scroll: clamped };
+	return {
+		visible: lines.slice(Math.max(0, end - rows), end),
+		scroll: clamped,
+	};
 }
 
 /** Busca simples, case-insensitive. Consulta vazia devolve tudo. */

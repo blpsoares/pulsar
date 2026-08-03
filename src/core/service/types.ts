@@ -41,6 +41,14 @@ export type ServiceStep = {
 	why: string;
 	/** falha aceitável (ex.: parar um serviço que ainda não existe) */
 	optional?: boolean;
+	/**
+	 * Teto de tempo do passo. Só faz sentido declarar quando o passo pode
+	 * demorar MUITO mais que os outros — hoje, o `docker compose up --build`,
+	 * que constrói a imagem (apk add + bun install + compile). Os demais
+	 * backends só escrevem um arquivo e chamam o supervisor, e terminam em
+	 * milissegundos.
+	 */
+	timeoutMs?: number;
 	/** precisa de sudo — a TUI NUNCA roda isso sozinha, só mostra */
 	privileged?: boolean;
 };

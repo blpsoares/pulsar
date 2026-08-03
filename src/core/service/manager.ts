@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { committedResources } from "../compose/committed";
 import { recommendResources } from "../compose/recommend";
+import { LineBuffer } from "../run/logLines";
 import {
 	composePath,
 	dockerPlan,
@@ -48,6 +49,74 @@ export type StepResult = {
 	output: string;
 };
 
+/** Teto padrão de um passo — vale para tudo que não declara o seu. */
+const STEP_TIMEOUT_MS = 120_000;
+
+/** Quantas linhas da saída ficam guardadas para o relatório do passo. */
+const STEP_OUTPUT_LINES = 200;
+
+/**
+ * Executa um passo com a saída em STREAMING.
+ *
+ * Não é `execFile`: ele acumula a saída inteira num buffer de 1 MB e mata o
+ * processo quando estoura. O `docker compose up --build` é justamente o passo
+ * que cospe muita saída e demora minutos — as duas coisas que o `execFile`
+ * pune. Aqui a saída vai para um anel de N linhas (a cauda é o que interessa
+ * quando algo falha) e cada linha é repassada na hora, para a tela poder
+ * mostrar que ainda está vivo em vez de congelar sem explicação.
+ */
+export function execStep(
+	step: ServiceStep,
+	opts: { cwd: string; onOutput?: (line: string) => void },
+): Promise<StepResult> {
+	return new Promise((resolve) => {
+		const buffer = new LineBuffer(STEP_OUTPUT_LINES);
+		const child = spawn(step.cmd, step.args, {
+			cwd: opts.cwd,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			child.kill("SIGTERM");
+			setTimeout(() => child.kill("SIGKILL"), 5_000).unref?.();
+		}, step.timeoutMs ?? STEP_TIMEOUT_MS);
+
+		const collect = (chunk: Buffer | string) => {
+			buffer.push(String(chunk));
+			// A tela mostra só a linha mais recente: é sinal de vida, não um log.
+			const last = buffer.all().at(-1);
+			if (last) opts.onOutput?.(last);
+		};
+
+		child.stdout?.on("data", collect);
+		child.stderr?.on("data", collect);
+
+		const finish = (ok: boolean, extra?: string) => {
+			clearTimeout(timer);
+			const output = [buffer.all().join("\n"), extra]
+				.filter(Boolean)
+				.join("\n")
+				.trim();
+			resolve({ step, ok, output });
+		};
+
+		child.on("error", (err) => finish(false, err.message));
+		child.on("close", (code) => {
+			if (timedOut)
+				finish(
+					false,
+					`o passo passou de ${Math.round(
+						(step.timeoutMs ?? STEP_TIMEOUT_MS) / 1000,
+					)}s e foi interrompido`,
+				);
+			else
+				finish(code === 0, code === 0 ? undefined : `saiu com código ${code}`);
+		});
+	});
+}
+
 export type InstallResult = {
 	plan: InstallPlan;
 	files: string[];
@@ -87,6 +156,7 @@ export function buildPlan(
 export async function installService(
 	plan: InstallPlan,
 	spec: ServiceSpec,
+	onOutput?: (line: string) => void,
 ): Promise<InstallResult> {
 	const written: string[] = [];
 
@@ -106,21 +176,14 @@ export async function installService(
 	for (const step of plan.steps) {
 		if (step.privileged) continue;
 
-		try {
-			const { stdout, stderr } = await run(step.cmd, step.args, {
-				cwd: spec.workingDir,
-				timeout: 120_000,
-			});
-			results.push({ step, ok: true, output: (stdout + stderr).trim() });
-		} catch (err) {
-			const output = errorText(err);
-			results.push({ step, ok: false, output });
-			if (!step.optional) {
-				ok = false;
-				// Parar no primeiro passo essencial que falha: seguir adiante
-				// deixaria um serviço meio instalado, pior que nenhum.
-				break;
-			}
+		const result = await execStep(step, { cwd: spec.workingDir, onOutput });
+		results.push(result);
+
+		if (!result.ok && !step.optional) {
+			ok = false;
+			// Parar no primeiro passo essencial que falha: seguir adiante
+			// deixaria um serviço meio instalado, pior que nenhum.
+			break;
 		}
 	}
 
@@ -142,17 +205,8 @@ export async function uninstallService(
 					: dockerUninstallSteps(spec);
 
 	const results: StepResult[] = [];
-	for (const step of steps) {
-		try {
-			const { stdout, stderr } = await run(step.cmd, step.args, {
-				cwd: spec.workingDir,
-				timeout: 120_000,
-			});
-			results.push({ step, ok: true, output: (stdout + stderr).trim() });
-		} catch (err) {
-			results.push({ step, ok: false, output: errorText(err) });
-		}
-	}
+	for (const step of steps)
+		results.push(await execStep(step, { cwd: spec.workingDir }));
 
 	// Remove os arquivos gerados só depois de o serviço estar parado — apagar a
 	// unit com o serviço no ar deixa um processo sem dono.
@@ -312,15 +366,7 @@ export async function controlService(
 		}
 	})();
 
-	try {
-		const { stdout, stderr } = await run(step.cmd, step.args, {
-			cwd: spec.workingDir,
-			timeout: 120_000,
-		});
-		return { step, ok: true, output: (stdout + stderr).trim() };
-	} catch (err) {
-		return { step, ok: false, output: errorText(err) };
-	}
+	return execStep(step, { cwd: spec.workingDir });
 }
 
 function parseProps(stdout: string): Record<string, string> {

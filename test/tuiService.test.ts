@@ -13,6 +13,7 @@ import { tailCommand } from "../src/core/logs/tailCommand";
 import { LineBuffer, levelOf, stripAnsi } from "../src/core/run/logLines";
 import { argsFor, pulsarCommandLine } from "../src/core/run/pulsarCommand";
 import { buildPlist, launchdPlan } from "../src/core/service/launchd";
+import { execStep } from "../src/core/service/manager";
 import { buildEcosystem, pm2Plan } from "../src/core/service/pm2";
 import { buildUnit, systemdPlan } from "../src/core/service/systemd";
 import { type ServiceSpec, serviceName, slug } from "../src/core/service/types";
@@ -269,5 +270,66 @@ describe("janela de rolagem do log", () => {
 
 	test("log vazio não quebra", () => {
 		expect(logWindow([], 3, 10)).toEqual({ visible: [], scroll: 0 });
+	});
+});
+
+/**
+ * Os dois jeitos de o passo do docker morrer sem deixar nada de pé. Ambos vinham
+ * do `execFile`, que era como os passos rodavam: teto fixo de 2 min e buffer de
+ * 1 MB. O `docker compose up --build` é o único passo que constrói uma imagem —
+ * na primeira vez leva minutos e cospe saída sem parar.
+ */
+describe("execução de um passo de serviço", () => {
+	test("respeita o teto declarado pelo passo, e não um fixo", async () => {
+		const r = await execStep(
+			{ cmd: "sleep", args: ["30"], why: "passo lento", timeoutMs: 300 },
+			{ cwd: process.cwd() },
+		);
+		expect(r.ok).toBe(false);
+		expect(r.output).toContain("interrompido");
+	});
+
+	test("passo longo termina quando o teto permite", async () => {
+		const r = await execStep(
+			{ cmd: "sleep", args: ["1"], why: "passo lento", timeoutMs: 20_000 },
+			{ cwd: process.cwd() },
+		);
+		expect(r.ok).toBe(true);
+	});
+
+	test("saída gigante não derruba o passo (execFile morria em 1 MB)", async () => {
+		const r = await execStep(
+			{
+				cmd: "bash",
+				args: [
+					"-c",
+					"for i in $(seq 1 60000); do echo linha-de-build-$i; done",
+				],
+				why: "passo verborrágico",
+			},
+			{ cwd: process.cwd() },
+		);
+		expect(r.ok).toBe(true);
+		// Só a cauda é guardada — o relatório não precisa das 60 mil linhas.
+		expect(r.output).toContain("linha-de-build-60000");
+		expect(r.output.split("\n").length).toBeLessThanOrEqual(200);
+	});
+
+	test("código de saída != 0 reprova o passo", async () => {
+		const r = await execStep(
+			{ cmd: "bash", args: ["-c", "echo falhou >&2; exit 3"], why: "erro" },
+			{ cwd: process.cwd() },
+		);
+		expect(r.ok).toBe(false);
+		expect(r.output).toContain("falhou");
+		expect(r.output).toContain("código 3");
+	});
+
+	test("comando inexistente não explode", async () => {
+		const r = await execStep(
+			{ cmd: "comando-que-nao-existe-pulsar", args: [], why: "?" },
+			{ cwd: process.cwd() },
+		);
+		expect(r.ok).toBe(false);
 	});
 });

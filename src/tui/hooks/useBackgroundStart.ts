@@ -25,11 +25,15 @@ export type BackgroundResult = {
 
 export function useBackgroundStart(dir: string) {
 	const [busy, setBusy] = useState(false);
+	// Última linha do passo em execução. No docker a primeira construção da
+	// imagem leva minutos; sem sinal de vida, a tela parece travada.
+	const [progress, setProgress] = useState<string | null>(null);
 	const [result, setResult] = useState<BackgroundResult | null>(null);
 
 	const start = useCallback(
 		async (file: string) => {
 			setBusy(true);
+			setProgress(null);
 			setResult(null);
 
 			try {
@@ -65,7 +69,10 @@ export function useBackgroundStart(dir: string) {
 					return;
 				}
 
-				const installed = await installService(plan, spec);
+				const installed = await installService(plan, spec, (line) => {
+					const clean = line.trim().slice(0, 80);
+					if (clean) setProgress(clean);
+				});
 				const pending = plan.manualSteps.length > 0;
 
 				setResult({
@@ -81,12 +88,13 @@ export function useBackgroundStart(dir: string) {
 				});
 			} finally {
 				setBusy(false);
+				setProgress(null);
 			}
 		},
 		[dir],
 	);
 
-	return { start, busy, result, clear: () => setResult(null) };
+	return { start, busy, progress, result, clear: () => setResult(null) };
 }
 
 function failureOf(

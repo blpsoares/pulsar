@@ -234,7 +234,9 @@ export function Home({
 			rows={rows}
 			notice={
 				background.busy
-					? { text: "instalando e subindo o serviço…" }
+					? {
+							text: background.progress ?? "instalando e subindo o serviço…",
+						}
 					: background.result
 						? {
 								text: background.result.message,

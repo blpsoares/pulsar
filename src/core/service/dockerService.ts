@@ -76,6 +76,13 @@ export function dockerPlan(
 				cmd: "docker",
 				args: ["compose", "-f", file, "up", "-d", "--build"],
 				why: "constrói a imagem e sobe o container em background",
+				// A PRIMEIRA construção baixa a base, roda `apk add mongodb-tools`,
+				// `bun install` e compila o binário — em VM modesta passa fácil dos
+				// 10 min. Com o teto padrão de 2 min, o build era interrompido no
+				// meio e NENHUM container chegava a existir: a tela dizia que falhou
+				// (ou nem isso) e não havia nada em `docker ps`. Da segunda vez em
+				// diante o cache faz em segundos.
+				timeoutMs: 30 * 60_000,
 			},
 		],
 		manualSteps,
