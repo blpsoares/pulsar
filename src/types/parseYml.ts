@@ -30,6 +30,12 @@ const syncCollectionEntrySchema = z.union([
 		}),
 ]);
 
+/** Índices escolhidos de UMA collection: `{ collection, indexes: [nomes] }`. */
+const collectionIndexesSchema = z.object({
+	collection: z.string(),
+	indexes: z.array(z.string()),
+});
+
 export const syncYmlSchema = z.object({
 	command: z.object({
 		sync: z.object({
@@ -42,7 +48,14 @@ export const syncYmlSchema = z.object({
 				db: z.string(),
 			}),
 			collections: z.array(syncCollectionEntrySchema).optional(),
-			copyIndexes: z.boolean().optional(),
+			// Recria os índices secundários da origem no destino: `true` = todos;
+			// lista = só os nomeados, por collection; omitido/false = nenhum.
+			// A forma de OBJETO (e não "coll.indice") é proposital: tanto nome de
+			// collection quanto nome de índice aceitam ponto, e um separador
+			// ambíguo transformaria "vendas.2024" num par indecifrável.
+			copyIndexes: z
+				.union([z.boolean(), z.array(collectionIndexesSchema)])
+				.optional(),
 			// Recria as views da origem no destino (metadados, fora do sync):
 			// `true` = todas; array de nomes = só essas; omitido = nenhuma.
 			copyViews: z.union([z.boolean(), z.array(z.string())]).optional(),
@@ -109,6 +122,9 @@ export const ttlYmlSchema = z.object({
 });
 
 export type SyncCollectionEntry = z.infer<typeof syncCollectionEntrySchema>;
+export type CollectionIndexes = z.infer<typeof collectionIndexesSchema>;
+/** `true` = todos os índices; lista = só os nomeados; false/omitido = nenhum. */
+export type CopyIndexesOption = boolean | CollectionIndexes[];
 export type MigrateYmlOptions = z.infer<typeof migrateYmlSchema>;
 export type SyncYmlOptions = z.infer<typeof syncYmlSchema>;
 export type TtlCollectionEntry = z.infer<typeof ttlCollectionEntrySchema>;

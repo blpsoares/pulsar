@@ -72,13 +72,15 @@ export async function syncCollections(
 		ymlPerf.flushIntervalMs ??
 		1000;
 	const full = Boolean(cliParams.full);
-	const copyIndexes = Boolean(options.command.sync.copyIndexes ?? false);
+	const copyIndexes = options.command.sync.copyIndexes ?? false;
+	// `true` ou uma lista de índices escolhidos — as duas ligam a cópia.
+	const copyIndexesOn = copyIndexes === true || Array.isArray(copyIndexes);
 	const copyViews = options.command.sync.copyViews ?? false;
 	const copyViewsOn = copyViews === true || Array.isArray(copyViews);
 
 	const perfExtra =
 		(full ? t("sync.performance.full") : "") +
-		(copyIndexes ? t("sync.performance.copyindexes") : "") +
+		(copyIndexesOn ? t("sync.performance.copyindexes") : "") +
 		(copyViewsOn
 			? t("sync.performance.copyviews", {
 					n: Array.isArray(copyViews) ? copyViews.length : "all",
@@ -199,7 +201,7 @@ export async function syncCollections(
 			docsDumped: engine.docsDumped,
 			durationMs: performance.now() - t0,
 			stopHint,
-			...(copyIndexes
+			...(copyIndexesOn
 				? {
 						indexes: {
 							created: engine.indexesCreated,
@@ -224,7 +226,7 @@ export async function syncCollections(
 		// pra reportar "banco up em X". Vai pro terminal e pro logs/debug.log.
 		customLog("info", formatLoadReport(total, startedAt, finishedAt), true);
 		const readyExtra =
-			(copyIndexes
+			(copyIndexesOn
 				? t("sync.ready.indexes", {
 						created: engine.indexesCreated,
 						skipped: engine.indexesSkipped,

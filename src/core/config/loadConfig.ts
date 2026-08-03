@@ -63,7 +63,16 @@ export function parseConfigObject(parsed: unknown): LoadedConfig | null {
 	}
 
 	if (mode === "sync") {
-		form.copyIndexes = body.copyIndexes === true;
+		const ci = body.copyIndexes;
+		form.copyIndexes =
+			ci === true
+				? true
+				: Array.isArray(ci)
+					? ci.map((e) => ({
+							collection: String(e.collection),
+							indexes: [...(e.indexes ?? [])].map(String),
+						}))
+					: false;
 		const cv = body.copyViews;
 		form.copyViews = cv === true ? true : Array.isArray(cv) ? [...cv] : false;
 

@@ -9,6 +9,7 @@ import type { CollIndexes } from "../../core/inspect/indexSummary";
 import { type DbEntry, filterEntries } from "../../core/inspect/inspectDb";
 import { useClickable } from "../mouse/MouseProvider";
 import { glyph, theme } from "../theme";
+import { SearchField } from "./SearchField";
 import { windowRange } from "./Select";
 
 /**
@@ -186,22 +187,12 @@ export function CollectionPicker({
 				</Text>
 				<Text color={theme.border}> (a · n limpa · clique)</Text>
 			</Box>
-			<Box>
-				<Text color={searching ? theme.accent : theme.muted}>busca: </Text>
-				<Text>
-					{query || (
-						<Text color={theme.muted}>
-							{searching ? "" : "tecle / para buscar"}
-						</Text>
-					)}
-				</Text>
-				{searching ? <Text inverse> </Text> : null}
-				<Text color={theme.muted}>
-					{"  "}
-					{filtered.length}/{entries.length} listadas · {selected.size}{" "}
-					selecionadas
-				</Text>
-			</Box>
+			<SearchField
+				query={query}
+				active={searching}
+				onActivate={() => setSearching(true)}
+				summary={`${filtered.length}/${entries.length} · ${selected.size} marcadas`}
+			/>
 
 			<Box flexDirection="column" marginTop={1}>
 				{filtered.length === 0 ? (

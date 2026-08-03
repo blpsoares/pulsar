@@ -238,6 +238,44 @@ describe("buildTransferPlan", () => {
 
 		expect(buildTransferPlan(base).indexes).toBe(0);
 		expect(buildTransferPlan({ ...base, copyIndexes: true }).indexes).toBe(3);
+
+		// Seleção fina: conta os índices marcados, e só os que existem mesmo na
+		// origem — um nome digitado à mão que não bate não pode inflar o número.
+		const comNomes = [
+			{
+				collection: "users",
+				indexes: [
+					{ name: "_id_", key: {}, unique: false, ttl: false },
+					{ name: "email_1", key: { email: 1 }, unique: true, ttl: false },
+					{ name: "criado_1", key: { criado: 1 }, unique: false, ttl: false },
+				],
+				secondaryCount: 2,
+			},
+		];
+		expect(
+			buildTransferPlan({
+				...base,
+				indexes: comNomes,
+				copyIndexes: [{ collection: "users", indexes: ["email_1"] }],
+			}).indexes,
+		).toBe(1);
+		expect(
+			buildTransferPlan({
+				...base,
+				indexes: comNomes,
+				copyIndexes: [
+					{ collection: "users", indexes: ["email_1", "nao_existe"] },
+				],
+			}).indexes,
+		).toBe(1);
+		// Collection fora da seleção não conta, mesmo listada.
+		expect(
+			buildTransferPlan({
+				...base,
+				indexes: comNomes,
+				copyIndexes: [{ collection: "fora", indexes: ["x_1"] }],
+			}).indexes,
+		).toBe(0);
 	});
 
 	test("migrate leva índices sempre (mongorestore) e nunca views", () => {
@@ -413,5 +451,68 @@ describe("varredura recursiva de configs", () => {
 		});
 		expect(result.configs.length).toBeLessThanOrEqual(1);
 		expect(result.truncated).toBe(true);
+	});
+});
+
+/**
+ * `copyIndexes` como LISTA — a escolha índice a índice do passo "índices".
+ * A forma de objeto ({collection, indexes}) existe porque nome de collection e
+ * nome de índice aceitam ponto: "vendas.2024.status_1" seria indecifrável.
+ */
+describe("copyIndexes por índice", () => {
+	function syncFormWithIndexes() {
+		const f = syncForm();
+		f.copyIndexes = [
+			{ collection: "pedidos", indexes: ["cliente_1", "data_-1_status_1"] },
+		];
+		return f;
+	}
+
+	test("grava a lista escolhida no yml", () => {
+		const sync = (
+			buildConfig(syncFormWithIndexes()).command as Record<
+				string,
+				Record<string, unknown>
+			>
+		).sync;
+		expect(sync.copyIndexes).toEqual([
+			{ collection: "pedidos", indexes: ["cliente_1", "data_-1_status_1"] },
+		]);
+	});
+
+	test("collection sem nenhum índice marcado não vai para o arquivo", () => {
+		const f = syncForm();
+		f.copyIndexes = [
+			{ collection: "pedidos", indexes: ["cliente_1"] },
+			{ collection: "clientes", indexes: [] },
+		];
+		const sync = (
+			buildConfig(f).command as Record<string, Record<string, unknown>>
+		).sync;
+		expect(sync.copyIndexes).toEqual([
+			{ collection: "pedidos", indexes: ["cliente_1"] },
+		]);
+	});
+
+	test("lista inteiramente vazia não gera a chave", () => {
+		const f = syncForm();
+		f.copyIndexes = [];
+		const sync = (
+			buildConfig(f).command as Record<string, Record<string, unknown>>
+		).sync;
+		expect(sync.copyIndexes).toBeUndefined();
+	});
+
+	test("sobrevive ao round-trip", () => {
+		const original = syncFormWithIndexes();
+		const loaded = parseConfigObject(yaml.load(toYaml(buildConfig(original))));
+		expect(loaded?.form.copyIndexes).toEqual(original.copyIndexes);
+	});
+
+	test("true continua valendo (todos os índices)", () => {
+		const f = syncForm();
+		f.copyIndexes = true;
+		const loaded = parseConfigObject(yaml.load(toYaml(buildConfig(f))));
+		expect(loaded?.form.copyIndexes).toBe(true);
 	});
 });

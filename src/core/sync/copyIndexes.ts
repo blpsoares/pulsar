@@ -63,6 +63,13 @@ function signature(idx: Document): string {
 export async function ensureCollectionIndexes(
 	srcCol: Collection,
 	destCol: Collection,
+	/**
+	 * Quais índices desta collection copiar. `undefined` = todos (o
+	 * comportamento de sempre, `copyIndexes: true`). Um conjunto vazio significa
+	 * "nenhum desta collection" — e não "todos": quem escolheu índice por índice
+	 * e não marcou nenhum aqui não quer que o pulsar decida por ele.
+	 */
+	only?: Set<string>,
 ): Promise<IndexCopyResult> {
 	const result: IndexCopyResult = {
 		created: 0,
@@ -71,9 +78,11 @@ export async function ensureCollectionIndexes(
 		createdNames: [],
 	};
 
+	if (only?.size === 0) return result;
+
 	// Origem: se isto falhar, propaga (a collection inteira vira falha no engine).
 	const srcIdx = (await srcCol.listIndexes().toArray()).filter(
-		(i) => i.name !== "_id_",
+		(i) => i.name !== "_id_" && (!only || only.has(String(i.name))),
 	);
 	if (srcIdx.length === 0) return result;
 

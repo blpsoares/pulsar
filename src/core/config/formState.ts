@@ -1,3 +1,4 @@
+import type { CopyIndexesOption } from "../../types/parseYml";
 import type { TuiMode } from "../inspect/summary";
 
 /**
@@ -17,7 +18,8 @@ export type FormState = {
 	/** nomes escolhidos; sempre explícito no yml (o `--all` é decisão de runtime) */
 	collections: string[];
 	// --- avançado (sync) ---
-	copyIndexes: boolean;
+	/** `true` = todos os índices; lista = só os escolhidos, por collection. */
+	copyIndexes: CopyIndexesOption;
 	copyViews: boolean | string[];
 	logging: { verbose: boolean; progress: boolean; lang?: "en" | "pt" };
 	performance: {

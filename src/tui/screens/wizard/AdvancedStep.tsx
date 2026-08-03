@@ -42,16 +42,16 @@ function syncRows(): Row[] {
 		{
 			kind: "toggle",
 			label: "copyIndexes",
-			hint: "recria os índices secundários da origem no destino",
-			get: (f) => f.copyIndexes,
+			// Ligar aqui é "todos"; quais exatamente se escolhe no passo índices.
+			hint: "recria índices da origem — o passo 'índices' escolhe quais",
+			get: (f) => f.copyIndexes !== false,
 			set: (f, v) => ({ ...f, copyIndexes: v }),
 		},
 		{
 			kind: "toggle",
 			label: "copyViews",
-			hint: "recria as views da origem (v escolhe quais)",
+			hint: "recria as views da origem — o passo 'views' escolhe quais",
 			get: (f) => f.copyViews !== false,
-			// Ligar aqui significa "todas"; a seleção fina é pela tecla `v`.
 			set: (f, v) => ({ ...f, copyViews: v }),
 		},
 		{
@@ -194,13 +194,12 @@ export function AdvancedStep({
 	const rows = rowsFor(form);
 	const [cursor, setCursor] = useState(0);
 	const [editing, setEditing] = useState(false);
-	const [viewPicker, setViewPicker] = useState(false);
 
 	const row = rows[Math.min(cursor, rows.length - 1)];
 
 	useInput(
 		(input, key) => {
-			if (editing || viewPicker) return;
+			if (editing) return;
 
 			if (key.escape) {
 				onBack();
@@ -218,15 +217,6 @@ export function AdvancedStep({
 				onChange(row.set(form, !row.get(form)));
 				return;
 			}
-			if (
-				input === "v" &&
-				form.mode === "sync" &&
-				views.length > 0 &&
-				form.copyViews !== false
-			) {
-				setViewPicker(true);
-				return;
-			}
 			if (key.return) {
 				if (row?.kind === "text") setEditing(true);
 				else onDone();
@@ -234,16 +224,6 @@ export function AdvancedStep({
 		},
 		{ isActive: focused },
 	);
-
-	if (viewPicker)
-		return (
-			<ViewPicker
-				views={views}
-				value={form.copyViews}
-				onChange={(copyViews) => onChange({ ...form, copyViews })}
-				onClose={() => setViewPicker(false)}
-			/>
-		);
 
 	return (
 		<Box flexDirection="column">
@@ -291,11 +271,13 @@ export function AdvancedStep({
 				})}
 			</Box>
 
-			{form.mode === "sync" && Array.isArray(form.copyViews) ? (
-				<Box marginTop={1}>
-					<Text color={theme.muted}>
-						views escolhidas:{" "}
-						{form.copyViews.length ? form.copyViews.join(", ") : "nenhuma"}
+			{form.mode === "sync" ? (
+				<Box marginTop={1} flexDirection="column">
+					<Text color={theme.muted} wrap="truncate-end">
+						views: {describeViews(form.copyViews, views.length)}
+					</Text>
+					<Text color={theme.muted} wrap="truncate-end">
+						índices: {describeIndexes(form.copyIndexes)}
 					</Text>
 				</Box>
 			) : null}
@@ -303,71 +285,18 @@ export function AdvancedStep({
 	);
 }
 
-function ViewPicker({
-	views,
-	value,
-	onChange,
-	onClose,
-}: {
-	views: DbEntry[];
-	value: boolean | string[];
-	onChange: (next: boolean | string[]) => void;
-	onClose: () => void;
-}) {
-	const selected = new Set(
-		Array.isArray(value) ? value : views.map((v) => v.name),
-	);
-	const [cursor, setCursor] = useState(0);
+/** Resumo em uma linha do que os passos de views/índices deixaram escolhido. */
+function describeViews(value: boolean | string[], total: number): string {
+	if (value === true) return `todas (${total})`;
+	if (!Array.isArray(value) || value.length === 0) return "nenhuma";
+	return value.join(", ");
+}
 
-	useInput((input, key) => {
-		if (key.escape || key.return) {
-			onClose();
-			return;
-		}
-		if (key.upArrow) {
-			setCursor((c) => (c === 0 ? views.length - 1 : c - 1));
-			return;
-		}
-		if (key.downArrow) {
-			setCursor((c) => (c === views.length - 1 ? 0 : c + 1));
-			return;
-		}
-		if (input === " ") {
-			const name = views[cursor]?.name;
-			if (!name) return;
-			const next = new Set(selected);
-			if (next.has(name)) next.delete(name);
-			else next.add(name);
-			// Marcar todas volta a ser `true` no yml: mais legível e continua
-			// pegando views criadas na origem depois deste momento.
-			onChange(next.size === views.length ? true : Array.from(next));
-		}
-	});
-
-	return (
-		<Box flexDirection="column">
-			<Text color={theme.accent} bold>
-				quais views recriar no destino
-			</Text>
-			<Box flexDirection="column" marginTop={1}>
-				{views.map((v, i) => (
-					<Box key={v.name}>
-						<Text color={i === cursor ? theme.selection : undefined}>
-							{i === cursor ? `${glyph.cursor} ` : "  "}
-							<Text color={selected.has(v.name) ? theme.ok : theme.muted}>
-								{selected.has(v.name) ? glyph.checked : glyph.unchecked}
-							</Text>{" "}
-							{v.name}
-						</Text>
-						<Text color={theme.muted}> sobre {v.viewOn ?? "?"}</Text>
-					</Box>
-				))}
-			</Box>
-			<Box marginTop={1}>
-				<Text color={theme.muted}>espaço marca · enter/esc volta</Text>
-			</Box>
-		</Box>
-	);
+function describeIndexes(value: FormState["copyIndexes"]): string {
+	if (value === true) return "todos";
+	if (!Array.isArray(value) || value.length === 0) return "nenhum";
+	const n = value.reduce((acc, e) => acc + e.indexes.length, 0);
+	return `${n} em ${value.length} collection(s)`;
 }
 
 function numToStr(n?: number): string {

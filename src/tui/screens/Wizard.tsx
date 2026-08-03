@@ -31,7 +31,9 @@ import {
 	type EstimateOptions,
 	EstimatesOptions,
 } from "./wizard/EstimatesPanel";
+import { IndexesStep } from "./wizard/IndexesStep";
 import { ReviewStep } from "./wizard/ReviewStep";
+import { ViewsStep } from "./wizard/ViewsStep";
 
 /**
  * O wizard dentro do cockpit: trilho de passos na sidebar, passo atual no
@@ -48,6 +50,8 @@ type Step =
 	| "source"
 	| "destination"
 	| "collections"
+	| "views"
+	| "indexes"
 	| "advanced"
 	| "review";
 
@@ -56,6 +60,8 @@ const STEP_LABEL: Record<Step, string> = {
 	source: "origem",
 	destination: "destino",
 	collections: "collections",
+	views: "views",
+	indexes: "índices",
 	advanced: "avançado",
 	review: "salvar",
 };
@@ -356,6 +362,33 @@ export function Wizard({
 					/>
 				) : null}
 
+				{step === "views" ? (
+					<ViewsStep
+						views={views}
+						value={form.copyViews}
+						selectedCollections={form.collections}
+						onChange={(copyViews) => setForm((f) => ({ ...f, copyViews }))}
+						onDone={next}
+						onBack={back}
+						focused={!railFocus}
+						visibleRows={l.panelRows - 4}
+					/>
+				) : null}
+
+				{step === "indexes" ? (
+					<IndexesStep
+						dbName={form.source.db}
+						collections={form.collections}
+						value={form.copyIndexes}
+						onChange={(copyIndexes) => setForm((f) => ({ ...f, copyIndexes }))}
+						inspector={source}
+						onDone={next}
+						onBack={back}
+						focused={!railFocus}
+						visibleRows={l.panelRows - 4}
+					/>
+				) : null}
+
 				{step === "advanced" ? (
 					<AdvancedStep
 						focused={!railFocus}
@@ -594,17 +627,36 @@ function PlanPanel({
 	);
 }
 
-/** ttl opera num banco só — o passo de destino simplesmente não existe nele. */
+/**
+ * Os passos existentes dependem do modo, e não é cosmético:
+ *
+ * - `ttl` opera num banco só → não existe passo de destino.
+ * - views e índices são decisões do `sync`. No `migrate` o mongorestore leva os
+ *   índices sempre (não há o que escolher) e views não passam; oferecer os
+ *   passos ali seria oferecer um controle que não controla nada.
+ */
 function stepOrder(mode: TuiMode): Step[] {
-	const order: Step[] = [
+	if (mode === "ttl")
+		return ["mode", "source", "collections", "advanced", "review"];
+	if (mode === "migrate")
+		return [
+			"mode",
+			"source",
+			"destination",
+			"collections",
+			"advanced",
+			"review",
+		];
+	return [
 		"mode",
 		"source",
 		"destination",
 		"collections",
+		"views",
+		"indexes",
 		"advanced",
 		"review",
 	];
-	return mode === "ttl" ? order.filter((s) => s !== "destination") : order;
 }
 
 function describeMode(mode: TuiMode): string {
@@ -620,6 +672,16 @@ function copyTargetFor(step: Step, form: FormState): string | null {
 	if (step === "source") return form.source.uri || null;
 	if (step === "destination") return form.destination.uri || null;
 	if (step === "collections") return form.collections.join("\n") || null;
+	if (step === "views")
+		return Array.isArray(form.copyViews)
+			? form.copyViews.join("\n") || null
+			: String(form.copyViews);
+	if (step === "indexes")
+		return Array.isArray(form.copyIndexes)
+			? form.copyIndexes
+					.map((e) => `${e.collection}: ${e.indexes.join(", ")}`)
+					.join("\n") || null
+			: String(form.copyIndexes);
 	if (step === "review") return toYaml(buildConfig(form));
 	return null;
 }
@@ -660,6 +722,16 @@ function hintsFor(step: Step, asideFocus: boolean, railFocus: boolean): Hint[] {
 				{ keys: "a/n", label: "todas/nenhuma" },
 				{ keys: "c", label: "contar exato" },
 				{ keys: "e", label: "estimativas" },
+				{ keys: "enter", label: "seguir" },
+				{ keys: "esc", label: "voltar" },
+			];
+		case "views":
+		case "indexes":
+			return [
+				{ keys: "tab", label: "passos" },
+				{ keys: "espaço", label: "marcar" },
+				{ keys: "/", label: "buscar" },
+				{ keys: "a/n", label: "todos/nenhum" },
 				{ keys: "enter", label: "seguir" },
 				{ keys: "esc", label: "voltar" },
 			];

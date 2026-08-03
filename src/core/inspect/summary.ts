@@ -1,3 +1,4 @@
+import type { CopyIndexesOption } from "../../types/parseYml";
 import type { CollEstimate } from "./collStats";
 import type { CollIndexes } from "./indexSummary";
 import type { DbEntry } from "./inspectDb";
@@ -42,7 +43,7 @@ export type PlanInput = {
 	estimates: CollEstimate[];
 	indexes?: CollIndexes[];
 	sourceViews?: DbEntry[];
-	copyIndexes?: boolean;
+	copyIndexes?: CopyIndexesOption;
 	copyViews?: boolean | string[];
 };
 
@@ -84,11 +85,27 @@ function countIndexes(
 	mode: TuiMode,
 	chosen: Set<string>,
 	indexes: CollIndexes[],
-	copyIndexes: boolean,
+	copyIndexes: CopyIndexesOption,
 ): number {
 	// migrate leva índices sempre (mongorestore); ttl cria 1 índice por coll.
 	if (mode === "ttl") return chosen.size;
-	if (mode === "sync" && !copyIndexes) return 0;
+	if (mode === "sync" && copyIndexes === false) return 0;
+
+	// Seleção fina: conta só os índices nomeados que existem de fato na origem —
+	// somar a lista crua inflaria o número com nome digitado à mão que não bate.
+	if (Array.isArray(copyIndexes)) {
+		const byColl = new Map(indexes.map((i) => [i.collection, i]));
+		return copyIndexes.reduce((acc, entry) => {
+			if (!chosen.has(entry.collection)) return acc;
+			const known = byColl.get(entry.collection);
+			if (!known) return acc + entry.indexes.length;
+			const names = new Set(
+				known.indexes.filter((i) => i.name !== "_id_").map((i) => i.name),
+			);
+			return acc + entry.indexes.filter((n) => names.has(n)).length;
+		}, 0);
+	}
+
 	return indexes
 		.filter((i) => chosen.has(i.collection))
 		.reduce((acc, i) => acc + i.secondaryCount, 0);

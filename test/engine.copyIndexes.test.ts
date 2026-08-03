@@ -70,6 +70,58 @@ describe("SyncEngine — copyIndexes", () => {
 		await engine.stop();
 	});
 
+	test("copyIndexes como LISTA cria só os índices escolhidos", async () => {
+		await seed(srcDb, "colSel", 10);
+		await srcDb.collection("colSel").createIndex({ v: 1 }, { name: "quero" });
+		await srcDb
+			.collection("colSel")
+			.createIndex({ w: -1 }, { name: "nao_quero" });
+
+		const engine = new SyncEngine({
+			sourceDb: srcDb,
+			destDb: dstDb,
+			collections: [{ name: "colSel" }],
+			copyIndexes: [{ collection: "colSel", indexes: ["quero"] }],
+			checkpointIntervalMs: 100,
+		});
+		await engine.start();
+
+		const names = (await dstDb.collection("colSel").indexes()).map(
+			(i) => i.name,
+		);
+		expect(names).toContain("quero");
+		expect(names).not.toContain("nao_quero");
+		expect(engine.indexesCreated).toBe(1);
+
+		await engine.stop();
+	});
+
+	test("collection fora da lista não recebe índice nenhum", async () => {
+		await seed(srcDb, "comIdx", 5);
+		await seed(srcDb, "semIdx", 5);
+		await srcDb.collection("comIdx").createIndex({ v: 1 }, { name: "i1" });
+		await srcDb.collection("semIdx").createIndex({ v: 1 }, { name: "i2" });
+
+		const engine = new SyncEngine({
+			sourceDb: srcDb,
+			destDb: dstDb,
+			collections: [{ name: "comIdx" }, { name: "semIdx" }],
+			copyIndexes: [{ collection: "comIdx", indexes: ["i1"] }],
+			checkpointIntervalMs: 100,
+		});
+		await engine.start();
+
+		expect(
+			(await dstDb.collection("comIdx").indexes()).map((i) => i.name),
+		).toContain("i1");
+		expect(
+			(await dstDb.collection("semIdx").indexes()).map((i) => i.name),
+		).not.toContain("i2");
+		expect(engine.indexesCreated).toBe(1);
+
+		await engine.stop();
+	});
+
 	test("copyIndexes:true no path de RESUME: cria índice sem re-dumpar", async () => {
 		await seed(srcDb, "colR", 10);
 

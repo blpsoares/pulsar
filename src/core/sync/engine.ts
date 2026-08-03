@@ -7,6 +7,7 @@ import type {
 	ResumeToken,
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
+import type { CopyIndexesOption } from "../../types/parseYml";
 import { customLog, logger } from "../../utils/customLog";
 import { t } from "../../utils/i18n";
 import { setSyncPlan } from "../../utils/progressManager";
@@ -47,8 +48,9 @@ export type SyncEngineOptions = {
 	flushIntervalMs?: number;
 	/** Janela máx. p/ considerar um resume estabelecido (e p/ aguardar token). */
 	resumeProbeMs?: number;
-	/** Replicar no destino os índices secundários da origem (default false). */
-	copyIndexes?: boolean;
+	/** Replicar no destino os índices secundários da origem (default false).
+	 *  `true` = todos; lista `{ collection, indexes }` = só os nomeados. */
+	copyIndexes?: CopyIndexesOption;
 	/** Recriar no destino as views da origem (metadados, fora do sync). `true` =
 	 *  todas; array de nomes = só essas; `false`/omitido = nenhuma. */
 	copyViews?: boolean | string[];
@@ -226,7 +228,7 @@ export class SyncEngine {
 
 		// collections que RESUMIRAM (dados já no destino): completa índices faltantes
 		// no startup. As que dumparam já trataram índices no runDump.
-		if (this.opts.copyIndexes) {
+		if (this.opts.copyIndexes !== false) {
 			const resumedCols = plans.filter((p) => !p.needsDump).map((p) => p.col);
 			const idxLimiter = new Bottleneck({ maxConcurrent: this.opts.parallel });
 			await Promise.all(
@@ -314,13 +316,29 @@ export class SyncEngine {
 		}
 	}
 
+	/**
+	 * Quais índices desta collection o usuário quer. `undefined` = todos
+	 * (`copyIndexes: true`); um Set (possivelmente vazio) quando a config lista
+	 * índice por índice — collection fora da lista não recebe nenhum.
+	 */
+	private indexesWanted(coll: string): Set<string> | undefined {
+		const opt = this.opts.copyIndexes;
+		if (!Array.isArray(opt)) return undefined;
+		const entry = opt.find((e) => e.collection === coll);
+		return new Set(entry?.indexes ?? []);
+	}
+
 	/** Garante os índices da origem no destino p/ uma collection; agrega e loga. */
 	private async copyIndexesFor(col: EngineCollection): Promise<void> {
 		const route = this.routes.get(col.name);
 		if (!route) return;
 		let res: Awaited<ReturnType<typeof ensureCollectionIndexes>>;
 		try {
-			res = await ensureCollectionIndexes(route.srcCol, route.destCol);
+			res = await ensureCollectionIndexes(
+				route.srcCol,
+				route.destCol,
+				this.indexesWanted(col.name),
+			);
 		} catch (err) {
 			// listIndexes da origem falhou → a collection inteira falha na cópia.
 			const reason = err instanceof Error ? err.message : String(err);
@@ -379,7 +397,7 @@ export class SyncEngine {
 			this.lastFrontier.delete(col.name);
 			// índices DEPOIS do dump: build em lote único é mais rápido que manter
 			// índice a cada insert (igual ao mongorestore).
-			if (this.opts.copyIndexes) await this.copyIndexesFor(col);
+			if (this.opts.copyIndexes !== false) await this.copyIndexesFor(col);
 		} else {
 			// falhou mesmo após os retries: fica sem dumpCompletedAt (re-dumpa no
 			// próximo restart, retomando da fronteira salva) e entra no relatório.

@@ -81,7 +81,7 @@ src/
     index.tsx             # render da TUI; exige TTY (sem TTY manda usar os subcomandos)
     App.tsx               # roteador de telas
     theme.ts              # paleta/glifos
-    components/           # Frame, Select, TextInput, CollectionPicker
+    components/           # Frame, Select, TextInput, CollectionPicker, EntryPicker, SearchField
     hooks/                # useInspector (Mongo), useProcess (filho), useSpinner
     screens/              # Home, Wizard, Runner, Services, Logs (+ wizard/*)
   stubs/
@@ -195,7 +195,19 @@ Não é a data de criação real em produção — é "quando sincronizou". Pra 
 
 ### Cópia de índices (`copyIndexes`)
 
-O copy doc-a-doc do sync **não** traz os índices secundários da origem (só os dados; `migrate` via mongorestore traz). Com `copyIndexes: true` no yml, o sync replica os índices da origem no destino: faz um **diff por assinatura** (key+opções) e cria **só os que faltam** — num banco já migrado, a maioria das collections nem recebe escrita. Collection que dumpa cria o índice **depois** do dump (build em lote, igual mongorestore); collection que resume completa no startup. Falha de `createIndex` (ex.: conflito de nome) é **contida** (loga, não aborta o sync) e re-tentada no próximo startup. Nunca remove índices que existem só no destino. Painel final mostra `Índices · criados/já existiam/falhados`. Lógica em `core/sync/copyIndexes.ts`, testes em `test/copyIndexes.test.ts` e `test/engine.copyIndexes.test.ts`.
+O copy doc-a-doc do sync **não** traz os índices secundários da origem (só os dados; `migrate` via mongorestore traz). Com `copyIndexes` no yml, o sync replica os índices da origem no destino: faz um **diff por assinatura** (key+opções) e cria **só os que faltam** — num banco já migrado, a maioria das collections nem recebe escrita.
+
+Aceita `true` (todos) ou uma **lista por collection**, quando só alguns índices interessam na réplica (build de índice em collection de centenas de milhões de docs custa horas e disco):
+
+```yaml
+copyIndexes: true            # todos os secundários de todas as collections
+# — ou —
+copyIndexes:
+  - collection: pedidos
+    indexes: [cliente_1, data_-1_status_1]
+```
+
+A forma de **objeto** (e não `"pedidos.cliente_1"`) é proposital: nome de collection e nome de índice aceitam ponto, e um separador ambíguo tornaria `vendas.2024.status_1` indecifrável. Collection **não citada** na lista não recebe índice nenhum; lista vazia idem — quem escolheu um a um não quer o pulsar decidindo por ele. `_id_` nunca entra (já existe no destino). Collection que dumpa cria o índice **depois** do dump (build em lote, igual mongorestore); collection que resume completa no startup. Falha de `createIndex` (ex.: conflito de nome) é **contida** (loga, não aborta o sync) e re-tentada no próximo startup. Nunca remove índices que existem só no destino. Painel final mostra `Índices · criados/já existiam/falhados`. Lógica em `core/sync/copyIndexes.ts`, testes em `test/copyIndexes.test.ts` e `test/engine.copyIndexes.test.ts`.
 
 ### Migração de views (`copyViews`)
 
@@ -246,7 +258,7 @@ command:
     logging:
       verbose: false    # default false
       progress: true    # default true
-    copyIndexes: false   # default false; true replica índices secundários da origem no destino
+    copyIndexes: false   # default false; true = todos os índices secundários; ou lista por collection
     copyViews: false     # default false; true recria TODAS as views da origem; ou um array de nomes
     collections:
       - simple-collection
@@ -358,7 +370,9 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   A navegação percorre LINHAS ACHATADAS (cabeçalhos + itens visíveis), então
   seta para baixo atravessa seções sem estado de "em que nível estou".
 - **Criar/editar config:** form guiado (modo → origem → destino → collections →
-  avançado → revisar). Conecta na origem de verdade, lista os bancos **com
+  **views → índices** → avançado → revisar; views/índices só no `sync`, onde há
+  o que escolher — no `migrate` o mongorestore leva índice sempre e view não
+  passa). Conecta na origem de verdade, lista os bancos **com
   tamanho**, e mostra collections e views com **busca incremental** (`/`) e
   multi-seleção. Abrir um yml existente **reconecta sozinho** pela URI do
   arquivo (sem isso, o passo de collections viria vazio e o yml seria
@@ -371,6 +385,22 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   milissegundos. As contagens de collections/views exibidas vêm da LISTA, não do
   `dbStats`: ele conta `system.views` como collection e o número na tela tem que
   bater com o que dá para selecionar.
+- **Views e índices são PASSOS, não um toggle:** escolher *quais* views recriar
+  e *quais* índices construir no destino tem peso — uma view cuja base ficou
+  fora da seleção responde vazio, e um índice em collection de 215M docs custa
+  horas de build. Antes as views se escolhiam num sub-painel escondido atrás da
+  tecla `v` dentro de "avançado" (sem busca, sem mouse) e os índices eram
+  tudo-ou-nada. Agora cada um é um passo com a mesma lista marcável, e o
+  "avançado" só liga/desliga o recurso. O passo de índices lista os índices das
+  collections **selecionadas** (com os campos e as marcas único/TTL) — índice de
+  collection que não vai ser sincronizada não teria onde ser criado.
+- **Campo de busca visível (`components/SearchField.tsx`):** a busca das listas
+  existia e funcionava (`/`), mas era uma linha de texto discreta que passava
+  despercebida — em lista de 200 collections a pessoa rolava tudo na seta
+  achando que não dava para buscar. Agora tem moldura, cursor quando ativa e é
+  **clicável**, nas três listas (collections, views, índices). A tecla continua
+  sendo `/`, porque as letras precisam servir de atalho (`a`/`n`/`c`/`e`) quando
+  a busca está desligada.
 - **Estimativas (opt-in):** o painel `e` liga "show estimatives" e escolhe quais
   métricas puxar. Por padrão a tela não conta nada — `countDocuments` numa
   collection de 215M docs levaria minutos. Os números vêm de `$collStats`

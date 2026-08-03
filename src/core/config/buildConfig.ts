@@ -48,7 +48,18 @@ function buildSync(
 		collections,
 	};
 
-	if (form.copyIndexes) out.copyIndexes = true;
+	if (form.copyIndexes === true) out.copyIndexes = true;
+	else if (Array.isArray(form.copyIndexes)) {
+		// Só entram collections com pelo menos um índice marcado: uma entrada com
+		// lista vazia diria "esta collection não leva índice", que é o mesmo que
+		// não citá-la — e polui o arquivo.
+		const picked = form.copyIndexes.filter((e) => e.indexes.length > 0);
+		if (picked.length > 0)
+			out.copyIndexes = picked.map((e) => ({
+				collection: e.collection,
+				indexes: [...e.indexes],
+			}));
+	}
 	if (form.copyViews === true) out.copyViews = true;
 	else if (Array.isArray(form.copyViews) && form.copyViews.length > 0)
 		out.copyViews = [...form.copyViews];

@@ -207,3 +207,67 @@ describe("ensureCollectionIndexes", () => {
 		expect(idx?.partialFilterExpression).toEqual({ ref: { $exists: true } });
 	});
 });
+
+/**
+ * Seleção fina de índices (`copyIndexes` como lista no yml). O caso perigoso é
+ * a lista VAZIA: ela precisa significar "nenhum índice desta collection", nunca
+ * cair no default de copiar tudo — quem escolheu um a um não quer que o pulsar
+ * decida por ele.
+ */
+describe("seleção de quais índices copiar", () => {
+	beforeEach(async () => {
+		await srcDb.collection("pedidos").insertOne({ a: 1 });
+		await srcDb.collection("pedidos").createIndex({ cliente: 1 });
+		await srcDb.collection("pedidos").createIndex({ data: -1, status: 1 });
+		await srcDb.collection("pedidos").createIndex({ sku: 1 }, { unique: true });
+	});
+
+	test("copia só os índices nomeados", async () => {
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("pedidos"),
+			dstDb.collection("pedidos"),
+			new Set(["cliente_1"]),
+		);
+
+		expect(res.created).toBe(1);
+		expect(res.createdNames).toEqual(["cliente_1"]);
+		const names = (await dstDb.collection("pedidos").indexes()).map(
+			(i) => i.name,
+		);
+		expect(names).toContain("cliente_1");
+		expect(names).not.toContain("sku_1");
+	});
+
+	test("conjunto vazio não copia nada (não é 'todos')", async () => {
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("pedidos"),
+			dstDb.collection("pedidos"),
+			new Set(),
+		);
+
+		expect(res.created).toBe(0);
+		// Nada criado significa que a collection nem chegou a existir no destino.
+		const existe = await dstDb
+			.listCollections({ name: "pedidos" })
+			.toArray();
+		expect(existe).toHaveLength(0);
+	});
+
+	test("sem seleção continua copiando todos", async () => {
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("pedidos"),
+			dstDb.collection("pedidos"),
+		);
+		expect(res.created).toBe(3);
+	});
+
+	test("nome que não existe na origem é ignorado, não vira falha", async () => {
+		const res = await ensureCollectionIndexes(
+			srcDb.collection("pedidos"),
+			dstDb.collection("pedidos"),
+			new Set(["cliente_1", "indice_fantasma"]),
+		);
+		expect(res.created).toBe(1);
+		expect(res.failed).toHaveLength(0);
+	});
+});
