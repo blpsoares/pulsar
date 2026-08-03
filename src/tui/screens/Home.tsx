@@ -444,8 +444,8 @@ function useServiceStatus(dir: string, file?: string): ServiceStatus | null {
 	const [backend, setBackend] = useState<Backend | null>(null);
 
 	useEffect(() => {
-		void detectBackends(false).then((a) => setBackend(preferredBackend(a)));
-	}, []);
+		void detectBackends(dir).then((a) => setBackend(preferredBackend(a)));
+	}, [dir]);
 
 	useEffect(() => {
 		if (!file || !backend) return;

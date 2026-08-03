@@ -1,12 +1,13 @@
 import { basename, resolve } from "node:path";
-import { Box, Text, useInput } from "ink";
-import { useEffect, useRef, useState } from "react";
+import { Box, type DOMElement, Text, useInput } from "ink";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import { formatBytes } from "../../core/inspect/collStats";
 import {
 	filterLines,
 	listLogFiles,
+	logWindow,
 	readSince,
 	tailFile,
 } from "../../core/logs/readLog";
@@ -25,6 +26,7 @@ import {
 } from "../components/Shell";
 import { useProcess } from "../hooks/useProcess";
 import { useTerminalSize } from "../hooks/useTerminalSize";
+import { useClickable } from "../mouse/MouseProvider";
 import { glyph, theme } from "../theme";
 
 /**
@@ -103,6 +105,7 @@ export function LogsScreen({
 			hints={[
 				{ keys: "tab", label: "painel" },
 				{ keys: "↑↓", label: pane === "sources" ? "fonte" : "rolar" },
+				{ keys: "pgup/pgdn", label: "página" },
 				{ keys: "/", label: "buscar" },
 				{ keys: "f", label: "seguir" },
 				{ keys: "g", label: "fim" },
@@ -119,6 +122,10 @@ export function LogsScreen({
 					sources={sources}
 					index={index}
 					focused={pane === "sources"}
+					onPick={(i) => {
+						setIndex(i);
+						setPane("sources");
+					}}
 				/>
 			</Panel>
 
@@ -147,6 +154,7 @@ export function LogsScreen({
 					aside={l.aside}
 					height={l.body}
 					visibleRows={l.panelRows - 1}
+					focused={pane === "content"}
 				/>
 			)}
 		</Shell>
@@ -157,44 +165,197 @@ function SourceList({
 	sources,
 	index,
 	focused,
+	onPick,
 }: {
 	sources: Source[];
 	index: number;
 	focused: boolean;
+	onPick: (index: number) => void;
 }) {
+	// As linhas são achatadas (cabeçalhos + fontes) para que o clique saiba
+	// exatamente qual fonte está sob o cursor — contar só as fontes erraria o
+	// alvo por uma linha a cada cabeçalho acima dela.
+	const rows: (
+		| { kind: "header"; label: string }
+		| {
+				kind: "source";
+				source: Source;
+				index: number;
+		  }
+	)[] = [];
+	let lastKind: string | null = null;
+	for (const [i, s] of sources.entries()) {
+		if (s.kind !== lastKind) {
+			rows.push({
+				kind: "header",
+				label: s.kind === "file" ? "─ arquivo ─" : "─ ao vivo ─",
+			});
+			lastKind = s.kind;
+		}
+		rows.push({ kind: "source", source: s, index: i });
+	}
+
+	const ref = useClickable({
+		onClick: ({ row }) => {
+			const target = rows[row];
+			if (target?.kind === "source") onPick(target.index);
+		},
+		onWheel: (direction) => {
+			if (sources.length === 0) return;
+			onPick(Math.max(0, Math.min(sources.length - 1, index + direction)));
+		},
+	});
+
 	if (sources.length === 0)
 		return <Text color={theme.muted}>nada para ler</Text>;
 
-	let lastKind: string | null = null;
-
 	return (
-		<Box flexDirection="column">
-			{sources.map((s, i) => {
-				const active = i === index;
-				const header = s.kind !== lastKind ? s.kind : null;
-				lastKind = s.kind;
-				const label = s.kind === "file" ? s.name : basename(s.file);
+		<Box flexDirection="column" ref={ref}>
+			{rows.map((row, i) =>
+				row.kind === "header" ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: linha é posicional
+					<Text key={i} color={theme.border}>
+						{row.label}
+					</Text>
+				) : (
+					<Text
+						// biome-ignore lint/suspicious/noArrayIndexKey: linha é posicional
+						key={i}
+						color={
+							row.index === index
+								? focused
+									? theme.selection
+									: theme.label
+								: theme.muted
+						}
+						bold={row.index === index}
+						wrap="truncate-end"
+					>
+						{row.index === index ? "▍" : " "}
+						{row.source.kind === "file"
+							? row.source.name
+							: basename(row.source.file)}
+					</Text>
+				),
+			)}
+		</Box>
+	);
+}
 
-				return (
-					<Box key={`${s.kind}:${label}`} flexDirection="column">
-						{header ? (
-							<Text color={theme.border}>
-								{header === "file" ? "─ arquivo ─" : "─ ao vivo ─"}
-							</Text>
-						) : null}
-						<Text
-							color={
-								active ? (focused ? theme.selection : theme.label) : theme.muted
-							}
-							bold={active}
-							wrap="truncate-end"
-						>
-							{active ? "▍" : " "}
-							{label}
-						</Text>
-					</Box>
-				);
-			})}
+type Viewport = {
+	/** vai no Box que envolve as linhas — é o que a roda do mouse enxerga */
+	ref: RefObject<DOMElement | null>;
+	/** a janela que cabe na tela */
+	visible: string[];
+	/** as linhas depois da busca, para contagem e níveis */
+	filtered: string[];
+	query: string;
+	searching: boolean;
+	follow: boolean;
+	scroll: number;
+};
+
+/**
+ * Rolagem, busca e "seguir" — os mesmos para arquivo e ao vivo.
+ *
+ * Antes só o visualizador de ARQUIVO tinha isso: no ao vivo a tela era um
+ * `slice(-visibleRows)` fixo, então não havia como olhar para trás justamente
+ * onde mais importa (o erro que passou correndo enquanto o dump cuspia linhas).
+ *
+ * Enquanto se lê o passado, as linhas exibidas ficam CONGELADAS. Rolar sobre um
+ * log que continua crescendo, sem congelar, empurra o texto para cima a cada
+ * linha nova e a linha que você estava lendo foge da tela.
+ */
+function useLogViewport(
+	lines: string[],
+	{ focused, visibleRows }: { focused: boolean; visibleRows: number },
+): Viewport {
+	const [follow, setFollow] = useState(true);
+	const [scroll, setScroll] = useState(0);
+	const [query, setQuery] = useState("");
+	const [searching, setSearching] = useState(false);
+	const frozen = useRef<string[] | null>(null);
+
+	const source = follow ? lines : (frozen.current ?? lines);
+	const filtered = filterLines(source, query);
+	const window = logWindow(filtered, scroll, visibleRows);
+
+	/** `scroll` é a distância até o FIM: 0 = colado no fim, seguindo. */
+	function scrollTo(next: number) {
+		const { scroll: clamped } = logWindow(filtered, next, visibleRows);
+		frozen.current = clamped === 0 ? null : (frozen.current ?? lines);
+		setFollow(clamped === 0);
+		setScroll(clamped);
+	}
+
+	const ref = useClickable({
+		onWheel: (direction) => {
+			if (!focused) return;
+			// direction -1 é roda para cima = voltar no tempo = afastar do fim.
+			scrollTo(scroll - direction * 3);
+		},
+	});
+
+	useInput(
+		(input, key) => {
+			if (searching) {
+				if (key.return || key.escape) {
+					setSearching(false);
+					return;
+				}
+				if (key.backspace || key.delete) {
+					setQuery((q) => q.slice(0, -1));
+					return;
+				}
+				if (input && !key.ctrl && !key.meta && !key.tab)
+					setQuery((q) => q + input);
+				return;
+			}
+			if (input === "/") {
+				setSearching(true);
+				return;
+			}
+			if (input === "f") {
+				scrollTo(follow ? 1 : 0);
+				return;
+			}
+			if (input === "g") {
+				scrollTo(0);
+				return;
+			}
+			if (key.upArrow || input === "k") scrollTo(scroll + 1);
+			else if (key.downArrow || input === "j") scrollTo(scroll - 1);
+			else if (key.pageUp) scrollTo(scroll + visibleRows);
+			else if (key.pageDown) scrollTo(scroll - visibleRows);
+		},
+		{ isActive: focused },
+	);
+
+	return {
+		ref,
+		visible: window.visible,
+		filtered,
+		query,
+		searching,
+		follow,
+		scroll: window.scroll,
+	};
+}
+
+/** As linhas em si, num Box que a roda do mouse consegue localizar. */
+function LogLines({ viewport, empty }: { viewport: Viewport; empty: string }) {
+	return (
+		<Box flexDirection="column" flexGrow={1} ref={viewport.ref}>
+			{viewport.visible.length === 0 ? (
+				<Text color={theme.muted}>{empty}</Text>
+			) : (
+				viewport.visible.map((line, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: janela de log é posicional
+					<Text key={i} color={colorFor(line)} wrap="truncate-end">
+						{line || " "}
+					</Text>
+				))
+			)}
 		</Box>
 	);
 }
@@ -224,13 +385,14 @@ function FileViewer({
 	const initial = useRef(tailFile(path, 500));
 	const [lines, setLines] = useState<string[]>(initial.current.lines);
 	const offsetRef = useRef(initial.current.size);
-	const [follow, setFollow] = useState(true);
-	const [query, setQuery] = useState("");
-	const [searching, setSearching] = useState(false);
-	const [scroll, setScroll] = useState(0);
 
+	const view = useLogViewport(lines, { focused, visibleRows });
+	const { query, searching, follow, scroll } = view;
+
+	// O arquivo continua sendo lido mesmo pausado: o que congela é a JANELA na
+	// tela (no viewport), não a coleta. Parar de ler deixaria um buraco no
+	// histórico ao voltar a seguir.
 	useEffect(() => {
-		if (!follow) return;
 		const id = setInterval(() => {
 			const { lines: fresh, size } = readSince(path, offsetRef.current);
 			offsetRef.current = size;
@@ -238,51 +400,9 @@ function FileViewer({
 			setLines((prev) => [...prev, ...fresh].slice(-2000));
 		}, POLL_MS);
 		return () => clearInterval(id);
-	}, [path, follow]);
+	}, [path]);
 
-	useInput(
-		(input, key) => {
-			if (searching) {
-				if (key.return || key.escape) {
-					setSearching(false);
-					return;
-				}
-				if (key.backspace || key.delete) {
-					setQuery((q) => q.slice(0, -1));
-					return;
-				}
-				if (input && !key.ctrl && !key.meta && !key.tab)
-					setQuery((q) => q + input);
-				return;
-			}
-			if (input === "/") {
-				setSearching(true);
-				return;
-			}
-			if (input === "f") {
-				setFollow((f) => !f);
-				return;
-			}
-			if (key.upArrow) {
-				// Rolar para trás desliga o "seguir": senão a tela pularia de volta
-				// ao fim a cada linha nova, e ler o passado seria impossível.
-				setFollow(false);
-				setScroll((s) => s + 1);
-				return;
-			}
-			if (key.downArrow) setScroll((s) => Math.max(0, s - 1));
-			if (input === "g") {
-				setScroll(0);
-				setFollow(true);
-			}
-		},
-		{ isActive: focused },
-	);
-
-	const filtered = filterLines(lines, query);
-	const end = Math.max(0, filtered.length - scroll);
-	const visible = filtered.slice(Math.max(0, end - visibleRows), end);
-	const counts = countLevels(filtered);
+	const counts = countLevels(view.filtered);
 
 	return (
 		<>
@@ -300,23 +420,19 @@ function FileViewer({
 					) : undefined
 				}
 			>
-				{visible.length === 0 ? (
-					<Text color={theme.muted}>
-						{query ? `nada com "${query}"` : "arquivo vazio"}
-					</Text>
-				) : (
-					visible.map((line, i) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: janela de log é posicional
-						<Text key={i} color={colorFor(line)} wrap="truncate-end">
-							{line || " "}
-						</Text>
-					))
-				)}
+				<LogLines
+					viewport={view}
+					empty={query ? `nada com "${query}"` : "arquivo vazio"}
+				/>
 			</Panel>
 
 			{aside > 0 ? (
 				<Panel title="arquivo" width={aside} height={height}>
-					<Stat label="linhas" value={String(filtered.length)} width={aside} />
+					<Stat
+						label="linhas"
+						value={String(view.filtered.length)}
+						width={aside}
+					/>
 					<Stat
 						label="tamanho"
 						value={formatBytes(offsetRef.current)}
@@ -371,6 +487,7 @@ function LiveViewer({
 	aside,
 	height,
 	visibleRows,
+	focused,
 }: {
 	dir: string;
 	file: string;
@@ -378,6 +495,7 @@ function LiveViewer({
 	aside: number;
 	height: number;
 	visibleRows: number;
+	focused: boolean;
 }) {
 	const proc = useProcess(1000);
 	const [backend, setBackend] = useState<Backend | null>(null);
@@ -389,7 +507,7 @@ function LiveViewer({
 		started.current = true;
 
 		void (async () => {
-			const availability = await detectBackends(true);
+			const availability = await detectBackends(dir);
 			const chosen = preferredBackend(availability);
 			if (!chosen) {
 				setError("nenhum supervisor disponível nesta máquina");
@@ -417,27 +535,35 @@ function LiveViewer({
 		})();
 	}, [dir, file, proc]);
 
-	const visible = proc.lines.slice(-visibleRows);
+	const view = useLogViewport(proc.lines, { focused, visibleRows });
 
 	return (
 		<>
 			<Panel
-				title={`ao vivo · ${basename(file)}`}
+				title={`ao vivo · ${basename(file)}${
+					view.query ? ` · "${view.query}"` : ""
+				}`}
 				width={width}
 				height={height}
-				focused={proc.running}
+				focused={focused}
+				footer={
+					view.searching ? (
+						<Text color={theme.accent}>
+							busca: {view.query}
+							<Text inverse> </Text>
+						</Text>
+					) : undefined
+				}
 			>
 				{error ? (
 					<Text color={theme.error}>{error}</Text>
-				) : visible.length === 0 ? (
-					<Text color={theme.muted}>aguardando linhas…</Text>
 				) : (
-					visible.map((line, i) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: janela de log é posicional
-						<Text key={i} color={colorFor(line)} wrap="truncate-end">
-							{line || " "}
-						</Text>
-					))
+					<LogLines
+						viewport={view}
+						empty={
+							view.query ? `nada com "${view.query}"` : "aguardando linhas…"
+						}
+					/>
 				)}
 			</Panel>
 
@@ -452,8 +578,14 @@ function LiveViewer({
 					/>
 					<Stat
 						label="linhas"
-						value={String(proc.lines.length)}
+						value={String(view.filtered.length)}
 						width={aside}
+					/>
+					<Stat
+						label="rolagem"
+						value={view.follow ? "no fim" : `${view.scroll} acima`}
+						width={aside}
+						tone={view.follow ? "ok" : "warn"}
 					/>
 					{proc.state === "failed" ? (
 						<Box marginTop={1}>

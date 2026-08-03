@@ -20,6 +20,7 @@ import { join } from "node:path";
 export type LogFile = { path: string; name: string; size: number };
 
 const CHUNK = 64 * 1024;
+const decoder = new TextDecoder();
 
 /** Os `*.log` de `<dir>/logs`, maiores/mais recentes primeiro. */
 export function listLogFiles(dir: string): LogFile[] {
@@ -65,19 +66,25 @@ export function tailFile(
 
 		fd = openSync(path, "r");
 		let position = size;
-		let text = "";
+		let newlines = 0;
+		// Os blocos são guardados crus e decodificados de uma vez só no fim: um
+		// caractere multibyte (acento, glifo de barra) cortado na fronteira de
+		// dois blocos vira "" se cada bloco for decodificado sozinho.
+		const chunks: Uint8Array[] = [];
 
 		while (position > 0) {
 			const length = Math.min(CHUNK, position);
 			position -= length;
-			const buf = Buffer.alloc(length);
+			const buf = new Uint8Array(length);
 			readSync(fd, buf, 0, length, position);
-			text = buf.toString("utf8") + text;
-			// +1: a primeira linha do bloco pode estar cortada ao meio.
-			if (countLines(text) > max) break;
+			chunks.unshift(buf);
+			for (const byte of buf) if (byte === 0x0a) newlines++;
+			// > max: a primeira linha do bloco costuma estar cortada ao meio, e a
+			// linha extra garante que ainda sobram `max` inteiras.
+			if (newlines > max) break;
 		}
 
-		return { lines: splitLines(text).slice(-max), size };
+		return { lines: splitLines(decodeAll(chunks)).slice(-max), size };
 	} catch {
 		return { lines: [], size: 0 };
 	} finally {
@@ -102,15 +109,37 @@ export function readSince(
 
 		const length = size - offset;
 		fd = openSync(path, "r");
-		const buf = Buffer.alloc(length);
+		const buf = new Uint8Array(length);
 		readSync(fd, buf, 0, length, offset);
 
-		return { lines: splitLines(buf.toString("utf8")), size };
+		return { lines: splitLines(decoder.decode(buf)), size };
 	} catch {
 		return { lines: [], size: offset };
 	} finally {
 		if (fd !== null) closeSync(fd);
 	}
+}
+
+/**
+ * A janela visível de um log rolado, com `scroll` medido a partir do FIM
+ * (0 = colado no fim, seguindo). Contar do fim, e não do começo, é o que faz o
+ * "seguir" continuar funcionando enquanto o arquivo cresce: a posição 0 é
+ * sempre a última linha, seja o log de 10 ou de 10 mil linhas.
+ *
+ * Devolve o scroll já limitado — pedir mais do que existe encosta no topo em
+ * vez de rolar para o vazio.
+ */
+export function logWindow(
+	lines: string[],
+	scroll: number,
+	visibleRows: number,
+): { visible: string[]; scroll: number } {
+	const rows = Math.max(1, visibleRows);
+	const max = Math.max(0, lines.length - rows);
+	const clamped = Math.max(0, Math.min(max, Math.trunc(scroll)));
+	const end = lines.length - clamped;
+
+	return { visible: lines.slice(Math.max(0, end - rows), end), scroll: clamped };
 }
 
 /** Busca simples, case-insensitive. Consulta vazia devolve tudo. */
@@ -127,8 +156,16 @@ function splitLines(text: string): string[] {
 	return lines;
 }
 
-function countLines(text: string): number {
-	let n = 0;
-	for (const ch of text) if (ch === "\n") n++;
-	return n;
+function decodeAll(chunks: Uint8Array[]): string {
+	let total = 0;
+	for (const chunk of chunks) total += chunk.length;
+
+	const joined = new Uint8Array(total);
+	let at = 0;
+	for (const chunk of chunks) {
+		joined.set(chunk, at);
+		at += chunk.length;
+	}
+
+	return decoder.decode(joined);
 }

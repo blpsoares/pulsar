@@ -33,7 +33,7 @@ export function useBackgroundStart(dir: string) {
 			setResult(null);
 
 			try {
-				const availability = await detectBackends(false);
+				const availability = await detectBackends(dir);
 				const backend = preferredBackend(availability);
 				if (!backend) {
 					setResult({

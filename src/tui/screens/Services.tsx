@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
@@ -9,7 +8,6 @@ import {
 	detectBackends,
 	preferredBackend,
 } from "../../core/service/detect";
-import { BASE_COMPOSE } from "../../core/service/dockerService";
 import {
 	buildPlan,
 	controlService,
@@ -76,7 +74,7 @@ export function ServicesScreen({
 	const l = layout(columns, rows);
 
 	useEffect(() => {
-		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then((a) => {
+		void detectBackends(dir).then((a) => {
 			setAvailability(a);
 			setBackend((b) => b ?? preferredBackend(a));
 		});

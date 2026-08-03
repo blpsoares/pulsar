@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { platform } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { BASE_COMPOSE } from "./dockerService";
 import type { Backend } from "./types";
 
 const run = promisify(execFile);
@@ -23,10 +26,19 @@ export type BackendAvailability = {
 	fix?: string;
 };
 
+/**
+ * Recebe o DIRETÓRIO, não um "tem compose?" já resolvido: quem chamava passava
+ * a resposta pronta e dois dos quatro chamadores passavam a errada — a tela
+ * inicial dizia sempre `false` (docker nunca era oferecido no "subir em
+ * background", mesmo com o compose ao lado) e a de logs dizia sempre `true`
+ * (escolhia docker onde não havia compose e ia seguir um container inexistente).
+ * Com o diretório, a checagem acontece num lugar só e ninguém tem como mentir.
+ */
 export async function detectBackends(
-	workingDirHasCompose: boolean,
+	workingDir: string,
 ): Promise<BackendAvailability[]> {
 	const os = platform();
+	const workingDirHasCompose = existsSync(join(workingDir, BASE_COMPOSE));
 
 	const [systemd, launchd, pm2, docker] = await Promise.all([
 		os === "linux" ? hasSystemdUser() : Promise.resolve(false),

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	filterLines,
 	listLogFiles,
+	logWindow,
 	readSince,
 	tailFile,
 } from "../src/core/logs/readLog";
@@ -234,5 +235,39 @@ describe("leitura de log em arquivo", () => {
 	test("filtro de busca é case-insensitive", () => {
 		expect(filterLines(["Erro X", "ok"], "erro")).toEqual(["Erro X"]);
 		expect(filterLines(["a", "b"], "  ")).toEqual(["a", "b"]);
+	});
+});
+
+describe("janela de rolagem do log", () => {
+	const lines = Array.from({ length: 100 }, (_, i) => `l${i}`);
+
+	test("scroll 0 mostra o fim (é o que 'seguir' significa)", () => {
+		const { visible } = logWindow(lines, 0, 5);
+		expect(visible).toEqual(["l95", "l96", "l97", "l98", "l99"]);
+	});
+
+	test("scroll conta a partir do fim", () => {
+		expect(logWindow(lines, 10, 5).visible).toEqual([
+			"l85",
+			"l86",
+			"l87",
+			"l88",
+			"l89",
+		]);
+	});
+
+	test("não rola além do topo nem para trás do fim", () => {
+		expect(logWindow(lines, 999, 5).scroll).toBe(95);
+		expect(logWindow(lines, 999, 5).visible[0]).toBe("l0");
+		expect(logWindow(lines, -3, 5).scroll).toBe(0);
+	});
+
+	test("log menor que a tela não rola", () => {
+		const curto = ["a", "b"];
+		expect(logWindow(curto, 5, 10)).toEqual({ visible: curto, scroll: 0 });
+	});
+
+	test("log vazio não quebra", () => {
+		expect(logWindow([], 3, 10)).toEqual({ visible: [], scroll: 0 });
 	});
 });
