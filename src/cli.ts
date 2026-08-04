@@ -112,8 +112,10 @@ program
 		"-p --parallel <number>",
 		"quantas collections recebem TTL em paralelo. Padrão: 4.",
 	)
-	.action((file, opts) =>
-		ttlCommand(file, {
+	// O commander espera `void | Promise<void>`: devolver o array de resultados
+	// do ttlCommand tipava a action errado (e ninguém consome esse retorno aqui).
+	.action(async (file, opts) => {
+		await ttlCommand(file, {
 			uri: opts.uri,
 			db: opts.db,
 			collections: opts.collections,
@@ -122,8 +124,8 @@ program
 			deriveFromId: opts.deriveFromId,
 			expire: opts.expire,
 			parallel: opts.parallel,
-		}),
-	);
+		});
+	});
 
 const compose = program
 	.command("compose")

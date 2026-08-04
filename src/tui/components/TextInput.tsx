@@ -1,5 +1,6 @@
 import { Text, useInput } from "ink";
 import { useState } from "react";
+import { isMouseInput } from "../mouse/parse";
 import { theme } from "../theme";
 
 /**
@@ -38,6 +39,10 @@ export function TextInput({
 
 	useInput(
 		(input, key) => {
+			// O ink entrega a sequência de mouse como se fosse texto digitado. Num
+			// campo que aceita qualquer caractere, clicar escreveria `[<0;10;5M`
+			// dentro da URI — daí a guarda ser obrigatória aqui, não opcional.
+			if (isMouseInput(input)) return;
 			if (key.return) {
 				onSubmit?.(value);
 				return;

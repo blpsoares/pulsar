@@ -1,7 +1,9 @@
-import { basename, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { useCallback, useState } from "react";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import { detectBackends, preferredBackend } from "../../core/service/detect";
+import { BASE_COMPOSE } from "../../core/service/dockerService";
 import { buildPlan, installService } from "../../core/service/manager";
 import type { Backend, ServiceSpec } from "../../core/service/types";
 
@@ -33,13 +35,24 @@ export function useBackgroundStart(dir: string) {
 			setResult(null);
 
 			try {
-				const availability = await detectBackends(false);
+				// A presença do compose PRECISA ser medida: passar `false` fixo
+				// eliminava o docker da lista sempre, e numa máquina sem systemd de
+				// usuário (WSL, container) e sem pm2 o atalho respondia "nenhum
+				// supervisor disponível" com o docker instalado e o compose ali do lado.
+				const availability = await detectBackends(
+					existsSync(join(dir, BASE_COMPOSE)),
+				);
 				const backend = preferredBackend(availability);
 				if (!backend) {
+					// Sem backend, o motivo de CADA um é mais útil que a negativa seca —
+					// é a diferença entre "instale o pm2" e não saber por onde começar.
+					const porques = availability
+						.filter((a) => a.reason)
+						.map((a) => `${a.backend}: ${a.reason}`)
+						.join(" · ");
 					setResult({
 						ok: false,
-						message:
-							"nenhum supervisor disponível (systemd/launchd/pm2/docker)",
+						message: `nenhum supervisor disponível — ${porques}`,
 					});
 					return;
 				}

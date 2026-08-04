@@ -1,12 +1,17 @@
 // src/core/sync/copyViews.ts
-import type { Db, Document } from "mongodb";
+import type { CollationOptions, Db, Document } from "mongodb";
 import { t } from "../../utils/i18n";
 
 export type ViewDef = {
 	name: string;
 	viewOn: string;
 	pipeline: Document[];
-	collation?: Document;
+	/**
+	 * `CollationOptions` e não `Document`: é o tipo que o `createCollection`
+	 * exige, e guardar um Document genérico aqui só empurrava o cast para os três
+	 * pontos de criação da view (onde o typecheck reclamava do `locale` ausente).
+	 */
+	collation?: CollationOptions;
 };
 
 export type ViewCopyResult = {
@@ -38,7 +43,7 @@ function stableStringify(value: unknown): string {
 function signature(d: {
 	viewOn?: string;
 	pipeline?: Document[];
-	collation?: Document;
+	collation?: CollationOptions;
 }): string {
 	return `${d.viewOn ?? ""}|${JSON.stringify(d.pipeline ?? [])}|${stableStringify(
 		d.collation ?? null,
@@ -63,7 +68,7 @@ export async function listSourceViews(
 		const o = (c.options ?? {}) as {
 			viewOn?: string;
 			pipeline?: Document[];
-			collation?: Document;
+			collation?: CollationOptions;
 		};
 		if (!o.viewOn) continue;
 		defs.push({
@@ -110,7 +115,7 @@ export async function ensureView(
 		const cur = (existing.options ?? {}) as {
 			viewOn?: string;
 			pipeline?: Document[];
-			collation?: Document;
+			collation?: CollationOptions;
 		};
 		if (signature(cur) === signature(def)) return "skipped";
 

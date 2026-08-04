@@ -8,6 +8,19 @@
  *
  * Coordenadas do terminal são 1-based; aqui saem 0-based, que é como o layout
  * do ink conta.
+ *
+ * MODO DE RASTREAMENTO — o menos invasivo que atende o cockpit. A TUI só
+ * precisa de clique e roda, então fica no 1000 (normal tracking: press,
+ * release e roda). NÃO usamos 1002 (button-event) porque ele passa a reportar
+ * o ARRASTO — justamente o gesto que o terminal precisa manter para o usuário
+ * selecionar texto —, e muito menos 1003 (any-event), que reporta movimento
+ * SEM botão nenhum: o stdin recebe um evento por célula percorrida, satura o
+ * loop de eventos do ink e é o que mais atrapalha o terminal.
+ *
+ * Consequência prática de ficar no 1000: como o terminal jamais nos manda
+ * movimento, um arrasto chega no máximo como um press e um release soltos —
+ * quem desenha (ou não) a seleção é o terminal. Ver o tratamento de SHIFT no
+ * dispatch do MouseProvider.
  */
 
 export type MouseEventKind = "press" | "release" | "wheel-up" | "wheel-down";
@@ -19,8 +32,11 @@ export type TerminalMouseEvent = {
 	/** linha 0-based */
 	y: number;
 	button: number;
+	/** bit 2 (valor 4) do byte de botão — a tecla que devolve a seleção nativa */
 	shift: boolean;
+	/** bit 3 (valor 8) — "meta"/alt */
 	alt: boolean;
+	/** bit 4 (valor 16) */
 	ctrl: boolean;
 };
 
@@ -62,6 +78,8 @@ export function parseMouse(chunk: string): {
 			x: Number(rawX) - 1,
 			y: Number(rawY) - 1,
 			button: button & 0b11,
+			// Modificadores vivem nos bits altos do MESMO byte do botão; por isso
+			// o botão precisa ser mascarado (0b11) antes de ser comparado.
 			shift: (button & 4) !== 0,
 			alt: (button & 8) !== 0,
 			ctrl: (button & 16) !== 0,
@@ -86,6 +104,9 @@ function kindOf(button: number, pressed: boolean): MouseEventKind {
 	return pressed ? "press" : "release";
 }
 
-/** Liga o rastreamento de cliques + o modo SGR. */
+/**
+ * Liga o rastreamento de cliques (1000) + o modo SGR (1006). Desligar é feito
+ * na ordem inversa. Ver a nota sobre 1002/1003 no topo do arquivo.
+ */
 export const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1006h";
 export const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1000l";

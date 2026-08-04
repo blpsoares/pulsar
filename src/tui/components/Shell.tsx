@@ -1,19 +1,40 @@
 import { Box, Text, useInput } from "ink";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	createContext,
+	type ReactNode,
+	useContext,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { copyToClipboard, describeCopy } from "../../core/clipboard";
-import { SIDEBAR_WIDTH } from "../layout";
+import { fitHints, tabAt, tabCells } from "../layout";
+import { useClickable, useMouse } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
 import { glyph, gradient, theme } from "../theme";
 
 export type { Layout } from "../layout";
-export { ASIDE_WIDTH, CHROME_ROWS, layout, SIDEBAR_WIDTH } from "../layout";
+export {
+	ASIDE_WIDTH,
+	CHROME_ROWS,
+	layout,
+	RAIL_WIDTH,
+	shortenPath,
+} from "../layout";
 
 /**
- * O esqueleto visual da TUI: cabeçalho, sidebar, painéis e barra de teclas.
+ * O esqueleto visual da TUI: cabeçalho, abas, painéis e barra de teclas.
  *
  * Layout de cockpit (k9s/lazygit): tudo à vista ao mesmo tempo, em painéis com
- * largura calculada a partir do tamanho do terminal — sidebar fixa, centro
- * elástico, painel de contexto fixo à direita.
+ * largura calculada a partir do tamanho do terminal — centro elástico e painel
+ * de contexto fixo à direita.
+ *
+ * A navegação global vive numa FAIXA DE ABAS no topo, não numa coluna à
+ * esquerda. A sidebar cobrava ~19 colunas de toda tela, o tempo inteiro, para
+ * exibir quatro itens que quase nunca mudavam — e essas colunas faltavam
+ * justamente onde a informação é longa (caminhos de config, linhas de log).
+ * No topo, a mesma navegação custa duas linhas e devolve a largura ao
+ * conteúdo.
  *
  * Por que os painéis desenham a borda de cima à mão: o `Box` do ink não sabe
  * escrever um título DENTRO da moldura. A saída é render manual da linha
@@ -125,47 +146,151 @@ export function Panel({
 	);
 }
 
-// ---------------------------------------------------------------- sidebar
+// ------------------------------------------------------------------- abas
 
-export type NavItem = { key: string; label: string; icon: string };
+/** As telas RAIZ da TUI. Tudo o mais é sub-tela, aberta a partir de uma delas. */
+export type TabKey = "configs" | "running" | "logs" | "service";
 
-export function Sidebar({
-	items,
-	activeKey,
-	height,
-	focused,
-	footer,
+export const TABS: { key: TabKey; label: string; icon: string }[] = [
+	{ key: "configs", label: "configs", icon: "▤" },
+	{ key: "running", label: "rodando", icon: "⬢" },
+	{ key: "logs", label: "logs", icon: "▤" },
+	{ key: "service", label: "serviço", icon: "◈" },
+];
+
+export type NavContextValue = {
+	/** aba de ORIGEM: numa sub-tela, continua acesa a aba de onde ela partiu */
+	tab: TabKey;
+	/** rótulo da sub-tela; ausente quando a própria aba está na tela */
+	crumb?: string;
+	go: (key: TabKey) => void;
+};
+
+const NavContext = createContext<NavContextValue | null>(null);
+
+/**
+ * O roteador (App) publica aqui em que aba estamos e como trocar.
+ *
+ * Via contexto, e não por prop de cada tela: uma tela nova que esquecesse de
+ * repassar a prop apareceria sem abas — quebrando a altura fixa do chrome e
+ * deixando o usuário sem navegação, exatamente o tipo de erro que o desenho
+ * anterior (`ctrl+d` anunciado pelo Shell) já tinha aprendido a evitar.
+ */
+export function NavProvider({
+	value,
+	children,
 }: {
-	items: NavItem[];
-	activeKey: string;
-	height: number;
-	focused: boolean;
-	footer?: ReactNode;
+	value: NavContextValue;
+	children: ReactNode;
 }) {
+	return <NavContext.Provider value={value}>{children}</NavContext.Provider>;
+}
+
+function TabBar({
+	columns,
+	nav,
+}: {
+	columns: number;
+	nav: NavContextValue | null;
+}) {
+	const cells = tabCells(TABS.map((t) => t.label));
+	const activeIndex = TABS.findIndex((t) => t.key === nav?.tab);
+
+	// O clique é mapeado por COLUNA (a faixa é horizontal), ao contrário das
+	// listas, que mapeiam por linha. A conta das células é a mesma do desenho.
+	const ref = useClickable({
+		onClick: ({ column }) => {
+			const hit = tabAt(cells, column);
+			const target = TABS[hit];
+			if (target) nav?.go(target.key);
+		},
+	});
+
+	const strip = cells.reduce((sum, c) => sum + c.width, 0);
+	const rest = Math.max(0, columns - strip);
+
 	return (
-		<Panel
-			title="menu"
-			width={SIDEBAR_WIDTH}
-			height={height}
-			focused={focused}
-			footer={footer}
-		>
-			{items.map((item) => {
-				const active = item.key === activeKey;
-				return (
-					<Text
-						key={item.key}
-						color={active ? theme.accent : theme.muted}
-						bold={active}
-						wrap="truncate-end"
-					>
-						{active ? "▍" : " "}
-						{item.icon} {item.label}
+		<Box flexDirection="column">
+			<Box ref={ref} flexDirection="row">
+				<Text>
+					{TABS.map((tab, i) => {
+						const active = i === activeIndex;
+						return (
+							<Text
+								key={tab.key}
+								color={active ? theme.accent : theme.muted}
+								bold={active}
+								underline={active && !nav?.crumb}
+							>
+								{" "}
+								{i + 1} {tab.label}
+								{"  "}
+							</Text>
+						);
+					})}
+				</Text>
+				{nav?.crumb ? (
+					<Text wrap="truncate-end">
+						<Text color={theme.border}>{glyph.cursor} </Text>
+						<Text color={theme.selection} bold>
+							{nav.crumb}
+						</Text>
 					</Text>
-				);
-			})}
-		</Panel>
+				) : null}
+			</Box>
+
+			{/* Régua: o trecho sob a aba ativa em accent — é o "sublinhado" que
+			    sobrevive a terminal sem suporte a underline. */}
+			<Text>
+				{cells.map((cell, i) => (
+					<Text
+						key={TABS[i]?.key ?? String(i)}
+						color={i === activeIndex ? theme.accent : theme.border}
+						bold={i === activeIndex}
+					>
+						{"─".repeat(cell.width)}
+					</Text>
+				))}
+				<Text color={theme.border}>{"─".repeat(rest)}</Text>
+			</Text>
+		</Box>
 	);
+}
+
+/**
+ * Teclado das abas: `1..4` direto, `shift+tab` e `ctrl+←/→` circulando.
+ *
+ * `tab` sozinho continua sendo o FOCO dentro da tela — são coisas diferentes e
+ * misturá-las faria o usuário perder o painel em que estava só por querer
+ * trocar de assunto. Os dígitos são desligáveis (`digitKeys`) porque em tela
+ * com campo de texto — o wizard, a busca dos logs — digitar "2" tem que
+ * escrever "2", não pular de aba.
+ */
+function useTabKeys(
+	nav: NavContextValue | null,
+	locked: boolean,
+	digitKeys: boolean,
+): void {
+	useInput((input, key) => {
+		if (isMouseInput(input) || !nav || locked) return;
+
+		const index = TABS.findIndex((t) => t.key === nav.tab);
+		if (key.tab && key.shift) {
+			const prev = TABS[(index - 1 + TABS.length) % TABS.length];
+			if (prev) nav.go(prev.key);
+			return;
+		}
+		if (key.ctrl && (key.leftArrow || key.rightArrow)) {
+			const step = key.rightArrow ? 1 : -1;
+			const next = TABS[(index + step + TABS.length) % TABS.length];
+			if (next) nav.go(next.key);
+			return;
+		}
+		if (!digitKeys) return;
+		if (!/^[1-9]$/.test(input)) return;
+		const target = TABS[Number(input) - 1];
+		if (target) nav.go(target.key);
+	});
 }
 
 // ------------------------------------------------------------------ shell
@@ -180,6 +305,8 @@ export function Shell({
 	rows,
 	notice,
 	copy,
+	lockTabs = false,
+	digitKeys = true,
 }: {
 	chips: Chip[];
 	hints: Hint[];
@@ -192,16 +319,34 @@ export function Shell({
 	 * o atalho e o aviso de "copiado" são os mesmos em toda a TUI.
 	 */
 	copy?: () => string | null;
+	/**
+	 * Trava a troca de aba. É para a tela que tem algo VIVO a perder — o Runner
+	 * com um sync rodando: trocar de aba desmonta o filho, e um sync não pode
+	 * morrer por causa de um `2` digitado sem querer.
+	 */
+	lockTabs?: boolean;
+	/** desligue onde há campo de texto: `1..4` precisa escrever, não navegar */
+	digitKeys?: boolean;
 }) {
 	const toast = useCopyShortcut(copy);
+	const nav = useContext(NavContext);
+	const mouse = useMouse();
+	useTabKeys(nav, lockTabs, digitKeys);
 
 	return (
 		<Box flexDirection="column" width={columns} height={rows}>
 			<Header chips={chips} columns={columns} />
+			<TabBar columns={columns} nav={nav} />
 			<Box flexDirection="row" flexGrow={1}>
 				{children}
 			</Box>
-			<KeyBar hints={hints} notice={toast ?? notice} />
+			<KeyBar
+				hints={hints}
+				notice={toast ?? notice}
+				tabs={nav !== null && !lockTabs}
+				mouse={mouse.enabled}
+				columns={columns}
+			/>
 		</Box>
 	);
 }
@@ -278,12 +423,23 @@ function Header({ chips, columns }: { chips: Chip[]; columns: number }) {
 	);
 }
 
+/** Altura reservada para as teclas — ver CHROME_ROWS em layout.ts. */
+const KEYBAR_ROWS = 2;
+
 function KeyBar({
 	hints,
 	notice,
+	tabs,
+	mouse,
+	columns,
 }: {
 	hints: Hint[];
 	notice?: { text: string; tone?: "ok" | "warn" | "error" };
+	/** anuncia a troca de aba — some quando a tela a trava (processo vivo) */
+	tabs: boolean;
+	/** rastreamento de cliques ligado: só então shift+arrastar é notícia */
+	mouse: boolean;
+	columns: number;
 }) {
 	return (
 		<Box flexDirection="column">
@@ -291,22 +447,47 @@ function KeyBar({
 			<Text color={toneColor(notice?.tone)} wrap="truncate-end">
 				{notice?.text ?? " "}
 			</Text>
-			<Text wrap="truncate-end">
-				{/*
-				 * A saída é acrescentada pelo Shell, não por cada tela: uma tela que
-				 * esquecesse de anunciá-la (ou que a anunciasse errado) deixaria o
-				 * usuário preso sem saber como sair. Aqui isso é impossível.
-				 */}
-				{[...hints, { keys: "ctrl+d", label: "sair da TUI" }].map((h, i) => (
-					<Text key={h.keys}>
-						{i > 0 ? <Text color={theme.border}>{" · "}</Text> : null}
-						<Text color={theme.accent} bold>
-							{h.keys}
+			{/*
+			 * Duas linhas, com quebra por palavra em vez de `truncate-end`.
+			 * Truncar cortava a lista SEMPRE no mesmo ponto — a 140 colunas a tela
+			 * inicial terminava em "ctrl+c …" e as teclas seguintes (mouse, sair)
+			 * simplesmente não existiam para quem lê. A altura é fixa (e reservada
+			 * no CHROME_ROWS), então a segunda linha não empurra nada: ou está
+			 * ocupada, ou está em branco.
+			 */}
+			<Box width={columns} height={KEYBAR_ROWS} flexShrink={0}>
+				<Text>
+					{/*
+					 * Abas, seleção de texto e saída são acrescentadas pelo Shell, não
+					 * por cada tela: uma tela que esquecesse de anunciá-las (ou que as
+					 * anunciasse errado) deixaria o usuário preso sem saber como sair.
+					 * Aqui isso é impossível.
+					 */}
+					{fitHints(
+						tabs ? [{ keys: "1-4", label: "abas" }] : [],
+						hints,
+						[
+							// Com o mouse rastreando cliques, a seleção nativa do terminal só
+							// volta com shift (o MouseProvider ignora todo evento com shift).
+							// Sem este anúncio, o usuário descobre isso lendo o código-fonte.
+							...(mouse
+								? [{ keys: "shift+arrastar", label: "selecionar texto" }]
+								: []),
+							{ keys: "ctrl+d", label: "sair da TUI" },
+						],
+						columns,
+						KEYBAR_ROWS,
+					).map((h, i) => (
+						<Text key={h.keys}>
+							{i > 0 ? <Text color={theme.border}>{" · "}</Text> : null}
+							<Text color={theme.accent} bold>
+								{h.keys}
+							</Text>
+							<Text color={theme.muted}> {h.label}</Text>
 						</Text>
-						<Text color={theme.muted}> {h.label}</Text>
-					</Text>
-				))}
-			</Text>
+					))}
+				</Text>
+			</Box>
 		</Box>
 	);
 }

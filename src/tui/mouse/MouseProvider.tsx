@@ -32,6 +32,10 @@ import {
  * mouse) para de funcionar. Quase todo terminal mantém a seleção com SHIFT
  * pressionado (iTerm2: Option). Por isso existe o toggle: `m` desliga o mouse
  * e devolve a seleção nativa por completo.
+ *
+ * SHIFT é tratado como "passa direto" (ver `dispatch`): é o que faz o gesto de
+ * selecionar texto funcionar mesmo nos terminais que não fazem o override
+ * sozinhos.
  */
 
 export type ClickInfo = {
@@ -42,7 +46,7 @@ export type ClickInfo = {
 	event: TerminalMouseEvent;
 };
 
-type Region = {
+export type Region = {
 	id: number;
 	ref: RefObject<DOMElement | null>;
 	onClick?: (info: ClickInfo) => void;
@@ -157,10 +161,19 @@ export function useClickable(handlers: {
 
 type Rect = { x: number; y: number; width: number; height: number };
 
-function dispatch(
+export function dispatch(
 	regions: Map<number, Region>,
 	event: TerminalMouseEvent,
 ): void {
+	// SHIFT = "o mouse é do terminal agora". A maioria dos terminais (Windows
+	// Terminal, GNOME Terminal, xterm, Kitty; no iTerm2 é Option) já intercepta
+	// o gesto ANTES da aplicação e nem nos manda o evento — nesses, selecionar
+	// texto com shift+arrastar sempre funcionou. Nos que NÃO interceptam, o
+	// press chegava até aqui e disparava a ação do item sob o cursor: o usuário
+	// tentava marcar um trecho e abria um menu. Ignorar o evento aqui cobre
+	// exatamente esses casos, sem tirar nada de quem já tem o override nativo.
+	if (event.shift) return;
+
 	// Só o pressionar interessa: tratar press E release dispararia a ação duas
 	// vezes por clique.
 	if (event.kind === "release") return;

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import {
@@ -30,9 +30,10 @@ import {
 	type Chip,
 	layout,
 	Panel,
+	RAIL_WIDTH,
 	Shell,
-	SIDEBAR_WIDTH,
 	Stat,
+	shortenPath,
 } from "../components/Shell";
 import { useTerminalSize } from "../hooks/useTerminalSize";
 import { theme } from "../theme";
@@ -73,7 +74,7 @@ export function ServicesScreen({
 	const [pane, setPane] = useState<"backend" | "config">(
 		initialFile ? "backend" : "config",
 	);
-	const l = layout(columns, rows);
+	const l = layout(columns, rows, RAIL_WIDTH);
 
 	useEffect(() => {
 		void detectBackends(existsSync(join(dir, BASE_COMPOSE))).then((a) => {
@@ -95,8 +96,21 @@ export function ServicesScreen({
 		};
 	}
 
-	const spec = file ? specFor(file) : null;
-	const plan = spec && backend ? buildPlan(backend, spec) : null;
+	/**
+	 * `specFor` lê e parseia o yml, e `buildPlan` do docker chega a rodar um
+	 * `spawnSync` (a sonda de `systemctl is-enabled docker`). No corpo do render
+	 * isso acontecia a cada redesenho — inclusive a cada tecla —, travando a UI
+	 * por um processo filho síncrono que responde sempre a mesma coisa.
+	 */
+	// biome-ignore lint/correctness/useExhaustiveDependencies: specFor deriva de file/dir/autostart, já listados
+	const spec = useMemo(
+		() => (file ? specFor(file) : null),
+		[file, dir, autostart],
+	);
+	const plan = useMemo(
+		() => (spec && backend ? buildPlan(backend, spec) : null),
+		[spec, backend],
+	);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: specFor deriva de file/dir/autostart, já listados
 	useEffect(() => {
@@ -117,7 +131,8 @@ export function ServicesScreen({
 			onExit();
 			return;
 		}
-		if (key.tab) {
+		// shift+tab troca de ABA (Shell); `tab` sozinho é foco entre painéis.
+		if (key.tab && !key.shift) {
 			setPane((p) => (p === "backend" ? "config" : "backend"));
 			return;
 		}
@@ -189,17 +204,19 @@ export function ServicesScreen({
 			 * configs ↔ plano), e mudar o que está na tela ao mudar de foco
 			 * desorienta: some da vista justamente o que se está decidindo.
 			 */}
-			<Box flexDirection="column" width={SIDEBAR_WIDTH}>
+			<Box flexDirection="column" width={l.rail}>
 				<Panel
 					title="config"
-					width={SIDEBAR_WIDTH}
+					width={l.rail}
 					focused={pane === "config"}
 					height={Math.max(6, Math.min(configs.length + 3, l.body - 9))}
 				>
 					<Select
 						items={configs.map((c) => ({
 							value: c.file,
-							label: c.file,
+							// encurta pelo MEIO: no trilho estreito, cortar o fim apagaria
+							// justamente o nome do arquivo, que é o que identifica a config
+							label: shortenPath(c.file, l.rail - 6),
 						}))}
 						onSelect={(f) => {
 							setFile(f);
@@ -216,12 +233,7 @@ export function ServicesScreen({
 					/>
 				</Panel>
 
-				<Panel
-					title="backend"
-					width={SIDEBAR_WIDTH}
-					focused={pane === "backend"}
-					grow
-				>
+				<Panel title="backend" width={l.rail} focused={pane === "backend"} grow>
 					{availability === null ? (
 						<Text color={theme.muted}>checando…</Text>
 					) : (

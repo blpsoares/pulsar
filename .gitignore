@@ -151,3 +151,6 @@ logs-*/
 # scratch do subagent-driven-development
 .superpowers/
 docs/demo/replica-sync.yml
+
+# scratch do Claude Code: worktrees temporárias e settings da máquina
+.claude/

@@ -8,8 +8,8 @@ import {
 	type Chip,
 	layout,
 	Panel,
+	RAIL_WIDTH,
 	Shell,
-	SIDEBAR_WIDTH,
 	Stat,
 } from "../components/Shell";
 import { useProcess } from "../hooks/useProcess";
@@ -36,7 +36,7 @@ export function RunnerScreen({
 	onInstallService: () => void;
 }) {
 	const { columns, rows } = useTerminalSize();
-	const l = layout(columns, rows);
+	const l = layout(columns, rows, RAIL_WIDTH);
 
 	const loaded = loadConfigFile(file);
 	const mode = loaded?.form.mode ?? "sync";
@@ -102,6 +102,13 @@ export function RunnerScreen({
 			chips={chips}
 			columns={columns}
 			rows={rows}
+			/*
+			 * Com o processo VIVO, trocar de aba desmontaria a tela e mataria o
+			 * filho — um sync não pode morrer por um `2` digitado sem querer. As
+			 * abas continuam à vista (a geometria não muda), mas inertes: a única
+			 * decisão aqui é parar.
+			 */
+			lockTabs={proc.running}
 			hints={
 				proc.running
 					? [{ keys: "s", label: "parar (SIGTERM — salva o progresso)" }]
@@ -118,7 +125,7 @@ export function RunnerScreen({
 						]
 			}
 		>
-			<Panel title="opções" width={SIDEBAR_WIDTH} height={l.body}>
+			<Panel title="opções" width={l.rail} height={l.body}>
 				{mode === "sync" ? (
 					<>
 						<Toggle on={verbose} label="verbose" keyHint="v" />

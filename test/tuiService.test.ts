@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	filterLines,
 	listLogFiles,
@@ -11,7 +12,15 @@ import {
 import { tailCommand } from "../src/core/logs/tailCommand";
 import { LineBuffer, levelOf, stripAnsi } from "../src/core/run/logLines";
 import { argsFor, pulsarCommandLine } from "../src/core/run/pulsarCommand";
+import {
+	detectBackends,
+	judgeSystemdUser,
+	preferredBackend,
+	type SystemdProbe,
+} from "../src/core/service/detect";
+import { dockerPlan } from "../src/core/service/dockerService";
 import { buildPlist, launchdPlan } from "../src/core/service/launchd";
+import { adviseFailure, stepFailure } from "../src/core/service/manager";
 import { buildEcosystem, pm2Plan } from "../src/core/service/pm2";
 import { buildUnit, systemdPlan } from "../src/core/service/systemd";
 import { type ServiceSpec, serviceName, slug } from "../src/core/service/types";
@@ -123,6 +132,196 @@ describe("pm2", () => {
 		const plan = pm2Plan(spec);
 		expect(plan.steps.some((s) => s.privileged)).toBe(false);
 		expect(plan.manualSteps.some((s) => s.args.includes("startup"))).toBe(true);
+	});
+});
+
+describe("detecção de systemd de usuário", () => {
+	const vivo: SystemdProbe = {
+		systemAsInit: true,
+		userBusSocket: true,
+		cli: { ok: true, stdout: "running\n", stderr: "" },
+	};
+
+	test("bus ausente reprova mesmo saindo com código numérico (WSL)", () => {
+		// O caso do usuário: systemctl existe, roda, sai 1 — e o motivo real só
+		// aparece no stderr, que a versão antiga jogava fora.
+		const v = judgeSystemdUser({
+			systemAsInit: true,
+			userBusSocket: false,
+			cli: {
+				ok: false,
+				stdout: "",
+				stderr: "Failed to connect to bus: No medium found\n",
+			},
+		});
+		expect(v.available).toBe(false);
+		expect(v.reason).toContain("bus");
+		expect(v.fix).toContain("docker");
+	});
+
+	test("outras frases da mesma família também reprovam", () => {
+		for (const stderr of [
+			"Failed to get D-Bus connection: Operation not permitted",
+			"Failed to connect to bus: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined",
+		]) {
+			expect(
+				judgeSystemdUser({ ...vivo, cli: { ok: false, stdout: "", stderr } })
+					.available,
+			).toBe(false);
+		}
+	});
+
+	test("sem systemd como init reprova antes de qualquer coisa", () => {
+		expect(judgeSystemdUser({ ...vivo, systemAsInit: false }).available).toBe(
+			false,
+		);
+	});
+
+	test("degraded continua valendo: sai != 0 mas tem bus e estado", () => {
+		const v = judgeSystemdUser({
+			systemAsInit: true,
+			userBusSocket: true,
+			cli: { ok: false, stdout: "degraded\n", stderr: "" },
+		});
+		expect(v.available).toBe(true);
+		expect(v.reason).toBeUndefined();
+	});
+
+	test("systemctl ausente reprova com motivo próprio", () => {
+		const v = judgeSystemdUser({ ...vivo, cli: null });
+		expect(v.available).toBe(false);
+		expect(v.reason).toContain("PATH");
+	});
+
+	test("numa máquina WSL o preferido cai em docker", async () => {
+		const availability = await detectBackends(true, {
+			os: "linux",
+			systemdProbe: async () => ({
+				systemAsInit: false,
+				userBusSocket: false,
+				cli: {
+					ok: false,
+					stdout: "",
+					stderr: "Failed to connect to bus: No medium found",
+				},
+			}),
+		});
+
+		expect(availability.find((a) => a.backend === "systemd")?.available).toBe(
+			false,
+		);
+
+		// preferredBackend é puro: monta-se a disponibilidade do cenário (docker
+		// no ar, pm2 não) para não depender do que existe na máquina do CI.
+		const cenario = availability.map((a) =>
+			a.backend === "docker"
+				? { ...a, available: true }
+				: { ...a, available: false },
+		);
+		expect(preferredBackend(cenario, "linux")).toBe("docker");
+	});
+
+	test("sem nenhum backend disponível, não inventa um", () => {
+		expect(
+			preferredBackend(
+				(["systemd", "docker", "pm2", "launchd"] as const).map((backend) => ({
+					backend,
+					available: false,
+				})),
+				"linux",
+			),
+		).toBe(null);
+	});
+});
+
+describe("docker", () => {
+	let dir: string;
+	const res = { memLimitMiB: 1200, memReservMiB: 600, cpus: 0.8 };
+
+	beforeAll(() => {
+		dir = mkdtempSync(join(tmpdir(), "pulsar-docker-"));
+		copyFileSync(
+			fileURLToPath(new URL("../docker-compose-limit.yml", import.meta.url)),
+			join(dir, "docker-compose-limit.yml"),
+		);
+	});
+
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+	const dockerSpec = (): ServiceSpec => ({
+		name: "ads",
+		mode: "sync",
+		configPath: join(dir, "ads.yml"),
+		workingDir: dir,
+		autostart: true,
+	});
+
+	test("autostart NÃO gera passo privilegiado (restart policy já basta)", () => {
+		const plan = dockerPlan(dockerSpec(), res, {
+			systemdSystem: false,
+			unitEnabled: null,
+		});
+		expect("error" in plan).toBe(false);
+		if ("error" in plan) return;
+
+		expect(plan.manualSteps).toEqual([]);
+		expect(plan.steps.some((s) => s.cmd === "sudo" || s.privileged)).toBe(
+			false,
+		);
+		expect(plan.notes.join(" ")).not.toContain("systemctl enable docker");
+	});
+
+	test("só avisa do boot quando há systemd de sistema E docker desabilitado", () => {
+		const desabilitado = dockerPlan(dockerSpec(), res, {
+			systemdSystem: true,
+			unitEnabled: false,
+		});
+		if ("error" in desabilitado) throw new Error(desabilitado.error);
+		expect(desabilitado.notes.join(" ")).toContain("DESABILITADO");
+		expect(desabilitado.manualSteps).toEqual([]);
+
+		const habilitado = dockerPlan(dockerSpec(), res, {
+			systemdSystem: true,
+			unitEnabled: true,
+		});
+		if ("error" in habilitado) throw new Error(habilitado.error);
+		expect(habilitado.notes.join(" ")).not.toContain("DESABILITADO");
+	});
+
+	test("sem autostart nem sonda o boot do daemon", () => {
+		const plan = dockerPlan({ ...dockerSpec(), autostart: false }, res, {
+			systemdSystem: true,
+			unitEnabled: false,
+		});
+		if ("error" in plan) throw new Error(plan.error);
+		expect(plan.notes.join(" ")).not.toContain("DESABILITADO");
+	});
+});
+
+describe("falha de passo acionável", () => {
+	test("a mensagem traz comando, causa e a saída sugerida", () => {
+		const step = {
+			cmd: "systemctl",
+			args: ["--user", "daemon-reload"],
+			why: "x",
+		};
+		const advice = adviseFailure(
+			"systemd",
+			"Failed to connect to bus: No medium found",
+		);
+		const msg = stepFailure(
+			step,
+			"Failed to connect to bus: No medium found",
+			advice,
+		);
+
+		expect(msg).toContain("systemctl --user daemon-reload");
+		expect(msg).toContain("No medium found");
+		expect(msg).toMatch(/docker|pm2/);
+	});
+
+	test("falha desconhecida ainda sugere trocar de backend", () => {
+		expect(adviseFailure("systemd", "erro esquisito")).toContain("troque");
 	});
 });
 

@@ -58,7 +58,7 @@ const createChildProcessToDump = async (
 };
 
 export const dumpCollections = async (
-	source: MigrateYmlOptions["command"]["dump"]["source"],
+	source: MigrateYmlOptions["command"]["migrate"]["source"],
 	outputExport: string,
 	limiter: Bottleneck,
 	collections: string[],
@@ -107,7 +107,7 @@ export const dumpCollections = async (
 type DumpRound = (collections: string[]) => Promise<string[][]>;
 
 export const initMigration = async (
-	sourceUri: MigrateYmlOptions["command"]["dump"]["source"],
+	sourceUri: MigrateYmlOptions["command"]["migrate"]["source"],
 	outputPath: string,
 	limiter: Bottleneck,
 	collections: string[],

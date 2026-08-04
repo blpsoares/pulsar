@@ -32,6 +32,8 @@ type Props = {
 	onBack: () => void;
 	/** false quando o foco está no trilho de passos */
 	focused: boolean;
+	/** `tab` passou do último campo: o foco volta para o trilho de passos */
+	onTabOut: () => void;
 };
 
 type Field = "uri" | "db";
@@ -48,6 +50,7 @@ export function ConnectionStep({
 	onDone,
 	onBack,
 	focused,
+	onTabOut,
 }: Props) {
 	const [field, setField] = useState<Field>("uri");
 	/**
@@ -74,9 +77,21 @@ export function ConnectionStep({
 				onBack();
 				return;
 			}
-			// Tab volta para a URI para corrigir sem refazer o passo.
-			if (key.tab && state.status === "connected") {
-				setField((f) => (f === "uri" ? "db" : "uri"));
+			/**
+			 * `tab` percorre os campos DESTE passo e, ao passar do último, devolve
+			 * o foco ao trilho (`onTabOut`) — um único ciclo.
+			 *
+			 * Antes o passo alternava uri↔db e o wizard, no mesmo toque, também
+			 * pulava para o trilho: o ink entrega a tecla a TODOS os handlers
+			 * ativos, e nenhum cancela o outro. Uma tecla fazia duas coisas, e o
+			 * campo trocava por baixo de um foco que já tinha ido embora.
+			 */
+			if (key.tab) {
+				if (state.status === "connected" && field === "uri") {
+					setField("db");
+					return;
+				}
+				onTabOut();
 			}
 		},
 		{ isActive: !connecting && focused },

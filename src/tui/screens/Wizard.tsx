@@ -14,8 +14,8 @@ import {
 	type Hint,
 	layout,
 	Panel,
+	RAIL_WIDTH,
 	Shell,
-	SIDEBAR_WIDTH,
 	Stat,
 } from "../components/Shell";
 import { useInspector } from "../hooks/useInspector";
@@ -50,6 +50,12 @@ type Step =
 	| "collections"
 	| "advanced"
 	| "review";
+
+/**
+ * Passos que percorrem CAMPOS com `tab` e só devolvem o foco ao trilho depois
+ * do último (via `onTabOut`). Fora desta lista, `tab` é do trilho direto.
+ */
+const STEPS_COM_CAMPOS = new Set<Step>(["source", "destination"]);
 
 const STEP_LABEL: Record<Step, string> = {
 	mode: "modo",
@@ -92,7 +98,7 @@ export function Wizard({
 	onRun: (path: string) => void;
 }) {
 	const { columns, rows } = useTerminalSize();
-	const l = layout(columns, rows);
+	const l = layout(columns, rows, RAIL_WIDTH);
 
 	const [form, setForm] = useState<FormState>(initialForm ?? emptyForm("sync"));
 	// Um yml aberto para edição já vem preenchido: começar na revisão evita
@@ -147,7 +153,16 @@ export function Wizard({
 	useInput((input, key) => {
 		if (isMouseInput(input)) return;
 
-		if (key.tab) {
+		// shift+tab troca de ABA (Shell); `tab` sozinho vai para o trilho.
+		if (key.tab && !key.shift) {
+			/**
+			 * Passos com mais de um campo consomem o `tab` internamente e chamam
+			 * `onTabOut` quando passam do último. Sem esta saída, os dois handlers
+			 * respondiam à MESMA tecla (o ink não tem propagação cancelável): o
+			 * passo trocava de campo e o wizard mandava o foco para o trilho no
+			 * mesmo toque.
+			 */
+			if (!railFocus && STEPS_COM_CAMPOS.has(step)) return;
 			setRailFocus((f) => !f);
 			setAsideFocus(false);
 			return;
@@ -232,13 +247,19 @@ export function Wizard({
 			columns={columns}
 			rows={rows}
 			hints={hintsFor(step, asideFocus, railFocus)}
+			/*
+			 * Os passos têm campo de texto (URI, nome do arquivo, filtro): `1..4`
+			 * precisa ESCREVER. A troca de aba fica por conta de shift+tab e
+			 * ctrl+←/→, que não colidem com digitação.
+			 */
+			digitKeys={false}
 			copy={() => copyTargetFor(step, form)}
 		>
-			<Box flexDirection="column" width={SIDEBAR_WIDTH}>
+			<Box flexDirection="column" width={l.rail}>
 				<Box ref={railRef} flexDirection="column">
 					<Panel
 						title="passos"
-						width={SIDEBAR_WIDTH}
+						width={l.rail}
 						height={order.length + 3}
 						focused={railFocus}
 					>
@@ -265,12 +286,7 @@ export function Wizard({
 				</Box>
 
 				{step === "collections" ? (
-					<Panel
-						title="números"
-						width={SIDEBAR_WIDTH}
-						focused={asideFocus}
-						grow
-					>
+					<Panel title="números" width={l.rail} focused={asideFocus} grow>
 						<EstimatesOptions
 							options={estimates}
 							onChange={setEstimates}
@@ -280,7 +296,7 @@ export function Wizard({
 						/>
 					</Panel>
 				) : (
-					<Panel title="config" width={SIDEBAR_WIDTH} grow>
+					<Panel title="config" width={l.rail} grow>
 						<Text color={theme.muted} wrap="wrap">
 							{describeMode(form.mode)}
 						</Text>
@@ -318,6 +334,10 @@ export function Wizard({
 				{step === "source" ? (
 					<ConnectionStep
 						focused={!railFocus}
+						onTabOut={() => {
+							setRailFocus(true);
+							setAsideFocus(false);
+						}}
 						kind="source"
 						uri={form.source.uri}
 						db={form.source.db}
@@ -331,6 +351,10 @@ export function Wizard({
 				{step === "destination" ? (
 					<ConnectionStep
 						focused={!railFocus}
+						onTabOut={() => {
+							setRailFocus(true);
+							setAsideFocus(false);
+						}}
 						kind="destination"
 						uri={form.destination.uri}
 						db={form.destination.db}
