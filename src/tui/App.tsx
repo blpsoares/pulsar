@@ -1,24 +1,35 @@
-import { relative, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { useApp, useInput } from "ink";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { FormState } from "../core/config/formState";
 import {
 	type CollectionEntryRaw,
 	loadConfigFile,
 } from "../core/config/loadConfig";
+import {
+	type NavContextValue,
+	NavProvider,
+	type TabKey,
+} from "./components/Shell";
 import { Home } from "./screens/Home";
 import { LogsScreen } from "./screens/Logs";
 import { RunnerScreen } from "./screens/Runner";
 import { RunningScreen } from "./screens/Running";
+import { ServiceLogsScreen } from "./screens/ServiceLogs";
 import { ServicesScreen } from "./screens/Services";
 import { Wizard } from "./screens/Wizard";
 
 /**
  * Roteador da TUI. Uma tela por vez, estado de rota aqui em cima.
  *
- * Não existe biblioteca de rotas: o app tem cinco telas e uma navegação em
+ * Não existe biblioteca de rotas: o app tem sete telas e uma navegação em
  * árvore rasa. Um `useState` com união discriminada dá o mesmo resultado sem
  * dependência nova, e o TypeScript verifica os parâmetros de cada rota.
+ *
+ * Quatro rotas são RAIZ e aparecem como aba no topo (configs, rodando, logs,
+ * serviço). As outras três (wizard, runner, services) são sub-telas: mantêm
+ * acesa a aba de onde partiram e se anunciam pelo "crumb" ao lado das abas —
+ * assim fica claro que se está DENTRO de algo, e não numa quinta aba oculta.
  */
 
 type Route =
@@ -34,7 +45,31 @@ type Route =
 	// tela inicial — a tela pula direto para ela em vez de pedir de novo.
 	| { name: "logs"; file?: string }
 	| { name: "services"; file?: string }
-	| { name: "running" };
+	| { name: "running" }
+	| { name: "servicelogs" };
+
+/** Aba acesa e rótulo da sub-tela, por rota. */
+function navFor(route: Route): { tab: TabKey; crumb?: string } {
+	switch (route.name) {
+		case "home":
+			return { tab: "configs" };
+		case "wizard":
+			return {
+				tab: "configs",
+				crumb: route.path ? `editar ${route.path}` : "nova config",
+			};
+		case "runner":
+			return { tab: "configs", crumb: `rodar ${basename(route.file)}` };
+		case "logs":
+			return { tab: "logs" };
+		case "running":
+			return { tab: "running" };
+		case "services":
+			return { tab: "running", crumb: "instalar/remover background" };
+		case "servicelogs":
+			return { tab: "service" };
+	}
+}
 
 export function App({ dir }: { dir: string }) {
 	const [route, setRoute] = useState<Route>({ name: "home" });
@@ -78,86 +113,108 @@ export function App({ dir }: { dir: string }) {
 		});
 	}
 
-	switch (route.name) {
-		case "home":
-			return (
-				<Home
-					dir={dir}
-					notice={route.notice}
-					onAction={(action) => {
-						switch (action.type) {
-							case "new":
-								setRoute({ name: "wizard" });
-								break;
-							case "open":
-								openConfig(action.file);
-								break;
-							case "run":
-								setRoute({ name: "runner", file: resolve(dir, action.file) });
-								break;
-							case "logs":
-								setRoute({ name: "logs", file: action.file });
-								break;
-							case "running":
-								setRoute({ name: "running" });
-								break;
-							case "services":
-								setRoute({ name: "services", file: action.file });
-								break;
-							case "quit":
-								exit();
-								break;
-						}
-					}}
-				/>
-			);
+	const nav: NavContextValue = {
+		...navFor(route),
+		go: (key) => {
+			if (key === "configs") setRoute({ name: "home" });
+			else if (key === "running") setRoute({ name: "running" });
+			else if (key === "logs") setRoute({ name: "logs" });
+			else setRoute({ name: "servicelogs" });
+		},
+	};
 
-		case "wizard":
-			return (
-				<Wizard
-					initialForm={route.form}
-					preserved={route.preserved}
-					existingPath={route.path}
-					onExit={() => setRoute({ name: "home" })}
-					onRun={(file) => setRoute({ name: "runner", file })}
-				/>
-			);
+	function screen(): ReactNode {
+		switch (route.name) {
+			case "home":
+				return (
+					<Home
+						dir={dir}
+						notice={route.notice}
+						onAction={(action) => {
+							switch (action.type) {
+								case "new":
+									setRoute({ name: "wizard" });
+									break;
+								case "open":
+									openConfig(action.file);
+									break;
+								case "run":
+									setRoute({ name: "runner", file: resolve(dir, action.file) });
+									break;
+								case "logs":
+									setRoute({ name: "logs", file: action.file });
+									break;
+								case "running":
+									setRoute({ name: "running" });
+									break;
+								case "services":
+									setRoute({ name: "services", file: action.file });
+									break;
+								case "quit":
+									exit();
+									break;
+							}
+						}}
+					/>
+				);
 
-		case "runner":
-			return (
-				<RunnerScreen
-					file={route.file}
-					onExit={() => setRoute({ name: "home" })}
-					onInstallService={() => setRoute({ name: "services" })}
-				/>
-			);
+			case "wizard":
+				return (
+					<Wizard
+						initialForm={route.form}
+						preserved={route.preserved}
+						existingPath={route.path}
+						onExit={() => setRoute({ name: "home" })}
+						onRun={(file) => setRoute({ name: "runner", file })}
+					/>
+				);
 
-		case "logs":
-			return (
-				<LogsScreen
-					dir={dir}
-					file={route.file}
-					onExit={() => setRoute({ name: "home" })}
-				/>
-			);
+			case "runner":
+				return (
+					<RunnerScreen
+						file={route.file}
+						onExit={() => setRoute({ name: "home" })}
+						onInstallService={() => setRoute({ name: "services" })}
+					/>
+				);
 
-		case "running":
-			return (
-				<RunningScreen
-					dir={dir}
-					onExit={() => setRoute({ name: "home" })}
-					onInstall={() => setRoute({ name: "services" })}
-					onLogs={() => setRoute({ name: "logs" })}
-				/>
-			);
+			case "logs":
+				return (
+					<LogsScreen
+						dir={dir}
+						file={route.file}
+						onExit={() => setRoute({ name: "home" })}
+					/>
+				);
 
-		case "services":
-			return (
-				<ServicesScreen
-					dir={dir}
-					file={route.file}
-					onExit={() => setRoute({ name: "home" })}
-				/>
-			);
+			case "running":
+				return (
+					<RunningScreen
+						dir={dir}
+						onExit={() => setRoute({ name: "home" })}
+						onInstall={() => setRoute({ name: "services" })}
+						onLogs={() => setRoute({ name: "servicelogs" })}
+					/>
+				);
+
+			case "services":
+				return (
+					<ServicesScreen
+						dir={dir}
+						file={route.file}
+						onExit={() => setRoute({ name: "running" })}
+					/>
+				);
+
+			case "servicelogs":
+				return (
+					<ServiceLogsScreen
+						dir={dir}
+						onExit={() => setRoute({ name: "running" })}
+					/>
+				);
+		}
 	}
+
+	return <NavProvider value={nav}>{screen()}</NavProvider>;
 }

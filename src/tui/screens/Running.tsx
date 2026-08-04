@@ -8,14 +8,7 @@ import {
 import { controlService } from "../../core/service/manager";
 import type { ServiceSpec } from "../../core/service/types";
 import { Select } from "../components/Select";
-import {
-	type Chip,
-	layout,
-	Panel,
-	Shell,
-	SIDEBAR_WIDTH,
-	Stat,
-} from "../components/Shell";
+import { type Chip, layout, Panel, Shell, Stat } from "../components/Shell";
 import { useTerminalSize } from "../hooks/useTerminalSize";
 import { isMouseInput } from "../mouse/parse";
 import { glyph, theme } from "../theme";
@@ -142,23 +135,16 @@ export function RunningScreen({
 				{ keys: "↑↓", label: "serviço" },
 				{ keys: "i/p/t", label: "iniciar/parar/reiniciar" },
 				{ keys: "n", label: "instalar outro" },
-				{ keys: "l", label: "logs" },
+				{ keys: "l", label: "log ao vivo" },
 				{ keys: "R", label: "atualizar" },
 				{ keys: "esc", label: "voltar" },
 			]}
 		>
-			<Panel title="ações" width={SIDEBAR_WIDTH} height={l.body}>
-				<Text color={theme.muted} wrap="wrap">
-					i inicia · p para · t reinicia o serviço sob o cursor.
-				</Text>
-				<Box marginTop={1}>
-					<Text color={theme.muted} wrap="wrap">
-						n abre a tela de background para instalar uma config nova ou remover
-						um serviço.
-					</Text>
-				</Box>
-			</Panel>
-
+			{/*
+			 * O painel "ações" que ficava aqui à esquerda era só texto repetindo a
+			 * barra de teclas — cobrava 19 colunas da lista para não dizer nada de
+			 * novo. As teclas continuam anunciadas embaixo, onde já se olha.
+			 */}
 			<Panel
 				title={`rodando em background · ${basename(dir)}`}
 				width={l.center}

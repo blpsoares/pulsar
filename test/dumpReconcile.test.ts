@@ -58,7 +58,10 @@ beforeEach(async () => {
  * `truncations`: quantas varreduras cortam; demais voltam inteiras.
  */
 function wrapCursor(
-	cursor: { [k: string]: unknown },
+	// Indexável por símbolo (o proxy intercepta `Symbol.asyncIterator`) e já
+	// declarado como iterável: sem isso o `target[Symbol.asyncIterator]` e o
+	// `for await (… of target)` não passam pelo typecheck.
+	cursor: AsyncIterable<unknown> & Record<string | symbol, unknown>,
 	cutAfter: number,
 	budget: { left: number },
 ) {
@@ -109,9 +112,9 @@ function shortCursorCollection(
 			if (prop === "find") {
 				return (...args: unknown[]) =>
 					wrapCursor(
-						(target.find as (...a: unknown[]) => unknown)(...args) as {
-							[k: string]: unknown;
-						},
+						(target.find as (...a: unknown[]) => unknown)(
+							...args,
+						) as AsyncIterable<unknown> & Record<string | symbol, unknown>,
 						cutAfter,
 						budget,
 					);

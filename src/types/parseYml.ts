@@ -22,7 +22,9 @@ const syncCollectionEntrySchema = z.union([
 	z
 		.object({
 			name: z.string(),
-			filter: z.record(z.unknown()).optional(),
+			// zod 4 exige o tipo da CHAVE além do valor: `z.record(z.unknown())`
+			// compilava no zod 3 e virou erro aqui.
+			filter: z.record(z.string(), z.unknown()).optional(),
 			filterFile: z.string().optional(),
 		})
 		.refine((d) => !(d.filter && d.filterFile), {

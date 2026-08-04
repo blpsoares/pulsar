@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import { Box, Text } from "ink";
 import type { DetectedConfig } from "../../core/compose/detectConfigs";
+import { shortenPath } from "../layout";
 import { useClickable } from "../mouse/MouseProvider";
 import { theme } from "../theme";
 import { windowRange } from "./Select";
@@ -108,8 +109,7 @@ export function ConfigTree({
 			<Box flexDirection="column">
 				<Text color={theme.muted}>nenhuma config do pulsar por aqui.</Text>
 				<Text color={theme.muted}>
-					tecle <Text color={theme.accent}>tab</Text> e escolha{" "}
-					<Text color={theme.accent}>nova config</Text> para criar a primeira.
+					tecle <Text color={theme.accent}>n</Text> para criar a primeira.
 				</Text>
 			</Box>
 		);
@@ -117,6 +117,8 @@ export function ConfigTree({
 	const { start, end } = windowRange(index, rows.length, visible);
 	// -4 de borda/padding, -20 das colunas de modo e destino, -2 do recuo
 	const nameWidth = Math.max(14, width - 26);
+	// cabeçalho: -4 de borda/padding, -2 do marcador e da seta, -6 do "(N)"
+	const dirWidth = Math.max(10, width - 12);
 
 	return (
 		<Box flexDirection="column" ref={ref}>
@@ -134,7 +136,7 @@ export function ConfigTree({
 					return (
 						<Text key={`g:${row.dir}`} color={color ?? theme.accent} bold>
 							{active ? "▍" : " "}
-							{row.collapsed ? "▸" : "▾"} {prettyDir(row.dir)}{" "}
+							{row.collapsed ? "▸" : "▾"} {prettyDir(row.dir, dirWidth)}{" "}
 							<Text color={theme.border}>({row.count})</Text>
 						</Text>
 					);
@@ -165,8 +167,13 @@ export function ConfigTree({
 	);
 }
 
-function prettyDir(dir: string): string {
-	return dir === "." ? "· aqui" : dir;
+/**
+ * Caminho da seção. Encurta pelo MEIO quando não cabe (`pulsar/…/staging`), em
+ * vez de cortar o fim: a última pasta é a que distingue duas seções irmãs, e
+ * `pulsar/ads-s…` — o que a sidebar estreita produzia — não identifica nada.
+ */
+function prettyDir(dir: string, width: number): string {
+	return dir === "." ? "· aqui" : shortenPath(dir, width);
 }
 
 function baseName(file: string): string {

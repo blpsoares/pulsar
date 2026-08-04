@@ -1,6 +1,7 @@
-import { basename, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import { formatBytes } from "../../core/inspect/collStats";
@@ -13,17 +14,19 @@ import {
 import { tailCommand } from "../../core/logs/tailCommand";
 import { levelOf } from "../../core/run/logLines";
 import { detectBackends, preferredBackend } from "../../core/service/detect";
+import { BASE_COMPOSE } from "../../core/service/dockerService";
 import { agentLabel } from "../../core/service/launchd";
 import { type Backend, serviceName } from "../../core/service/types";
 import {
 	type Chip,
 	layout,
 	Panel,
+	RAIL_WIDTH,
 	Shell,
-	SIDEBAR_WIDTH,
 	Stat,
 } from "../components/Shell";
 import { useProcess } from "../hooks/useProcess";
+import { useSettled } from "../hooks/useSettled";
 import { useTerminalSize } from "../hooks/useTerminalSize";
 import { glyph, theme } from "../theme";
 
@@ -56,21 +59,29 @@ export function LogsScreen({
 	onExit: () => void;
 }) {
 	const { columns, rows } = useTerminalSize();
-	const l = layout(columns, rows);
+	// Trilho de FONTES: aqui a coluna da esquerda é conteúdo (que log estou
+	// lendo), não navegação global — por isso ela fica, mesmo com as abas.
+	const l = layout(columns, rows, RAIL_WIDTH);
 
-	const files = listLogFiles(dir);
-	const configs = detectConfigs(dir, { recursive: true }).filter(
-		(c) => c.kind !== "desconhecido",
-	);
-
-	const sources: Source[] = [
-		...files.map((f) => ({
-			kind: "file" as const,
-			path: f.path,
-			name: f.name,
-		})),
-		...configs.map((c) => ({ kind: "live" as const, file: c.file })),
-	];
+	/**
+	 * A varredura é de DISCO (lista ./logs e vasculha a árvore atrás de ymls).
+	 * Fora de um `useMemo` ela rodava a cada render — inclusive a cada tecla
+	 * apertada dentro do visualizador, que redesenha a tela inteira.
+	 */
+	const sources: Source[] = useMemo(() => {
+		const files = listLogFiles(dir);
+		const configs = detectConfigs(dir, { recursive: true }).filter(
+			(c) => c.kind !== "desconhecido",
+		);
+		return [
+			...files.map((f) => ({
+				kind: "file" as const,
+				path: f.path,
+				name: f.name,
+			})),
+			...configs.map((c) => ({ kind: "live" as const, file: c.file })),
+		];
+	}, [dir]);
 
 	const [index, setIndex] = useState(() => {
 		if (!file) return 0;
@@ -78,15 +89,30 @@ export function LogsScreen({
 		return i >= 0 ? i : 0;
 	});
 	const [pane, setPane] = useState<"sources" | "content">("content");
+	/**
+	 * A busca do visualizador vive lá dentro, mas o Shell precisa saber dela:
+	 * com um campo de texto aberto, `1..4` tem que escrever o dígito na busca,
+	 * não pular de aba.
+	 */
+	const [typing, setTyping] = useState(false);
 
-	const source = sources[Math.min(index, sources.length - 1)];
+	/**
+	 * O CURSOR anda na hora; o VISUALIZADOR só segue depois que a seleção para.
+	 *
+	 * Cada troca de fonte remonta o visualizador — o que, no caso "ao vivo",
+	 * significa matar um `journalctl -f` e spawnar outro. Sem esta pausa, descer
+	 * dez itens com a seta criava e matava dez processos, um por tecla.
+	 */
+	const settled = useSettled(index, 250);
+	const source = sources[Math.min(settled, sources.length - 1)];
 
 	useInput((_input, key) => {
 		if (key.escape) {
 			onExit();
 			return;
 		}
-		if (key.tab) {
+		// shift+tab é troca de ABA (tratada no Shell); `tab` sozinho é foco.
+		if (key.tab && !key.shift) {
 			setPane((p) => (p === "sources" ? "content" : "sources"));
 			return;
 		}
@@ -100,6 +126,7 @@ export function LogsScreen({
 			chips={chipsFor(source, dir)}
 			columns={columns}
 			rows={rows}
+			digitKeys={!typing}
 			hints={[
 				{ keys: "tab", label: "painel" },
 				{ keys: "↑↓", label: pane === "sources" ? "fonte" : "rolar" },
@@ -111,7 +138,7 @@ export function LogsScreen({
 		>
 			<Panel
 				title="fontes"
-				width={SIDEBAR_WIDTH}
+				width={l.rail}
 				height={l.body}
 				focused={pane === "sources"}
 			>
@@ -137,6 +164,7 @@ export function LogsScreen({
 					height={l.body}
 					visibleRows={l.panelRows - 1}
 					focused={pane === "content"}
+					onSearching={setTyping}
 				/>
 			) : (
 				<LiveViewer
@@ -213,6 +241,7 @@ function FileViewer({
 	height,
 	visibleRows,
 	focused,
+	onSearching,
 }: {
 	path: string;
 	width: number;
@@ -220,14 +249,28 @@ function FileViewer({
 	height: number;
 	visibleRows: number;
 	focused: boolean;
+	/** avisa a tela quando a busca abre/fecha — ver `typing` em LogsScreen */
+	onSearching: (active: boolean) => void;
 }) {
 	const initial = useRef(tailFile(path, 500));
 	const [lines, setLines] = useState<string[]>(initial.current.lines);
 	const offsetRef = useRef(initial.current.size);
 	const [follow, setFollow] = useState(true);
 	const [query, setQuery] = useState("");
-	const [searching, setSearching] = useState(false);
+	const [searching, setSearchingState] = useState(false);
 	const [scroll, setScroll] = useState(0);
+
+	const setSearching = useCallback(
+		(active: boolean) => {
+			setSearchingState(active);
+			onSearching(active);
+		},
+		[onSearching],
+	);
+
+	// Trocar de fonte com a busca aberta deixaria a tela sem campo e o Shell
+	// achando que ainda há um — os dígitos nunca voltariam a navegar.
+	useEffect(() => () => onSearching(false), [onSearching]);
 
 	useEffect(() => {
 		if (!follow) return;
@@ -388,8 +431,20 @@ function LiveViewer({
 		if (started.current) return;
 		started.current = true;
 
+		// A detecção é assíncrona; o desmonte pode acontecer no meio dela. Sem esta
+		// guarda o `proc.start()` rodava DEPOIS do cleanup que deveria matá-lo — e
+		// o seguidor sobrevivia à TUI, órfão, segurando o journalctl para sempre.
+		let vivo = true;
+
 		void (async () => {
-			const availability = await detectBackends(true);
+			// `existsSync` e não `true` fixo: afirmar que o compose existe fazia o
+			// docker ser eleito em pasta onde ele não roda, e o seguidor falhava com
+			// um erro que não dizia isso.
+			const availability = await detectBackends(
+				existsSync(join(dir, BASE_COMPOSE)),
+			);
+			if (!vivo) return;
+
 			const chosen = preferredBackend(availability);
 			if (!chosen) {
 				setError("nenhum supervisor disponível nesta máquina");
@@ -407,6 +462,8 @@ function LiveViewer({
 				autostart: false,
 			};
 
+			// Segunda checagem: o desmonte pode ter caído entre o `await` e aqui.
+			if (!vivo) return;
 			proc.start(
 				tailCommand(chosen, serviceName(spec), {
 					workingDir: dir,
@@ -415,6 +472,10 @@ function LiveViewer({
 				{ cwd: dir },
 			);
 		})();
+
+		return () => {
+			vivo = false;
+		};
 	}, [dir, file, proc]);
 
 	const visible = proc.lines.slice(-visibleRows);

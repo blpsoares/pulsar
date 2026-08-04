@@ -46,6 +46,8 @@ export type StepResult = {
 	step: ServiceStep;
 	ok: boolean;
 	output: string;
+	/** o que fazer a respeito, quando dá para saber (só em falha) */
+	advice?: string;
 };
 
 export type InstallResult = {
@@ -53,6 +55,8 @@ export type InstallResult = {
 	files: string[];
 	results: StepResult[];
 	ok: boolean;
+	/** uma linha explicando a falha e o que fazer — vazia quando deu certo */
+	error?: string;
 };
 
 export function buildPlan(
@@ -102,6 +106,7 @@ export async function installService(
 
 	const results: StepResult[] = [];
 	let ok = true;
+	let error: string | undefined;
 
 	for (const step of plan.steps) {
 		if (step.privileged) continue;
@@ -113,10 +118,16 @@ export async function installService(
 			});
 			results.push({ step, ok: true, output: (stdout + stderr).trim() });
 		} catch (err) {
-			const output = errorText(err);
-			results.push({ step, ok: false, output });
+			const advice = adviseFailure(plan.backend, errorText(err));
+			results.push({
+				step,
+				ok: false,
+				output: stepFailure(step, errorText(err), advice),
+				advice,
+			});
 			if (!step.optional) {
 				ok = false;
+				error = stepFailure(step, errorText(err), advice);
 				// Parar no primeiro passo essencial que falha: seguir adiante
 				// deixaria um serviço meio instalado, pior que nenhum.
 				break;
@@ -124,7 +135,58 @@ export async function installService(
 		}
 	}
 
-	return { plan, files: written, results, ok };
+	return { plan, files: written, results, ok, error };
+}
+
+/**
+ * Mensagem de falha ACIONÁVEL: comando + causa + saída sugerida, numa linha só.
+ *
+ * O stderr cru (`Failed to connect to bus: No medium found`) diz o que o
+ * systemd sentiu, não o que o usuário deve fazer — e a tela mostra só a
+ * primeira linha do output, então a saída sugerida tem que caber ali.
+ */
+export function stepFailure(
+	step: ServiceStep,
+	output: string,
+	advice?: string,
+): string {
+	const cause = output.split("\n")[0]?.trim() || "sem saída do comando";
+	const cmd = `${step.cmd} ${step.args.join(" ")}`.trim();
+	return advice ? `${cmd} — ${cause} · ${advice}` : `${cmd} — ${cause}`;
+}
+
+/**
+ * Traduz as falhas que já vimos em campo para a ação que resolve. Sempre
+ * termina propondo TROCAR DE BACKEND: quem está numa tela de instalação quer
+ * o serviço no ar, não um diagnóstico do systemd.
+ */
+export function adviseFailure(
+	backend: Backend,
+	output: string,
+): string | undefined {
+	const text = output.toLowerCase();
+
+	if (backend === "systemd") {
+		if (
+			/failed to connect to bus|no medium found|failed to get d-?bus/.test(text)
+		)
+			return "esta sessão não tem bus de usuário (WSL/container): troque o backend para docker ou pm2";
+		if (text.includes("interactive authentication required"))
+			return "o systemd pediu autenticação: troque para docker ou pm2, que não dependem de polkit";
+	}
+
+	if (backend === "pm2" && /not found|enoent/.test(text))
+		return "instale o pm2 (bun add -g pm2) ou troque o backend para docker";
+
+	if (
+		backend === "docker" &&
+		/cannot connect to the docker daemon|permission denied|is the docker daemon running/.test(
+			text,
+		)
+	)
+		return "o daemon do Docker não respondeu: suba o Docker ou troque o backend para pm2";
+
+	return "se o backend não funciona nesta máquina, troque na tela (tab) por um que esteja disponível";
 }
 
 export async function uninstallService(
@@ -319,7 +381,13 @@ export async function controlService(
 		});
 		return { step, ok: true, output: (stdout + stderr).trim() };
 	} catch (err) {
-		return { step, ok: false, output: errorText(err) };
+		const advice = adviseFailure(backend, errorText(err));
+		return {
+			step,
+			ok: false,
+			output: stepFailure(step, errorText(err), advice),
+			advice,
+		};
 	}
 }
 

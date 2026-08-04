@@ -24,13 +24,25 @@ function encodeDocument(document: Document) {
 	return hashedDocument;
 }
 
+/**
+ * Metadados que o pulsar carimba em todo doc do destino. Tipado (e não
+ * `Record<string, unknown>`) porque quem chama LÊ o hash de volta para comparar
+ * com o destino — com o tipo frouxo, `newDocument.__sync?.hash` nem compilava.
+ */
+export type SyncMeta = { hot: boolean; ts: number; hash: string };
+
+export type SyncedDocument = Document & {
+	__sync: SyncMeta;
+	origin?: string;
+};
+
 export function addFieldsOnMongoDocument(
 	rawDocument: Document,
 	origin?: string,
 	hot: boolean = true,
-) {
+): SyncedDocument {
 	const hash = encodeDocument(rawDocument);
-	const newDocument: Record<string, unknown> = {
+	const newDocument: SyncedDocument = {
 		...rawDocument,
 		__sync: {
 			hot,

@@ -4,6 +4,7 @@ import type {
 	Collection,
 	Db,
 	Document,
+	Filter,
 	ResumeToken,
 } from "mongodb";
 import { freezeCollection } from "../../functions/freeze";
@@ -25,6 +26,19 @@ import {
 	saveDumpProgress,
 } from "./syncState";
 import { writeDocToDest } from "./writeDoc";
+
+/**
+ * `{ _id: { $in: ids } }` com os ids como vieram do change stream.
+ *
+ * O driver tipa o `_id` de uma `Collection<Document>` como `ObjectId`, mas o
+ * pulsar sincroniza collections cujo `_id` é string, número ou documento — o
+ * gatilho guarda o valor ORIGINAL de propósito (ver `changeBuffer.ts`). O cast
+ * fica CONCENTRADO aqui, com o motivo escrito, em vez de espalhado por três
+ * chamadas do flush.
+ */
+function idFilter(ids: unknown[]): Filter<Document> {
+	return { _id: { $in: ids } } as unknown as Filter<Document>;
+}
 
 const DEFAULT_PARALLEL = 3;
 const DEFAULT_BATCH_SIZE = 500;
@@ -518,22 +532,22 @@ export class SyncEngine {
 				if (!route) continue;
 				try {
 					if (deletes.length > 0) {
-						await route.destCol.deleteMany({ _id: { $in: deletes } });
+						await route.destCol.deleteMany(idFilter(deletes));
 						// Informa o dump concorrente (I1): docs já deletados não devem ser
 						// ressuscitados caso o cursor do dump ainda não os tenha processado.
 						if (this.dumpsActive)
 							for (const id of deletes) this.deletedIds.push(String(id));
 					}
 					if (upserts.length > 0) {
-						const query = route.filter
-							? { $and: [{ _id: { $in: upserts } }, route.filter] }
-							: { _id: { $in: upserts } };
+						const query: Filter<Document> = route.filter
+							? { $and: [idFilter(upserts), route.filter] }
+							: idFilter(upserts);
 						const docs = await route.srcCol.find(query).toArray();
 						const found = new Set(docs.map((d) => String(d._id)));
 						// ausentes na re-busca = deletados OU saíram do filtro → delete no destino
 						const missing = upserts.filter((id) => !found.has(String(id)));
 						if (missing.length > 0) {
-							await route.destCol.deleteMany({ _id: { $in: missing } });
+							await route.destCol.deleteMany(idFilter(missing));
 							// Também registra os "missing" como deletados pro dump concorrente.
 							if (this.dumpsActive)
 								for (const id of missing) this.deletedIds.push(String(id));

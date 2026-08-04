@@ -14,27 +14,22 @@ import { serviceStatus } from "../../core/service/manager";
 import type { Backend, ServiceStatus } from "../../core/service/types";
 import { type Action, ActionMenu } from "../components/ActionMenu";
 import { buildRows, ConfigTree, type TreeRow } from "../components/ConfigTree";
-import {
-	type Chip,
-	layout,
-	Panel,
-	Shell,
-	Sidebar,
-	Stat,
-} from "../components/Shell";
+import { type Chip, layout, Panel, Shell, Stat } from "../components/Shell";
 import { useBackgroundStart } from "../hooks/useBackgroundStart";
 import { useTerminalSize } from "../hooks/useTerminalSize";
-import { useClickable, useMouse } from "../mouse/MouseProvider";
+import { useMouse } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
 import { theme } from "../theme";
 
 /**
- * Cockpit inicial: menu à esquerda, configs da pasta no centro, detalhe da
+ * Aba `configs`: a lista de ymls da pasta ocupando a tela, com o detalhe da
  * config sob o cursor à direita.
  *
- * `tab` alterna o foco entre menu e lista — é o que permite agir direto sobre
- * uma config (rodar, background, logs) sem passar pelo menu, do mesmo jeito que
- * um k9s age sobre o recurso selecionado.
+ * A antiga sidebar de menu saiu daqui. Ela cobrava 19 colunas permanentes para
+ * quatro itens globais (nova config, background, logs, sair) e era a causa dos
+ * caminhos cortados no meio — `pulsar/ads-s…`. Três desses itens viraram ABA no
+ * topo e o quarto virou tecla (`n` cria, `q` sai), ambos anunciados na barra de
+ * teclas. A largura liberada foi inteira para a lista.
  *
  * O painel da direita mostra também se aquela config JÁ está instalada como
  * serviço, e em que estado. É a pergunta que mais se faz numa VM ("isso aqui
@@ -50,19 +45,6 @@ export type HomeAction =
 	| { type: "logs"; file?: string }
 	| { type: "quit" };
 
-/**
- * Só ações GLOBAIS. Os verbos que agem sobre uma config (rodar, editar, subir
- * em background) saíram daqui: exigiam deixar o arquivo certo selecionado na
- * lista e só então escolher o verbo do outro lado da tela, sem nada ligando as
- * duas metades. Agora eles vivem no menu do próprio arquivo (enter/clique).
- */
-const MENU = [
-	{ key: "new", label: "nova config", icon: "✚" },
-	{ key: "running", label: "background", icon: "⬢" },
-	{ key: "logs", label: "logs", icon: "▤" },
-	{ key: "quit", label: "sair", icon: "⏻" },
-];
-
 export function Home({
 	dir,
 	onAction,
@@ -76,8 +58,6 @@ export function Home({
 	const mouse = useMouse();
 
 	const [reloadKey, setReloadKey] = useState(0);
-	const [pane, setPane] = useState<"menu" | "list">("list");
-	const [menuIndex, setMenuIndex] = useState(0);
 	const [rowIndex, setRowIndex] = useState(0);
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 	/** menu de ações do arquivo sob o cursor (aberto por enter/clique) */
@@ -129,8 +109,10 @@ export function Home({
 		// Com o menu do arquivo aberto, é ELE que responde: a mesma tecla valendo
 		// nos dois lugares foi o bug que já apareceu no seletor de collections.
 		if (menuFor) return;
-		if (key.tab) {
-			setPane((p) => (p === "menu" ? "list" : "menu"));
+		if (input === "n") {
+			// A antiga entrada "nova config" da sidebar. Vira tecla, não aba: criar
+			// é um VERBO, e verbo em aba mente sobre o que a aba mostra.
+			onAction({ type: "new" });
 			return;
 		}
 		if (input === "R") {
@@ -171,22 +153,6 @@ export function Home({
 			}
 		}
 
-		if (pane === "menu") {
-			if (key.upArrow) setMenuIndex((i) => (i === 0 ? MENU.length - 1 : i - 1));
-			if (key.downArrow)
-				setMenuIndex((i) => (i === MENU.length - 1 ? 0 : i + 1));
-			if (key.return) {
-				const item = MENU[menuIndex];
-				if (!item) return;
-				if (item.key === "new") onAction({ type: "new" });
-				else if (item.key === "quit") onAction({ type: "quit" });
-				else if (item.key === "running") onAction({ type: "running" });
-				else if (item.key === "logs")
-					onAction({ type: "logs", file: selected?.file });
-			}
-			return;
-		}
-
 		if (treeRows.length === 0) return;
 		if (key.upArrow)
 			setRowIndex(cursor === 0 ? treeRows.length - 1 : cursor - 1);
@@ -200,16 +166,6 @@ export function Home({
 		if (key.rightArrow && currentRow?.kind === "group" && currentRow.collapsed)
 			toggleGroup(currentRow.dir);
 		if ((key.return || input === " ") && currentRow) activate(currentRow);
-	});
-
-	// Clicar no painel da lista também traz o foco para ele.
-	const listRef = useClickable({ onClick: () => setPane("list") });
-	const menuRef = useClickable({
-		onClick: ({ row }) => {
-			setPane("menu");
-			const item = MENU[row - 1];
-			if (item) setMenuIndex(row - 1);
-		},
 	});
 
 	const chips: Chip[] = [
@@ -253,13 +209,10 @@ export function Home({
 			}
 			copy={() => (selected ? resolve(dir, selected.file) : null)}
 			hints={[
-				{ keys: "tab", label: "painel" },
 				{ keys: "↑↓", label: "navegar" },
-				{
-					keys: "enter",
-					label: pane === "menu" ? "abrir" : "ações do arquivo",
-				},
+				{ keys: "enter", label: "ações do arquivo" },
 				{ keys: "←→", label: "fechar/abrir seção" },
+				{ keys: "n", label: "nova config" },
 				{ keys: "r", label: "rodar" },
 				{ keys: "b", label: "subir em background" },
 				{ keys: "l", label: "logs" },
@@ -271,58 +224,41 @@ export function Home({
 				{ keys: "q", label: "sair" },
 			]}
 		>
-			<Box ref={menuRef} flexDirection="column">
-				<Sidebar
-					items={MENU}
-					activeKey={MENU[menuIndex]?.key ?? "new"}
-					height={l.body}
-					focused={pane === "menu"}
-				/>
-			</Box>
-
-			<Box ref={listRef} flexDirection="column">
-				<Panel
-					title={`configs · ${basename(dir) || dir}`}
-					width={l.center}
-					height={l.body}
-					focused={pane === "list"}
-				>
-					{menuFor ? (
-						<ActionMenu
-							title={menuFor}
-							width={l.center}
-							actions={actionsFor(status)}
-							onClose={() => setMenuFor(null)}
-							onPick={(action) => {
-								const file = menuFor;
-								setMenuFor(null);
-								if (!file) return;
-								if (action === "e") onAction({ type: "open", file });
-								else if (action === "r") onAction({ type: "run", file });
-								else if (action === "b") void background.start(file);
-								else if (action === "g") onAction({ type: "services", file });
-								else if (action === "l") onAction({ type: "logs", file });
-							}}
-						/>
-					) : (
-						<ConfigTree
-							rows={treeRows}
-							index={cursor}
-							width={l.center}
-							visible={l.panelRows - 1}
-							focused={pane === "list"}
-							onActivate={(row) => {
-								setPane("list");
-								activate(row);
-							}}
-							onHighlight={(i) => {
-								setPane("list");
-								setRowIndex(i);
-							}}
-						/>
-					)}
-				</Panel>
-			</Box>
+			<Panel
+				title={`configs · ${basename(dir) || dir}`}
+				width={l.center}
+				height={l.body}
+				focused
+			>
+				{menuFor ? (
+					<ActionMenu
+						title={menuFor}
+						width={l.center}
+						actions={actionsFor(status)}
+						onClose={() => setMenuFor(null)}
+						onPick={(action) => {
+							const file = menuFor;
+							setMenuFor(null);
+							if (!file) return;
+							if (action === "e") onAction({ type: "open", file });
+							else if (action === "r") onAction({ type: "run", file });
+							else if (action === "b") void background.start(file);
+							else if (action === "g") onAction({ type: "services", file });
+							else if (action === "l") onAction({ type: "logs", file });
+						}}
+					/>
+				) : (
+					<ConfigTree
+						rows={treeRows}
+						index={cursor}
+						width={l.center}
+						visible={l.panelRows - 1}
+						focused
+						onActivate={activate}
+						onHighlight={setRowIndex}
+					/>
+				)}
+			</Panel>
 
 			{l.aside > 0 ? (
 				<Panel title="detalhe" width={l.aside} height={l.body}>

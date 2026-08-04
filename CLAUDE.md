@@ -79,11 +79,13 @@ src/
     logs/                   # [TUI] readLog (tail pela cauda), tailCommand (journalctl/pm2/docker/tail)
   tui/
     index.tsx             # render da TUI; exige TTY (sem TTY manda usar os subcomandos)
-    App.tsx               # roteador de telas
+    App.tsx               # roteador de telas (rotas raiz = abas; resto = sub-tela com crumb)
     theme.ts              # paleta/glifos
-    components/           # Frame, Select, TextInput, CollectionPicker
-    hooks/                # useInspector (Mongo), useProcess (filho), useSpinner
-    screens/              # Home, Wizard, Runner, Services, Logs (+ wizard/*)
+    layout.ts             # geometria pura: colunas, CHROME_ROWS, células das abas, shortenPath
+    components/           # Shell (abas+painéis+teclas), Select, TextInput, ConfigTree, ActionMenu
+    mouse/                # parse SGR (1000+1006) + MouseProvider (hit-testing; shift libera a seleção)
+    hooks/                # useInspector (Mongo), useProcess (filho), useSpinner, useBackgroundStart
+    screens/              # Home, Wizard, Runner, Running, Services, Logs, ServiceLogs (+ wizard/*)
   stubs/
     react-devtools-core.ts  # stub p/ o ink sobreviver ao bun build --compile
   functions/
@@ -305,13 +307,35 @@ Paleta ancorada no roxo da marca (`#9b00ff`, o mesmo do banner em
 que respeita o tema do terminal.
 
 **Layout de cockpit** (estilo k9s/lazygit): tela cheia em *alternate screen*
-(sai sem sujar o scrollback), com sidebar + painel central + painel de contexto
-visíveis ao mesmo tempo. `tab` alterna **apenas o foco**, nunca o conteúdo de um
+(sai sem sujar o scrollback), com painel central + painel de contexto visíveis ao
+mesmo tempo. `tab` alterna **apenas o foco**, nunca o conteúdo de um
 painel — trocar o que está na tela ao mudar de foco desorienta. As larguras vêm de
 `src/tui/layout.ts` (matemática pura, testada): abaixo de 96 colunas o painel da
-direita sai de cena antes de espremer a lista. **Ctrl+C e Ctrl+D encerram de
-qualquer tela** — o `render()` roda com `exitOnCtrlC: false` (para o filho
-receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
+direita sai de cena antes de espremer a lista. **Ctrl+D encerra de qualquer
+tela** (Ctrl+C passou a COPIAR) — o `render()` roda com `exitOnCtrlC: false`
+(para o filho receber SIGTERM e gravar o resume token), então a saída é tratada
+no `App`.
+
+**Navegação global em ABAS no topo** (`1 configs · 2 rodando · 3 logs ·
+4 serviço`), não em sidebar à esquerda: a sidebar cobrava ~19 colunas de toda
+tela o tempo inteiro para exibir quatro itens que quase nunca mudavam, e essas
+colunas faltavam justamente onde a informação é longa (caminhos de config,
+linhas de log). Teclas `1..4`, `shift+tab` e `ctrl+←/→`; a faixa é clicável por
+coluna (`tabCells`/`tabAt` em `layout.ts` — a MESMA conta desenha e mapeia o
+clique). `tab` sozinho continua sendo só o foco DENTRO da tela. Dois freios:
+`lockTabs` (Runner com processo vivo: trocar de aba mataria o sync) e
+`digitKeys` (wizard e busca dos logs, onde `1` precisa escrever "1"). Sub-telas
+(wizard, runner, services) mantêm acesa a aba de origem e se anunciam pelo
+"crumb" ao lado das abas. Quem publica isso é o `NavContext`, não uma prop — uma
+tela nova que esquecesse de repassar a prop apareceria sem abas e quebraria a
+altura fixa do chrome.
+
+O `CHROME_ROWS` (9) reserva **uma linha a mais** do que o Shell desenha. Não é
+folga decorativa: quando a soma fecha exatamente a altura do terminal, o yoga
+espreme o primeiro item flexível — medido, a faixa de abas rendeu uma linha em
+branco (rótulos sumidos, régua intacta) a 40 linhas. A barra de teclas ocupa
+**duas** linhas com quebra por palavra, porque truncar escondia sempre as mesmas
+teclas do fim (mouse, sair) numa tela cheia de atalhos.
 
 - **Descoberta recursiva:** a TUI varre da pasta atual **para baixo** procurando
   ymls do pulsar — não é preciso `cd` até onde a config mora; o caminho relativo
@@ -329,18 +353,39 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   `on("data")` disputa os bytes com ele — o listener não recebe nada e ainda
   arrisca engolir teclas. Rastrear cliques **rouba a seleção de texto nativa**
   do terminal; por isso `ctrl+c` COPIA o item em foco (via OSC 52, que funciona
-  através de SSH, com pbcopy/wl-copy/xclip como reforço) e `m` na tela inicial
-  desliga o mouse quando você quiser selecionar com o mouse mesmo. **Sair é `q` (na
+  através de SSH, com pbcopy/wl-copy/xclip como reforço), **`shift+arrastar`
+  seleciona texto** (o `MouseProvider` ignora todo evento com shift, antes do
+  hit-testing — a maioria dos terminais nem manda o evento, mas nos que mandam o
+  press abria o menu do item sob o cursor) e `m` na tela inicial
+  desliga o mouse quando você quiser selecionar com o mouse mesmo. O
+  `shift+arrastar` é anunciado pelo `Shell` na barra de teclas enquanto o mouse
+  está ligado — sem isso a única fonte da informação era um comentário de código.
+  A TUI fica no modo 1000+1006 (press/release/roda, SGR); 1002 passaria a
+  reportar arrasto (o próprio gesto de selecionar) e 1003, movimento sem botão.
+  **Todo `useInput` que aceita texto livre precisa da guarda `isMouseInput`** —
+  o ink entrega a sequência SGR como se fosse digitação, então sem ela um
+  clique escreve `[<0;10;5M` dentro da URI (`TextInput`) ou do termo de busca
+  (`CollectionPicker`), e a lista esvazia sem explicação.
+  **Sair é `q` (na
   tela inicial) ou `ctrl+d` (de qualquer lugar).** O `ctrl+d` é acrescentado à
   barra de teclas pelo próprio `Shell`, não por cada tela: uma tela que
   esquecesse de anunciá-lo deixaria o usuário preso sem saber como sair — foi
   o que aconteceu no passo "modo", que ainda por cima não tratava `esc`.
+  Acrescentar não bastava: a barra tem **altura fixa** (2 linhas, reservadas no
+  `CHROME_ROWS`) e o texto quebra por palavra, então o excedente não era
+  truncado com reticências — a terceira linha era recortada inteira e o
+  `ctrl+d` sumia sem deixar rastro, justamente na tela inicial. `fitHints`
+  (`layout.ts`, puro e testado) orça a largura ANTES de renderizar: as teclas
+  obrigatórias (abas, `shift+arrastar`, `ctrl+d`) reservam espaço primeiro e as
+  da tela ocupam o resto, caindo fora do fim para o começo — cada tela lista da
+  mais para a menos usada, então é a ordem certa de sacrificar.
 - **Ações no ITEM, não numa barra de verbos:** enter (ou clique) sobre uma
   config abre o menu DELA — editar, rodar aqui, iniciar em background, gerenciar
   background, ver logs. Antes os verbos ficavam na sidebar e era preciso deixar
   o arquivo certo selecionado na lista para então escolher o verbo do outro lado
-  da tela; duas metades sem nada ligando uma à outra. A sidebar ficou só com o
-  que é global (nova config, background, logs, sair).
+  da tela; duas metades sem nada ligando uma à outra. O que é global subiu para
+  as abas (configs/rodando/logs/serviço); na tela inicial sobraram `n` (nova
+  config) e `q` (sair), ambos anunciados nas hints.
 - **`b` sobe em background num passo** (`hooks/useBackgroundStart.ts`): instala
   com o backend nativo da máquina, liga no boot e sobe — dizendo no rodapé se
   ficou faltando um comando com sudo. A tela de background segue existindo para
@@ -349,7 +394,11 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   QUALQUER supervisor (`core/service/discover.ts` varre systemd, pm2, docker e
   launchd), com estado, boot e i/p/t para iniciar/parar/reiniciar. Responde "isso
   aqui está rodando?" sem partir de uma config.
-- **Navegação:** `tab` alterna o painel em foco. No wizard, o trilho de
+- **Navegação:** `1..4` troca de aba; `tab` alterna o painel em foco DENTRO da
+  tela. O trilho da esquerda que sobrou em Logs/Services/Runner/Wizard/serviço é
+  CONTEÚDO (fonte do log, backend, opções, passos), não navegação — por isso
+  `layout()` só o reserva a pedido (`RAIL_WIDTH`, 22 colunas) e o devolve ao
+  centro quando a tela aperta. No wizard, o trilho de
   **passos** é focável e clicável — é o que torna um yml existente realmente
   editável: dá para pular direto para "origem" ou "avançado" em vez de apertar
   `esc` até voltar.
@@ -380,24 +429,76 @@ receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
   e avisa quando uma view aponta para collection fora da seleção.
 - **Rodar:** dispara `sync`/`migrate`/`ttl` como processo filho com a saída ao
   vivo. Para com **SIGTERM** (o pulsar grava o resume token antes de sair);
-  SIGKILL só depois de 35s. A TUI nunca deixa filho órfão.
+  SIGKILL só depois de 35s. A TUI nunca deixa filho órfão — e há dois jeitos de
+  furar isso, ambos fechados:
+  - **Spawn depois do desmonte.** Quando o `start` vem DEPOIS de um `await`
+    (detectar backend, ler o yml), o desmonte pode cair no meio: o cleanup roda
+    antes de existir processo para matar, e o filho nasce órfão, sobrevivendo à
+    TUI. Todo efeito assíncrono que spawna carrega uma flag `vivo`, checada
+    também **entre o `await` e o `start`**.
+  - **Um spawn por tecla.** Trocar a fonte remonta o visualizador, o que no
+    caso "ao vivo" mata um `journalctl -f` e abre outro. Descer dez itens com a
+    seta criava e matava dez processos. O cursor anda na hora, mas o
+    visualizador segue um índice **estabilizado** (`hooks/useSettled.ts`, 250ms):
+    a seleção visível continua instantânea e só o efeito caro espera a mão parar.
+  - **Sinal que não encerra.** `process.once("SIGTERM", restore)` substituía a
+    ação padrão do sinal por "só restaurar a tela": a TUI passava a **ignorar**
+    `kill` e o fechamento do terminal. Os handlers de SIGTERM/SIGHUP restauram
+    **e saem** (128+sinal), e o de `uncaughtException` restaura, imprime o erro
+    (que o alternate screen esconderia) e sai com falha.
 - **Background e boot:** systemd (unit de *usuário*, sem sudo), launchd
   (LaunchAgent), pm2 (ecosystem file) e docker (herda o
   `docker-compose-limit.yml`). A tela detecta o que existe na máquina, mostra o
   **plano completo** (arquivos + comandos) antes de executar, e **nunca roda
-  sudo** — passos privilegiados (`enable-linger` de fallback, `pm2 startup`,
-  `systemctl enable docker`) são listados para você rodar. Instalar/iniciar/
-  parar/remover e status vivem na mesma tela.
-- **Logs:** duas visões — *gravados* (`./logs/*.log`, lidos pela cauda, com
-  busca e follow) e *ao vivo* (seguidor nativo: `journalctl -f`, `pm2 logs`,
+  sudo** — passos privilegiados (`enable-linger` de fallback, `pm2 startup`) são
+  listados para você rodar. Instalar/iniciar/parar/remover e status vivem na
+  mesma tela.
+  - **Detecção honesta do systemd (`core/service/detect.ts`):** disponibilidade
+    exige TRÊS evidências — `/run/systemd/system` (systemd é o init), o socket
+    do bus de usuário e um estado válido em `systemctl --user is-system-running`.
+    Antes bastava "o comando existe", e em WSL/container o erro *Failed to
+    connect to bus: No medium found* sai com código numérico e era lido como
+    "disponível" — o backend era oferecido e falhava na instalação. `degraded`
+    continua aprovado (sai != 0, mas tem bus). O julgamento é uma função PURA
+    (`judgeSystemdUser`) sobre a sonda, testável sem systemd.
+  - **Docker não pede sudo:** `restart: unless-stopped` já basta (o daemon subir
+    no boot é o padrão do pacote da distro, e Docker Desktop/WSL/colima nem têm
+    a unit). Sobrou só uma NOTA condicional, quando há systemd de sistema real e
+    a unit está comprovadamente `disabled`.
+  - **Falha acionável:** um passo que falha devolve "comando — causa · saída
+    sugerida" numa linha (`stepFailure`/`adviseFailure`) — bus ausente vira
+    "troque o backend para docker ou pm2", e não um dump de stderr.
+  - **A presença do compose é MEDIDA, não presumida.** `detectBackends` recebe
+    um booleano dizendo se há `docker-compose-limit.yml` na pasta, e passá-lo
+    fixo elimina (ou inventa) o docker silenciosamente. O atalho `b` passava
+    `false` e respondia "nenhum supervisor disponível" numa máquina com docker
+    instalado e o compose ao lado; a visão ao vivo dos logs passava `true` e
+    elegia docker onde ele não roda. Ambos usam `existsSync` agora, e a
+    negativa lista o motivo de CADA backend em vez de só dizer não.
+- **Logs (aba 3):** duas visões — *gravados* (`./logs/*.log`, lidos pela cauda,
+  com busca e follow) e *ao vivo* (seguidor nativo: `journalctl -f`, `pm2 logs`,
   `docker logs -f`, `tail -F`). O filho roda sem TTY, então o pulsar já troca as
   barras pelo bloco STATUS — formato que cabe no painel.
+- **Serviço (aba 4, `screens/ServiceLogs.tsx`):** log ao vivo do que está em
+  background, escolhido na lista do `discoverServices()` — o par (backend, nome)
+  vem do próprio supervisor, em vez de ser adivinhado por `preferredBackend()` +
+  nome do yml, que era o defeito da visão "ao vivo" da aba de logs. O cursor da
+  lista é SEPARADO do serviço seguido: seguir por highlight derrubaria e subiria
+  um `journalctl` a cada seta, então `enter` (ou clique no item já sob o cursor)
+  é que compromete. O seguidor vive num componente com `key` =
+  `backend:nome#recargas` — trocar de serviço, `R` ou sair da aba desmonta e o
+  cleanup manda SIGTERM (sem órfão). Quando o seguidor falha, `followIssue()`
+  (pura, testada) traduz a causa — binário ausente, systemd sem bus, `No such
+  container` — em vez de deixar painel vazio, e distingue os três silêncios
+  (abrindo / seguindo sem saída / seguidor encerrou).
 
 **Detalhe de build:** o ink referencia `react-devtools-core` e quebraria o
 `bun build --compile`; `src/stubs/react-devtools-core.ts` é mapeado via `paths`
 no tsconfig para resolver isso. Desenho completo em
 `docs/superpowers/specs/2026-07-28-tui-design.md`. Testes em
-`test/tuiConfig.test.ts`, `test/tuiService.test.ts` e `test/tuiInspect.test.ts`.
+`test/tuiConfig.test.ts`, `test/tuiService.test.ts`, `test/tuiInspect.test.ts`,
+`test/tuiLayout.test.ts` (geometria + abas), `test/tuiMouse.test.ts` (parse e
+hit-testing) e `test/tuiServiceLogs.test.ts`.
 
 ## Pontos de atenção
 
