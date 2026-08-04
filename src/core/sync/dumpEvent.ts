@@ -141,20 +141,26 @@ export async function dumpCollections(
 	let lastLogged = 0;
 	// Fronteira VIVA: menor _id já processado. Avança a cada lote e é o ponto de
 	// retomada tanto entre restarts quanto entre RETRIES dentro do mesmo run.
-	let frontier: unknown = resumeFromId ?? null;
+	//
+	// `hasFrontier` é um flag SEPARADO, e não `frontier != null`, porque `null` é
+	// um `_id` LEGÍTIMO no Mongo: uma collection pode ter (no máximo) um doc com
+	// `_id: null`, e ele é o MENOR de todos na ordem BSON — ou seja, é justamente
+	// o último a ser processado e vira a fronteira final. Usar `!= null` como
+	// sentinela confundiria "fronteira em null" com "sem fronteira" e faria a
+	// varredura recomeçar do zero.
+	let frontier: unknown = resumeFromId;
+	let hasFrontier = resumeFromId !== undefined;
 
 	// Query do recorte ainda-não-copiado: tudo, ou "abaixo da fronteira" na ordem
 	// TOTAL do BSON (type-safe p/ _id misto — ver belowFrontier).
 	const remainingFilter = (): Document =>
-		frontier != null
-			? { $and: [baseFilter, belowFrontier(frontier)] }
-			: baseFilter;
+		hasFrontier ? { $and: [baseFilter, belowFrontier(frontier)] } : baseFilter;
 
 	try {
 		// Sem filtro/retomada: estimatedDocumentCount (metadados, instantâneo).
 		// Senão countDocuments (exato — a guarda depende de um total confiável).
 		const total =
-			!filter && frontier == null
+			!filter && !hasFrontier
 				? await sourceCollection.estimatedDocumentCount()
 				: await sourceCollection.countDocuments(remainingFilter());
 
@@ -163,10 +169,9 @@ export async function dumpCollections(
 		trackDumpStart(collectionName, total);
 
 		if (!bar) {
-			const resumeMsg =
-				frontier != null
-					? t("dump.start_resume_suffix", { frontier: String(frontier) })
-					: "";
+			const resumeMsg = hasFrontier
+				? t("dump.start_resume_suffix", { frontier: String(frontier) })
+				: "";
 			customLog(
 				"info",
 				t("dump.start", { coll: collectionName, total, resume: resumeMsg }),
@@ -180,6 +185,7 @@ export async function dumpCollections(
 			trackDumpProgress(collectionName, processed, total);
 			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
 			frontier = page[page.length - 1]._id;
+			hasFrontier = true;
 			bar?.increment(page.length, {
 				skip: stats.skipped,
 				upd: stats.updated,
@@ -217,8 +223,14 @@ export async function dumpCollections(
 					.sort({ _id: -1 });
 				let page: Document[] = [];
 				for await (const coldDocument of cursor) {
-					// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
-					if (coldDocument?._id == null) continue;
+					// Só descarta o que NÃO é documento. `_id` nulo/0/"" é legítimo no
+					// Mongo e NÃO pode ser pulado: descartar `_id: null` travava o dump
+					// num laço infinito — a guarda de reconciliação contava o doc como
+					// faltando, o cursor o entregava, o loop o jogava fora, a fronteira
+					// não andava, e a collection falhava após todos os retries, em TODO
+					// restart. Achado numa collection real (skus: 1 doc com _id null
+					// entre 42.090 com _id int).
+					if (!coldDocument) continue;
 					page.push(coldDocument);
 					if (page.length >= batchSize) {
 						await flush(page);
