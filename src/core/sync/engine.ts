@@ -67,6 +67,16 @@ export type SyncEngineOptions = {
 	/** Recriar no destino as views da origem (metadados, fora do sync). `true` =
 	 *  todas; array de nomes = só essas; `false`/omitido = nenhuma. */
 	copyViews?: boolean | string[];
+	/**
+	 * Conferir origem x destino no startup das collections que iriam RETOMAR e
+	 * re-dumpar as que estão devendo (default TRUE).
+	 *
+	 * Ligado por padrão de propósito: sem isso, `dumpCompletedAt` é palavra final
+	 * e uma collection carimbada por engano nunca mais é revista — foi assim que
+	 * 6,2M docs sumiram sem uma linha de aviso. Desligue só se o custo das
+	 * contagens no startup pesar mais que o risco de dado faltando.
+	 */
+	integrityCheck?: boolean;
 };
 
 type Route = { srcCol: Collection; destCol: Collection; filter?: Document };
@@ -103,6 +113,9 @@ export class SyncEngine {
 	private readonly routes = new Map<string, Route>();
 	/** Collections cujo dump inicial FALHOU (após esgotar retries). */
 	readonly failedDumps: string[] = [];
+	/** Collections que iam RETOMAR mas estavam devendo dado — viraram dump. */
+	readonly integrityDeficits: { coll: string; source: number; dest: number }[] =
+		[];
 	/** Quantas resumiram (pularam dump) e quantas precisaram de dump neste run. */
 	resumedCount = 0;
 	dumpsPlanned = 0;
@@ -164,6 +177,7 @@ export class SyncEngine {
 			flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_MS,
 			resumeProbeMs: options.resumeProbeMs ?? RESUME_PROBE_MS,
 			copyIndexes: options.copyIndexes ?? false,
+			integrityCheck: options.integrityCheck ?? true,
 			copyViews: options.copyViews ?? false,
 		};
 		for (const col of this.opts.collections) {
@@ -238,6 +252,52 @@ export class SyncEngine {
 				return { col, needsDump, resumeFromId };
 			}),
 		);
+
+		// 3.5) CHECAGEM DE INTEGRIDADE das que iriam RETOMAR.
+		//
+		// `dumpCompletedAt` é bookkeeping, não medição: se um dump foi carimbado por
+		// engano (foi o caso do bug de colisão de _id composto), a collection retoma
+		// PARA SEMPRE e o change stream nunca reconcilia — ele só entrega mudança
+		// nova, jamais reinjeta doc pré-existente que ficou pra trás. Resultado: o
+		// painel dizia "52/52 up to date" em 9s com 6,2M docs faltando.
+		//
+		// Aqui o carimbo deixa de ser palavra final: contamos os dois lados e, se o
+		// destino está DEVENDO, a collection cai no dump em vez de retomar. Um
+		// re-dump espúrio é seguro (idempotente, pula doc idêntico por hash); dado
+		// faltando em silêncio não é.
+		if (this.opts.integrityCheck && !this.opts.full) {
+			const checkLimiter = new Bottleneck({
+				maxConcurrent: this.opts.parallel,
+			});
+			await Promise.all(
+				plans
+					.filter((p) => !p.needsDump)
+					.map((p) =>
+						checkLimiter.schedule(async () => {
+							const deficit = await this.countDeficit(p.col);
+							if (deficit === null) return;
+							this.integrityDeficits.push({ coll: p.col.name, ...deficit });
+							p.needsDump = true;
+							p.resumeFromId = undefined; // varredura inteira: não sabemos onde é o buraco
+							customLog(
+								"warn",
+								t("integrity.deficit", {
+									coll: p.col.name,
+									source: deficit.source,
+									dest: deficit.dest,
+									missing: deficit.source - deficit.dest,
+								}),
+							);
+						}),
+					),
+			);
+			if (this.integrityDeficits.length > 0) {
+				customLog(
+					"warn",
+					t("integrity.summary", { n: this.integrityDeficits.length }),
+				);
+			}
+		}
 
 		// 4) roda os dumps necessários, throttled por -p.
 		this.dumpsPlanned = plans.filter((p) => p.needsDump).length;
@@ -435,6 +495,39 @@ export class SyncEngine {
 			// falhou mesmo após os retries: fica sem dumpCompletedAt (re-dumpa no
 			// próximo restart, retomando da fronteira salva) e entra no relatório.
 			this.failedDumps.push(col.name);
+		}
+	}
+
+	/**
+	 * Conta origem x destino de uma collection que ia RETOMAR. Devolve o déficit
+	 * quando o destino está devendo, ou `null` quando está em dia (ou quando a
+	 * contagem falhou — nesse caso NÃO forçamos dump: um blip de rede não pode
+	 * disparar re-dump de 5M docs).
+	 *
+	 * Usa `countDocuments` (exato) e não `estimatedDocumentCount`: a contagem por
+	 * metadados é aproximada, e aproximar aqui significaria ou re-dumpar à toa ou
+	 * deixar passar um buraco real.
+	 */
+	private async countDeficit(
+		col: EngineCollection,
+	): Promise<{ source: number; dest: number } | null> {
+		const route = this.routes.get(col.name);
+		if (!route) return null;
+		try {
+			const [source, dest] = await Promise.all([
+				route.srcCol.countDocuments(col.filter ?? {}),
+				route.destCol.countDocuments({}),
+			]);
+			// Destino com MAIS docs não é déficit (pode ser órfão de drop na origem,
+			// que é outro problema); só o que está FALTANDO justifica re-dump.
+			return dest < source ? { source, dest } : null;
+		} catch (err) {
+			const reason = err instanceof Error ? err.message : String(err);
+			customLog(
+				"warn",
+				t("integrity.check_failed", { coll: col.name, reason }),
+			);
+			return null;
 		}
 	}
 

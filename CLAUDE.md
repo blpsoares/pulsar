@@ -150,6 +150,20 @@ Essa colisão foi a causa de perda silenciosa de dados em produção (`_m_snapsh
 
 Testes: `test/idKey.test.ts`, `test/idKeyCollision.test.ts`, `test/engine.compositeId.test.ts` (3 dos 4 falham no código anterior).
 
+### Checagem de integridade no startup (`integrityCheck`, default **true**)
+
+`dumpCompletedAt` é bookkeeping, não medição. Antes disso, uma collection carimbada por engano **retomava para sempre**: o change stream só entrega mudança nova e nunca reinjeta doc pré-existente, então o buraco era permanente e invisível. Foi assim que 6,2M docs em 33 collections ficaram de fora enquanto o painel dizia `52/52 up to date` em 9s.
+
+Agora, no startup, toda collection que **iria retomar** tem origem e destino contados (`countDocuments`, exato — `estimatedDocumentCount` é aproximado e aproximar aqui significa re-dumpar à toa ou deixar passar buraco real). Se o destino está **devendo**, o carimbo é ignorado e ela cai no dump.
+
+- Um re-dump espúrio é seguro: é idempotente e pula doc idêntico por hash (`500 docs | 120 skipped | 380 inserted`).
+- Destino com **mais** docs que a origem **não** dispara re-dump — isso é órfão (doc que sumiu da origem via `drop`, que o watch não propaga), outro problema.
+- O filtro da collection entra na contagem da origem, senão collection filtrada acusaria déficit falso.
+- Falha ao contar (blip de rede) **não** força re-dump — só loga.
+- `integrityCheck: false` no yml volta ao comportamento antigo.
+
+Testes em `test/engine.integrity.test.ts` (5 casos, incluindo o cenário real: run legítimo carimba, destino perde docs, restart detecta e fecha).
+
 ### Comando `verify` — auditoria de integridade
 
 `dumpCompletedAt` é **bookkeeping, não medição**. Uma collection carimbada por engano retoma para sempre, e o change stream nunca reconcilia (só entrega mudança nova; jamais reinjeta doc pré-existente que ficou para trás). Por isso "up to date 52/52" no painel não é evidência de nada.

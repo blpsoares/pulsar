@@ -45,6 +45,10 @@ export const syncYmlSchema = z.object({
 			}),
 			collections: z.array(syncCollectionEntrySchema).optional(),
 			copyIndexes: z.boolean().optional(),
+			// Confere origem x destino no startup das collections que iriam RETOMAR
+			// e re-dumpa as que estão devendo. Default TRUE — o carimbo de dump
+			// concluído não é evidência de que o dado chegou.
+			integrityCheck: z.boolean().optional(),
 			// Recria as views da origem no destino (metadados, fora do sync):
 			// `true` = todas; array de nomes = só essas; omitido = nenhuma.
 			copyViews: z.union([z.boolean(), z.array(z.string())]).optional(),

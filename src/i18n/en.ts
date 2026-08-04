@@ -165,6 +165,12 @@ const dict = {
 		"Connection to {source} MongoDB failed (attempt {attempt}/{maxAttempts}) — retrying in {wait}ms. Cause: {reason}",
 	"conn.unreachable":
 		"Could not reach MongoDB ({source}). Check: 1) your IP is in the Atlas Network Access (IP allowlist); 2) outbound TCP on 27017 is not blocked; 3) credentials/URI. Details in logs/error.log",
+	"integrity.deficit":
+		"integrity [{coll}] destination is SHORT — source {source} · dest {dest} · missing {missing} → forcing a full re-dump instead of resuming",
+	"integrity.summary":
+		"integrity | {n} collection(s) claimed to be up to date but were missing data — re-dumping them",
+	"integrity.check_failed":
+		"integrity [{coll}] could not count (kept resuming, no re-dump forced): {reason}",
 	"verify.start":
 		"verify | {count} collections · mode: {mode}{reconcile} · parallel: {parallel}",
 	"verify.mode_count": "counts only (fast)",
