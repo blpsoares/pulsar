@@ -113,14 +113,12 @@ describe("SyncEngine — _id COMPOSTO (regressão da perda silenciosa)", () => {
 
 		// 300 inserts numa janela de flush só. Com a chave String(id), os 300
 		// colapsavam numa entrada e só 1 doc era gravado.
-		await srcDb
-			.collection("snap")
-			.insertMany(
-				Array.from({ length: 300 }, (_, i) => ({
-					_id: cid(i + 1) as never,
-					v: i,
-				})),
-			);
+		await srcDb.collection("snap").insertMany(
+			Array.from({ length: 300 }, (_, i) => ({
+				_id: cid(i + 1) as never,
+				v: i,
+			})),
+		);
 
 		const ok = await waitFor(
 			async () => (await dstDb.collection("snap").countDocuments()) === 301,

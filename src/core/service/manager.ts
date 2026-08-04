@@ -4,7 +4,7 @@ import { cpus, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { committedResources } from "../compose/committed";
-import { recommendResources } from "../compose/recommend";
+import { type ResourceRec, recommendResources } from "../compose/recommend";
 import {
 	composePath,
 	dockerPlan,
@@ -70,9 +70,29 @@ export type InstallResult = {
 	error?: string;
 };
 
+/**
+ * Recursos recomendados para uma instância nova nesta máquina.
+ *
+ * A mesma conta do `pulsar compose up`, via a mesma função: parte do orçamento
+ * da VM e SUBTRAI o que as instâncias existentes já comprometeram. Exportada
+ * para que a tela e o `pulsar start` possam MOSTRAR o número antes de aplicar
+ * — e oferecer o ajuste manual.
+ */
+export function recommendedResources(): ResourceRec {
+	const committed = committedResources();
+	return recommendResources(
+		totalmem(),
+		cpus().length,
+		committed.mem,
+		committed.cpus,
+	);
+}
+
 export function buildPlan(
 	backend: Backend,
 	spec: ServiceSpec,
+	/** cerca de RAM/CPU escolhida (docker); omitido = a recomendada */
+	resources?: ResourceRec,
 ): InstallPlan | { error: string } {
 	switch (backend) {
 		case "systemd":
@@ -81,21 +101,8 @@ export function buildPlan(
 			return launchdPlan(spec);
 		case "pm2":
 			return pm2Plan(spec);
-		case "docker": {
-			// Os recursos saem do uso atual da máquina, descontando o que as
-			// instâncias existentes já comprometeram — a mesma conta do
-			// `pulsar compose up`, via a mesma função.
-			const committed = committedResources();
-			return dockerPlan(
-				spec,
-				recommendResources(
-					totalmem(),
-					cpus().length,
-					committed.mem,
-					committed.cpus,
-				),
-			);
-		}
+		case "docker":
+			return dockerPlan(spec, resources ?? recommendedResources());
 	}
 }
 

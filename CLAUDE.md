@@ -530,6 +530,18 @@ teclas do fim (mouse, sair) numa tela cheia de atalhos.
     pessoa sabe que quebrou e não tem como descobrir por quê sem sair da TUI e
     repetir o comando à mão. Agora `raw` guarda stderr **e** stdout juntos, a
     tela mostra as últimas linhas em bloco e `ctrl+c` copia o erro inteiro.
+  - **A cerca de RAM/CPU do docker é VISÍVEL e ajustável.** `buildPlan` chamava
+    `recommendResources()` por dentro e aplicava o resultado calado: o pulsar
+    escolhia o teto de memória da máquina e ninguém ficava sabendo — nem para
+    conferir, nem para discordar. Isso é justamente o número mais consequente
+    do plano, porque é ele que decide se um estouro mata só o container ou
+    derruba a VM. Agora o valor viaja no `InstallPlan.resources`, a tela e o
+    `pulsar start` mostram antes de executar, `buildPlan(backend, spec, res)`
+    aceita a escolha, e dá para ajustar (`e` na tela de background; pergunta no
+    `start`). O recomendado é o mesmo do `compose up` — orçamento da VM MENOS o
+    que as instâncias existentes já comprometeram —, exposto por
+    `recommendedResources()`. O editor recusa `mem_reservation` maior que
+    `mem_limit`: o Docker aceitaria e a cerca não protegeria nada.
   - **Remover pela aba "rodando" (`x`)**, não só pela tela de background: é
     onde se vê o que está no ar, e portanto onde dá vontade de matar o que não
     deveria estar. Passa por confirmação com o nome na pergunta — `x` é vizinho

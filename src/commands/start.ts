@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import chalk from "chalk";
 import { detectConfigs } from "../core/compose/detectConfigs";
+import type { ResourceRec } from "../core/compose/recommend";
 import { buildConfig } from "../core/config/buildConfig";
 import {
 	emptyForm,
@@ -17,7 +18,11 @@ import {
 	preferredBackend,
 } from "../core/service/detect";
 import { BASE_COMPOSE } from "../core/service/dockerService";
-import { buildPlan, installService } from "../core/service/manager";
+import {
+	buildPlan,
+	installService,
+	recommendedResources,
+} from "../core/service/manager";
 import type { Backend, ServiceSpec } from "../core/service/types";
 
 /**
@@ -243,6 +248,57 @@ function chooseBackend(availability: BackendAvailability[]): Backend | null {
 	return availability[i]?.backend ?? null;
 }
 
+/**
+ * Cerca de RAM/CPU do container: mostra o recomendado e deixa ajustar.
+ *
+ * O recomendado NÃO é "a máquina inteira": é o orçamento da VM (~65% da RAM,
+ * ~1 núcleo livre) MENOS o que as instâncias de pulsar já existentes
+ * comprometeram — por isso ele encolhe a cada instância nova, e por isso a
+ * soma de todas continua cabendo. Isso precisa estar à vista: o teto de
+ * memória é o que decide se um OOM mata só o container ou derruba a VM, e
+ * antes o pulsar escolhia esse número sozinho, sem dizer a ninguém.
+ */
+function askResources(): ResourceRec {
+	const rec = recommendedResources();
+
+	console.log(
+		`\n${chalk.bold("recursos do container")} ${chalk.gray("(orçamento da máquina − já comprometido → recomendado)")}`,
+	);
+	console.log(
+		`    mem_limit/memswap ${chalk.green(`${rec.memLimitMiB}m`)} · ` +
+			`mem_reservation ${chalk.green(`${rec.memReservMiB}m`)} · ` +
+			`cpus ${chalk.green(String(rec.cpus))}`,
+	);
+	console.log(
+		chalk.gray(
+			"    mem_limit é TETO DURO: ao estourar, o kernel mata só o container (a VM sobrevive) e o restart sobe de novo.",
+		),
+	);
+
+	if (askYesNo("usar os valores recomendados?", true)) return rec;
+
+	return {
+		memLimitMiB: numOr(
+			ask("  mem_limit (MiB)", String(rec.memLimitMiB)),
+			rec.memLimitMiB,
+		),
+		memReservMiB: numOr(
+			ask("  mem_reservation (MiB)", String(rec.memReservMiB)),
+			rec.memReservMiB,
+		),
+		cpus: numOr(
+			ask("  cpus (núcleos, aceita fração)", String(rec.cpus)),
+			rec.cpus,
+		),
+	};
+}
+
+/** Number() seguro: devolve o fallback se vazio/NaN/não-positivo. */
+function numOr(input: string, fallback: number): number {
+	const n = Number(input.trim());
+	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 async function runInBackground(dir: string, file: string): Promise<void> {
 	const path = resolve(dir, file);
 	const availability = await detectBackends(
@@ -264,7 +320,11 @@ async function runInBackground(dir: string, file: string): Promise<void> {
 		autostart: askYesNo("\nsubir junto com a máquina (boot)?", true),
 	};
 
-	const plan = buildPlan(backend, spec);
+	// Só o docker tem cerca de recursos (cgroups). Perguntar sobre memória num
+	// backend que não a limita seria pedir um número que não vai a lugar nenhum.
+	const resources = backend === "docker" ? askResources() : undefined;
+
+	const plan = buildPlan(backend, spec, resources);
 	if ("error" in plan) {
 		console.log(chalk.red(`\n${plan.error}`));
 		process.exit(1);
@@ -273,6 +333,12 @@ async function runInBackground(dir: string, file: string): Promise<void> {
 	// O plano é mostrado ANTES de executar: instalar serviço escreve arquivo em
 	// ~/.config e liga coisa no boot — nada disso deve acontecer às cegas.
 	console.log(`\n${chalk.bold(`plano · ${backend}`)}`);
+	if (plan.resources)
+		console.log(
+			chalk.gray(
+				`  recursos  mem_limit ${plan.resources.memLimitMiB}m · mem_reservation ${plan.resources.memReservMiB}m · cpus ${plan.resources.cpus}`,
+			),
+		);
 	for (const f of plan.files) console.log(chalk.gray(`  arquivo  ${f.path}`));
 	for (const s of plan.steps)
 		console.log(`  ${chalk.magenta("$")} ${s.cmd} ${s.args.join(" ")}`);

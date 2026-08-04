@@ -112,6 +112,7 @@ export function dockerPlan(
 	return {
 		backend: "docker",
 		serviceName: `pulsar-sync-${slug(spec.name)}`,
+		resources: res,
 		files: [{ path: file, content }],
 		steps: [
 			{

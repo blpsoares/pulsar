@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
+import type { ResourceRec } from "../../core/compose/recommend";
 import { loadConfigFile } from "../../core/config/loadConfig";
 import {
 	type BackendAvailability,
@@ -35,7 +36,9 @@ import {
 	Stat,
 	shortenPath,
 } from "../components/Shell";
+import { TextInput } from "../components/TextInput";
 import { useTerminalSize } from "../hooks/useTerminalSize";
+import { isMouseInput } from "../mouse/parse";
 import { theme } from "../theme";
 
 /**
@@ -74,6 +77,13 @@ export function ServicesScreen({
 	const [pane, setPane] = useState<"backend" | "config">(
 		initialFile ? "backend" : "config",
 	);
+	/**
+	 * Cerca de RAM/CPU escolhida à mão. `null` = usar a recomendada, que é
+	 * recalculada a cada plano (ela depende do que as outras instâncias já
+	 * comprometeram, e isso muda quando se instala ou remove uma).
+	 */
+	const [resources, setResources] = useState<ResourceRec | null>(null);
+	const [editingRes, setEditingRes] = useState(false);
 	const l = layout(columns, rows, RAIL_WIDTH);
 
 	useEffect(() => {
@@ -108,8 +118,9 @@ export function ServicesScreen({
 		[file, dir, autostart],
 	);
 	const plan = useMemo(
-		() => (spec && backend ? buildPlan(backend, spec) : null),
-		[spec, backend],
+		() =>
+			spec && backend ? buildPlan(backend, spec, resources ?? undefined) : null,
+		[spec, backend, resources],
 	);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: specFor deriva de file/dir/autostart, já listados
@@ -125,10 +136,18 @@ export function ServicesScreen({
 	}, [file, backend, dir, autostart]);
 
 	useInput((input, key) => {
-		if (busy) return;
+		// Com o editor de recursos aberto, ele é quem manda: sem esta saída, o
+		// mesmo toque digitaria no campo E acionaria o atalho da tela por baixo.
+		if (busy || editingRes) return;
+		if (isMouseInput(input)) return;
 
 		if (key.escape) {
 			onExit();
+			return;
+		}
+		// Ajustar a cerca de RAM/CPU só faz sentido onde ela existe (docker).
+		if (input === "e" && plan && !("error" in plan) && plan.resources) {
+			setEditingRes(true);
 			return;
 		}
 		// shift+tab troca de ABA (Shell); `tab` sozinho é foco entre painéis.
@@ -208,6 +227,11 @@ export function ServicesScreen({
 				{ keys: "i/p/t", label: "iniciar/parar/reiniciar" },
 				{ keys: "x", label: "remover" },
 				{ keys: "s", label: "boot" },
+				// Só anuncia onde a tecla faz algo — prometer um atalho que não
+				// responde é pior do que não ter o atalho.
+				...(plan && !("error" in plan) && plan.resources
+					? [{ keys: "e", label: "recursos (RAM/CPU)" }]
+					: []),
 				{ keys: "esc", label: "voltar" },
 			]}
 		>
@@ -288,6 +312,15 @@ export function ServicesScreen({
 					<Text color={theme.error} wrap="wrap">
 						✖ {plan.error}
 					</Text>
+				) : editingRes && plan.resources ? (
+					<ResourceEditor
+						initial={plan.resources}
+						onCancel={() => setEditingRes(false)}
+						onSubmit={(next) => {
+							setResources(next);
+							setEditingRes(false);
+						}}
+					/>
 				) : (
 					<PlanView plan={plan} result={result} actionLog={actionLog} />
 				)}
@@ -318,6 +351,30 @@ function PlanView({
 }) {
 	return (
 		<Box flexDirection="column">
+			{/*
+			 * A cerca de RAM/CPU é o número mais consequente do plano do docker —
+			 * é ele que decide se um estouro de memória mata só o container ou
+			 * derruba a VM. Ficava calculado por dentro e invisível: o pulsar
+			 * escolhia o teto da máquina sem dizer a ninguém.
+			 */}
+			{plan.resources ? (
+				<>
+					<Text color={theme.border}>─ recursos ─</Text>
+					<Text wrap="truncate-end">
+						<Text color={theme.label}>mem {plan.resources.memLimitMiB}m</Text>
+						<Text color={theme.muted}>
+							{" "}
+							· reserva {plan.resources.memReservMiB}m · cpus{" "}
+							{plan.resources.cpus}
+						</Text>
+					</Text>
+					<Text color={theme.muted} wrap="wrap">
+						teto duro: no estouro o kernel mata o container, não a VM. `e`
+						ajusta.
+					</Text>
+				</>
+			) : null}
+
 			<Text color={theme.border}>─ arquivos ─</Text>
 			{plan.files.map((f) => (
 				<Text key={f.path} color={theme.muted} wrap="truncate-middle">
@@ -508,4 +565,93 @@ function ErrorBlock({ raw, max = 10 }: { raw: string; max?: number }) {
 			<Text color={theme.muted}>ctrl+c copia o erro inteiro</Text>
 		</Box>
 	);
+}
+
+/**
+ * Ajuste manual da cerca de RAM/CPU do container.
+ *
+ * Três campos, `tab` entre eles, enter grava. Vale a tela própria porque os
+ * números são acoplados: `mem_reservation` é alvo MACIO e precisa ficar abaixo
+ * do `mem_limit`, que é teto duro — editar um sem ver o outro convida a
+ * inverter os dois e produzir um compose que o Docker aceita e que não protege
+ * nada.
+ */
+function ResourceEditor({
+	initial,
+	onSubmit,
+	onCancel,
+}: {
+	initial: ResourceRec;
+	onSubmit: (next: ResourceRec) => void;
+	onCancel: () => void;
+}) {
+	const [limit, setLimit] = useState(String(initial.memLimitMiB));
+	const [reserv, setReserv] = useState(String(initial.memReservMiB));
+	const [cpu, setCpu] = useState(String(initial.cpus));
+	const [field, setField] = useState<0 | 1 | 2>(0);
+
+	const parsed = {
+		memLimitMiB: numOr(limit, initial.memLimitMiB),
+		memReservMiB: numOr(reserv, initial.memReservMiB),
+		cpus: numOr(cpu, initial.cpus),
+	};
+	const invertido = parsed.memReservMiB > parsed.memLimitMiB;
+
+	useInput((input, key) => {
+		if (isMouseInput(input)) return;
+		if (key.escape) {
+			onCancel();
+			return;
+		}
+		if (key.tab) {
+			setField((f) => ((f + 1) % 3) as 0 | 1 | 2);
+			return;
+		}
+		if (key.return && !invertido) onSubmit(parsed);
+	});
+
+	const campos = [
+		{ label: "mem_limit (MiB)", value: limit, set: setLimit },
+		{ label: "mem_reservation (MiB)", value: reserv, set: setReserv },
+		{ label: "cpus (aceita fração)", value: cpu, set: setCpu },
+	];
+
+	return (
+		<Box flexDirection="column">
+			<Text color={theme.border}>─ recursos do container ─</Text>
+			{campos.map((c, i) => (
+				<Box key={c.label} flexDirection="row">
+					<Box width={24}>
+						<Text color={i === field ? theme.accent : theme.muted}>
+							{i === field ? "❯ " : "  "}
+							{c.label}
+						</Text>
+					</Box>
+					<TextInput
+						value={c.value}
+						onChange={c.set}
+						focus={i === field}
+						placeholder="—"
+					/>
+				</Box>
+			))}
+			{invertido ? (
+				<Text color={theme.error} wrap="wrap">
+					mem_reservation precisa ser MENOR que mem_limit: a reserva é um alvo
+					macio, o limite é o teto duro que salva a VM.
+				</Text>
+			) : null}
+			<Box marginTop={1}>
+				<Text color={theme.muted}>
+					tab campo · enter grava · esc cancela (volta ao recomendado)
+				</Text>
+			</Box>
+		</Box>
+	);
+}
+
+/** Number() seguro: devolve o fallback se vazio/NaN/não-positivo. */
+function numOr(input: string, fallback: number): number {
+	const n = Number(input.trim());
+	return Number.isFinite(n) && n > 0 ? n : fallback;
 }
