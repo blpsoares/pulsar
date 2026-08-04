@@ -54,7 +54,7 @@ describe("dumpCollections — retomada por fronteira (resumeFromId)", () => {
 		const ok = await dumpCollections(
 			srcDb.collection("colA"),
 			dstDb.collection("colA"),
-			[],
+			new Set(),
 			{
 				batchSize: 20,
 				resumeFromId: 50,
@@ -82,7 +82,7 @@ describe("dumpCollections — retomada por fronteira (resumeFromId)", () => {
 		await dumpCollections(
 			srcDb.collection("colA"),
 			dstDb.collection("colA"),
-			[],
+			new Set(),
 			{
 				batchSize: 20,
 				onProgress: (id) => seen.push(id as number),

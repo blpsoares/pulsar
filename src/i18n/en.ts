@@ -95,6 +95,7 @@ const dict = {
 	"views.list_migrate_failed":
 		"views | failed to list/migrate (contained): {reason}",
 	"indexes.copy_failed": "[{coll}] index copy failed: {reason}",
+	"indexes.failure": "index:failure [{coll}] {name}: {reason}",
 	"indexes.part_created": "{created} indexes created",
 	"indexes.part_existed": "{skipped} already existed",
 	"indexes.part_failed": "{failed} FAILED ({names})",
@@ -136,6 +137,7 @@ const dict = {
 	"panel.indexes":
 		"Indexes ... created: {created} · already existed: {skipped}{fLabel}",
 	"panel.indexes_failed": " · failed: {count} ({colls})",
+	"panel.index_failure": "  ↳ {coll}.{name}: {reason}",
 	"panel.views":
 		"Views ..... created: {created} · updated: {updated} · unchanged: {skipped}{fLabel}",
 	"panel.views_failed": " · failed: {count} ({names})",
@@ -163,6 +165,32 @@ const dict = {
 		"Connection to {source} MongoDB failed (attempt {attempt}/{maxAttempts}) — retrying in {wait}ms. Cause: {reason}",
 	"conn.unreachable":
 		"Could not reach MongoDB ({source}). Check: 1) your IP is in the Atlas Network Access (IP allowlist); 2) outbound TCP on 27017 is not blocked; 3) credentials/URI. Details in logs/error.log",
+	"verify.start":
+		"verify | {count} collections · mode: {mode}{reconcile} · parallel: {parallel}",
+	"verify.mode_count": "counts only (fast)",
+	"verify.mode_deep": "deep (_id by _id)",
+	"verify.reconcile_on": " · RECONCILE ON (missing docs get re-copied)",
+	"verify.progress":
+		"verify [{coll}] scanned {scanned} · missing so far {missing}",
+	"verify.row_ok": "  OK      {coll} — {source} docs",
+	"verify.row_missing":
+		"  MISSING {coll} — source {source} · dest {dest} · missing {missing}{sample}",
+	"verify.row_deficit":
+		"  DEFICIT {coll} — source {source} · dest {dest} · diff {diff}",
+	"verify.row_extra":
+		"  EXTRA   {coll} — source {source} · dest {dest} (destination has more)",
+	"verify.row_error": "  ERROR   {coll} — {reason}",
+	"verify.sample": " · e.g. {ids}",
+	"verify.reconciled": "  FIXED   {coll} — {n} docs re-copied from source",
+	"verify.approximate":
+		"note: counts without a filter come from metadata and are approximate — use --deep for an exact answer",
+	"verify.summary_ok":
+		"verify | {total} collections checked, everything matches",
+	"verify.summary_bad":
+		"verify | {bad}/{total} collections DIVERGE — {missing} docs missing",
+	"verify.summary_hint":
+		"run again with --deep to list the missing _ids, or --deep --reconcile to copy them back",
+	"verify.errors": "verify | {n} collections could not be checked (see above)",
 } as const;
 
 export default dict;

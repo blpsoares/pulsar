@@ -4,6 +4,7 @@ import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { buildReplaceWithMigratedAt } from "./writeDoc";
 import { customLog, fileLog } from "../../utils/customLog";
 import { t } from "../../utils/i18n";
+import { idKey } from "../../utils/idKey";
 import { getLogConfig } from "../../utils/logConfig";
 import {
 	createBar,
@@ -45,19 +46,6 @@ function isTransientDumpError(err: unknown): boolean {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Chave estável de `_id` para mapas em memória. `_id.toString()` COLIDE para `_id`
- * composto/objeto (todos viram "[object Object]") → quebra a decisão
- * insert/update no re-dump. ObjectId/number/string têm toString único; objeto é
- * serializado com JSON.
- */
-const idKey = (id: unknown): string =>
-	id != null &&
-	typeof id === "object" &&
-	!(id as { _bsontype?: string })._bsontype
-		? JSON.stringify(id)
-		: String(id);
 
 // Ordem canônica dos tipos BSON (do menor pro maior), agrupada pelos aliases de
 // `$type`. Usada pra montar "_id ABAIXO da fronteira na ordem TOTAL" mesmo com
@@ -123,10 +111,18 @@ export type DumpOptions = {
 	}) => void;
 };
 
+/**
+ * Conjunto VIVO de chaves `idKey` de docs que o watch deletou no destino
+ * enquanto o dump roda — o cursor do dump não pode ressuscitá-los. É lido a cada
+ * lote (o engine segue inserindo nele durante o dump), por isso é uma referência,
+ * não uma cópia.
+ */
+export type DeletedKeys = { has(key: string): boolean };
+
 export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
-	deletedIds: string[],
+	deletedKeys: DeletedKeys,
 	opts: DumpOptions = {},
 ): Promise<boolean> {
 	const { filter, resumeFromId, onProgress } = opts;
@@ -179,7 +175,7 @@ export async function dumpCollections(
 
 		const flush = async (page: Document[]) => {
 			if (page.length === 0) return;
-			await processBatch(page, destCollection, deletedIds, stats);
+			await processBatch(page, destCollection, deletedKeys, stats);
 			processed += page.length;
 			trackDumpProgress(collectionName, processed, total);
 			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
@@ -323,10 +319,14 @@ export async function dumpCollections(
 async function processBatch(
 	page: Document[],
 	destCollection: Collection,
-	deletedIds: string[],
+	deletedKeys: DeletedKeys,
 	stats: { skipped: number; updated: number; inserted: number },
 ) {
-	const docs = page.filter((d) => !deletedIds.includes(d._id.toString()));
+	// `idKey`, NUNCA `_id.toString()`: com toString, um `_id` composto vira
+	// "[object Object]" e UM único delete durante o dump fazia este filtro
+	// descartar TODOS os docs de _id composto — o dump seguia "avançando" e ainda
+	// era carimbado como concluído. Era a perda silenciosa de 2,36M de 3,2M docs.
+	const docs = page.filter((d) => !deletedKeys.has(idKey(d._id)));
 	if (docs.length === 0) return;
 
 	const ids = docs.map((d) => d._id);

@@ -10,6 +10,7 @@ import {
 import type { Collection, Db, MongoClient } from "mongodb";
 import { dumpCollections } from "../src/core/sync/dumpEvent";
 import { SyncEngine } from "../src/core/sync/engine";
+import { idKey } from "../src/utils/idKey";
 import { setLogConfig } from "../src/utils/logConfig";
 import {
 	connect,
@@ -76,7 +77,7 @@ describe("dumpCollections — proteção da race delete-durante-dump (I1)", () =
 		await dumpCollections(
 			srcDb.collection("c"),
 			dstDb.collection("c"),
-			["1"], // deletedIds: "1" foi deletado durante o dump
+			new Set([idKey(1)]), // deletedKeys: _id 1 foi deletado durante o dump
 			{},
 		);
 

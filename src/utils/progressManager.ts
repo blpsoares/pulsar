@@ -237,7 +237,7 @@ export function renderClosingPanel(d: {
 	indexes?: {
 		created: number;
 		skipped: number;
-		failed: { coll: string; name: string }[];
+		failed: { coll: string; name: string; reason?: string }[];
 	};
 	views?: {
 		created: number;
@@ -300,6 +300,18 @@ export function renderClosingPanel(d: {
 				fLabel,
 			}),
 		);
+		// Uma linha POR falha com o motivo. Sem isto o painel dizia "failed: 4
+		// (colA, colB, ...)" e o operador não tinha como saber o que houve — o
+		// `reason` já existia, só era descartado no caminho.
+		for (const x of f) {
+			body.push(
+				t("panel.index_failure", {
+					coll: x.coll,
+					name: x.name,
+					reason: x.reason ?? "?",
+				}),
+			);
+		}
 	}
 	if (d.views) {
 		const f = d.views.failed;

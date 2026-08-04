@@ -5,6 +5,7 @@ import { composeUp } from "./commands/compose";
 import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
 import { ttlCommand } from "./commands/ttl";
+import { verifyCommand } from "./commands/verify";
 import { logger } from "./utils/customLog";
 import { showTitle } from "./utils/showCliTitle";
 
@@ -65,6 +66,29 @@ program
 		"força o dump completo de todas as collections, ignorando os carimbos de conclusão (reconciliação total).",
 	)
 	.action(syncCollections);
+
+program
+	.command("verify <file>")
+	.description(
+		"confere se o destino REALMENTE tem o que a origem tem. O sync se diz 'em dia' pelo carimbo no __sync, que é bookkeeping — este comando olha o dado. Sai com código 1 se divergir.",
+	)
+	.option("-a --all", "confere todas as collections da origem")
+	.option(
+		"--collections <list>",
+		"confere só estas, separadas por vírgula, ex.: pedidos,usuarios",
+	)
+	.option(
+		"-d --deep",
+		"compara _id a _id (exato, diz QUAIS docs faltam). Sem isso, só compara totais.",
+	)
+	.option(
+		"-r --reconcile",
+		"recopia da origem os docs faltantes encontrados (implica --deep).",
+	)
+	.option("-p --parallel <number>", "collections em paralelo. Padrão: 4.")
+	.option("-b --batch <number>", "docs por rodada de comparação. Padrão: 2000.")
+	.option("--json", "saída em JSON (para cron/CI)")
+	.action(verifyCommand);
 
 program
 	.command("ttl [file]")

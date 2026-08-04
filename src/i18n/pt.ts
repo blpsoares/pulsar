@@ -94,6 +94,7 @@ const dict = {
 	"views.list_migrate_failed":
 		"views | falha ao listar/migrar (contido): {reason}",
 	"indexes.copy_failed": "[{coll}] cópia de índices falhou: {reason}",
+	"indexes.failure": "index:falha [{coll}] {name}: {reason}",
 	"indexes.part_created": "{created} índices criados",
 	"indexes.part_existed": "{skipped} já existiam",
 	"indexes.part_failed": "{failed} FALHOU ({names})",
@@ -135,6 +136,7 @@ const dict = {
 	"panel.indexes":
 		"Índices ... criados: {created} · já existiam: {skipped}{fLabel}",
 	"panel.indexes_failed": " · falharam: {count} ({colls})",
+	"panel.index_failure": "  ↳ {coll}.{name}: {reason}",
 	"panel.views":
 		"Views ..... criadas: {created} · atualizadas: {updated} · iguais: {skipped}{fLabel}",
 	"panel.views_failed": " · falharam: {count} ({names})",
@@ -163,6 +165,33 @@ const dict = {
 		"Conexão com o {source} MongoDB falhou (tentativa {attempt}/{maxAttempts}) — retentando em {wait}ms. Causa: {reason}",
 	"conn.unreachable":
 		"Não alcancei o MongoDB ({source}). Verifique: 1) seu IP está na Network Access (IP allowlist) do Atlas; 2) a saída TCP na 27017 não está bloqueada; 3) credenciais/URI. Detalhes em logs/error.log",
+	"verify.start":
+		"verify | {count} collections · modo: {mode}{reconcile} · paralelo: {parallel}",
+	"verify.mode_count": "só contagem (rápido)",
+	"verify.mode_deep": "profundo (_id a _id)",
+	"verify.reconcile_on":
+		" · RECONCILIAÇÃO LIGADA (docs faltantes são recopiados)",
+	"verify.progress":
+		"verify [{coll}] varridos {scanned} · faltando até agora {missing}",
+	"verify.row_ok": "  OK       {coll} — {source} docs",
+	"verify.row_missing":
+		"  FALTANDO {coll} — origem {source} · destino {dest} · faltam {missing}{sample}",
+	"verify.row_deficit":
+		"  DÉFICIT  {coll} — origem {source} · destino {dest} · diferença {diff}",
+	"verify.row_extra":
+		"  SOBRANDO {coll} — origem {source} · destino {dest} (destino tem mais)",
+	"verify.row_error": "  ERRO     {coll} — {reason}",
+	"verify.sample": " · ex.: {ids}",
+	"verify.reconciled": "  CORRIGIDO {coll} — {n} docs recopiados da origem",
+	"verify.approximate":
+		"nota: contagem sem filtro vem de metadados e é aproximada — use --deep para resposta exata",
+	"verify.summary_ok": "verify | {total} collections conferidas, tudo batendo",
+	"verify.summary_bad":
+		"verify | {bad}/{total} collections DIVERGEM — {missing} docs faltando",
+	"verify.summary_hint":
+		"rode de novo com --deep para listar os _ids faltantes, ou --deep --reconcile para trazê-los de volta",
+	"verify.errors":
+		"verify | {n} collections não puderam ser conferidas (veja acima)",
 } as const;
 
 export default dict;

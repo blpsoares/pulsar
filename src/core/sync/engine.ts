@@ -9,6 +9,7 @@ import type {
 import { freezeCollection } from "../../functions/freeze";
 import { customLog, logger } from "../../utils/customLog";
 import { t } from "../../utils/i18n";
+import { idKey } from "../../utils/idKey";
 import { setSyncPlan } from "../../utils/progressManager";
 import { ChangeBuffer, type ChangeOp } from "./changeBuffer";
 import { ensureCollectionIndexes } from "./copyIndexes";
@@ -25,6 +26,15 @@ import {
 	saveDumpProgress,
 } from "./syncState";
 import { writeDocToDest } from "./writeDoc";
+
+/**
+ * Filtro `{_id: {$in: ids}}` para `_id` de QUALQUER tipo. Os tipos do driver
+ * assumem `ObjectId` no `$in`, mas aqui os `_id` vêm do change stream e podem ser
+ * string, number ou documento composto — daí o cast na fronteira.
+ */
+const byIds = (ids: readonly unknown[]): Document => ({
+	_id: { $in: ids as never[] },
+});
 
 const DEFAULT_PARALLEL = 3;
 const DEFAULT_BATCH_SIZE = 500;
@@ -97,7 +107,7 @@ export class SyncEngine {
 	/** Cópia de índices (quando copyIndexes on): agregados p/ o painel final. */
 	indexesCreated = 0;
 	indexesSkipped = 0;
-	readonly indexFailures: { coll: string; name: string }[] = [];
+	readonly indexFailures: { coll: string; name: string; reason: string }[] = [];
 	/** Migração de views (quando copyViews on): agregados p/ o painel final. */
 	viewsCreated = 0;
 	viewsUpdated = 0;
@@ -107,6 +117,11 @@ export class SyncEngine {
 	readonly eventCounts = new Map<string, number>();
 	readonly eventTotals = { insert: 0, update: 0, replace: 0, delete: 0 };
 	private readonly lastDumpSaveAt = new Map<string, number>();
+	/** Escrita de fronteira EM VOO por collection. Precisa ser aguardada antes do
+	 *  `markDumpCompleted`, senão ela pode aterrissar DEPOIS do `$unset` e deixar
+	 *  um `dumpCursorId` órfão num dump concluído — um dump futuro varreria
+	 *  "abaixo do menor _id" (zero docs) e se certificaria como completo. */
+	private readonly inflightDumpSave = new Map<string, Promise<void>>();
 	/** Última fronteira de cada dump em andamento (p/ flush final no stop). */
 	private readonly lastFrontier = new Map<string, unknown>();
 	private stream: ChangeStream | null = null;
@@ -124,8 +139,10 @@ export class SyncEngine {
 	private closed = false;
 	/** Sinaliza ao probe do openStream que o resume caiu no 286 (→ re-dump). */
 	private resumeLost = false;
-	/** _ids deletados pelo watch ENQUANTO o dump inicial roda (proteção race delete-durante-dump). */
-	private readonly deletedIds: string[] = [];
+	/** Chaves `idKey` dos docs deletados pelo watch ENQUANTO o dump inicial roda
+	 *  (proteção race delete-durante-dump). Set de chaves canônicas — um array de
+	 *  `String(id)` colidia para `_id` composto e zerava o dump inteiro. */
+	private readonly deletedKeys = new Set<string>();
 	/** true até os dumps iniciais concluírem — enquanto true, flush registra deletes em deletedIds. */
 	private dumpsActive = true;
 
@@ -202,8 +219,17 @@ export class SyncEngine {
 						},
 						{ full: this.opts.full },
 					) === "dump";
+				// A fronteira só vale pra retomar um dump que NÃO concluiu. Se há
+				// `dumpCompletedAt`, qualquer `dumpCursorId` presente é órfão (corrida
+				// antiga com o `$unset`) e usá-lo faria o dump varrer "abaixo do menor
+				// _id" — zero docs — e se auto-certificar como completo de novo.
+				const staleFrontier =
+					state.dumpCursorId !== undefined &&
+					state.dumpCompletedAt !== undefined;
 				const resumeFromId =
-					this.opts.full || forceDumpAll ? undefined : state.dumpCursorId;
+					this.opts.full || forceDumpAll || staleFrontier
+						? undefined
+						: state.dumpCursorId;
 				return { col, needsDump, resumeFromId };
 			}),
 		);
@@ -222,7 +248,7 @@ export class SyncEngine {
 		);
 		// Dumps concluídos: para de acumular deletes e libera a memória.
 		this.dumpsActive = false;
-		this.deletedIds.length = 0;
+		this.deletedKeys.clear();
 
 		// collections que RESUMIRAM (dados já no destino): completa índices faltantes
 		// no startup. As que dumparam já trataram índices no runDump.
@@ -324,14 +350,30 @@ export class SyncEngine {
 		} catch (err) {
 			// listIndexes da origem falhou → a collection inteira falha na cópia.
 			const reason = err instanceof Error ? err.message : String(err);
-			this.indexFailures.push({ coll: col.name, name: "*" });
+			this.indexFailures.push({ coll: col.name, name: "*", reason });
 			customLog("warn", t("indexes.copy_failed", { coll: col.name, reason }));
 			return;
 		}
 		this.indexesCreated += res.created;
 		this.indexesSkipped += res.skipped;
-		for (const f of res.failed)
-			this.indexFailures.push({ coll: col.name, name: f.name });
+		for (const f of res.failed) {
+			this.indexFailures.push({
+				coll: col.name,
+				name: f.name,
+				reason: f.reason,
+			});
+			// O MOTIVO precisa aparecer: antes o `reason` era capturado em
+			// copyIndexes.ts e descartado aqui, então o operador via "failed: 4
+			// (colA, colB...)" sem a menor pista do que houve.
+			customLog(
+				"warn",
+				t("indexes.failure", {
+					coll: col.name,
+					name: f.name,
+					reason: f.reason,
+				}),
+			);
+		}
 		const parts = [
 			t("indexes.part_created", { created: res.created }),
 			t("indexes.part_existed", { skipped: res.skipped }),
@@ -361,7 +403,7 @@ export class SyncEngine {
 		const ok = await dumpCollections(
 			route.srcCol,
 			route.destCol,
-			this.deletedIds,
+			this.deletedKeys,
 			{
 				filter: col.filter,
 				batchSize: this.opts.batchSize,
@@ -374,9 +416,13 @@ export class SyncEngine {
 			},
 		);
 		if (ok) {
-			await markDumpCompleted(this.opts.destDb, col.name);
 			// dump concluído: não deve ressuscitar como incompleto no flush do stop.
 			this.lastFrontier.delete(col.name);
+			// espera a última gravação de fronteira EM VOO antes de carimbar, senão
+			// ela pode cair depois do `$unset` e deixar um `dumpCursorId` órfão.
+			await this.inflightDumpSave.get(col.name)?.catch(() => {});
+			this.inflightDumpSave.delete(col.name);
+			await markDumpCompleted(this.opts.destDb, col.name);
 			// índices DEPOIS do dump: build em lote único é mais rápido que manter
 			// índice a cada insert (igual ao mongorestore).
 			if (this.opts.copyIndexes) await this.copyIndexesFor(col);
@@ -399,7 +445,12 @@ export class SyncEngine {
 		)
 			return;
 		this.lastDumpSaveAt.set(name, now);
-		void saveDumpProgress(this.opts.destDb, name, lastId).catch(() => {});
+		const p = saveDumpProgress(this.opts.destDb, name, lastId).catch(() => {});
+		this.inflightDumpSave.set(name, p);
+		void p.finally(() => {
+			if (this.inflightDumpSave.get(name) === p)
+				this.inflightDumpSave.delete(name);
+		});
 	}
 
 	/**
@@ -518,25 +569,29 @@ export class SyncEngine {
 				if (!route) continue;
 				try {
 					if (deletes.length > 0) {
-						await route.destCol.deleteMany({ _id: { $in: deletes } });
+						await route.destCol.deleteMany(byIds(deletes));
 						// Informa o dump concorrente (I1): docs já deletados não devem ser
 						// ressuscitados caso o cursor do dump ainda não os tenha processado.
 						if (this.dumpsActive)
-							for (const id of deletes) this.deletedIds.push(String(id));
+							for (const id of deletes) this.deletedKeys.add(idKey(id));
 					}
 					if (upserts.length > 0) {
-						const query = route.filter
-							? { $and: [{ _id: { $in: upserts } }, route.filter] }
-							: { _id: { $in: upserts } };
+						const query: Document = route.filter
+							? { $and: [byIds(upserts), route.filter] }
+							: byIds(upserts);
 						const docs = await route.srcCol.find(query).toArray();
-						const found = new Set(docs.map((d) => String(d._id)));
+						// `idKey`, não `String(_id)`: com String, todo `_id` composto vira
+						// "[object Object]" e a comparação found/missing fica arbitrária —
+						// um doc VIVO na origem podia ser classificado como ausente e
+						// APAGADO do destino logo abaixo.
+						const found = new Set(docs.map((d) => idKey(d._id)));
 						// ausentes na re-busca = deletados OU saíram do filtro → delete no destino
-						const missing = upserts.filter((id) => !found.has(String(id)));
+						const missing = upserts.filter((id) => !found.has(idKey(id)));
 						if (missing.length > 0) {
-							await route.destCol.deleteMany({ _id: { $in: missing } });
+							await route.destCol.deleteMany(byIds(missing));
 							// Também registra os "missing" como deletados pro dump concorrente.
 							if (this.dumpsActive)
-								for (const id of missing) this.deletedIds.push(String(id));
+								for (const id of missing) this.deletedKeys.add(idKey(id));
 						}
 						for (const doc of docs) {
 							await writeDocToDest(route.destCol, doc, "watch:refetch");
