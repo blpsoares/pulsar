@@ -5,7 +5,7 @@ import {
 	type DiscoveredService,
 	discoverServices,
 } from "../../core/service/discover";
-import { controlService } from "../../core/service/manager";
+import { controlService, uninstallService } from "../../core/service/manager";
 import type { ServiceSpec } from "../../core/service/types";
 import { Select } from "../components/Select";
 import { type Chip, layout, Panel, Shell, Stat } from "../components/Shell";
@@ -41,6 +41,7 @@ export function RunningScreen({
 	const [index, setIndex] = useState(0);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
+	const [confirmRemove, setConfirmRemove] = useState(false);
 
 	const refresh = useCallback(async () => {
 		setServices(await discoverServices());
@@ -52,20 +53,36 @@ export function RunningScreen({
 
 	const selected = services?.[Math.min(index, (services?.length ?? 1) - 1)];
 
-	async function control(action: "start" | "stop" | "restart") {
-		if (!selected) return;
-		setBusy(`${action}…`);
+	/**
+	 * Reconstrói o `ServiceSpec` a partir do serviço DESCOBERTO.
+	 *
+	 * O nome vem no formato de cada supervisor, e o prefixo NÃO é o mesmo em
+	 * todos: o docker registra `pulsar-sync-<nome>` (é o `container_name` do
+	 * compose), enquanto systemd e pm2 usam `pulsar-<nome>`. Tirar sempre
+	 * `pulsar-` devolvia `sync-<nome>` no caso do docker — e o `down` procurava
+	 * `docker-compose-limit-sync-<nome>.yml`, que não existe. Resultado: remover
+	 * dizia que deu certo e o container continuava no ar.
+	 */
+	function specFrom(service: DiscoveredService): ServiceSpec {
+		const name = service.name
+			.replace(/^pulsar-sync-/, "")
+			.replace(/^pulsar-/, "")
+			.replace(/^com\.pulsar\./, "");
 
-		// O controle precisa de um ServiceSpec, mas aqui partimos do serviço
-		// DESCOBERTO: o nome já vem no formato do supervisor, então basta desfazer
-		// o prefixo para reconstruir o `name` que o manager espera.
-		const spec: ServiceSpec = {
-			name: selected.name.replace(/^pulsar-/, "").replace(/^com\.pulsar\./, ""),
+		return {
+			name,
 			mode: "sync",
 			configPath: "",
 			workingDir: dir,
 			autostart: false,
 		};
+	}
+
+	async function control(action: "start" | "stop" | "restart") {
+		if (!selected) return;
+		setBusy(`${action}…`);
+
+		const spec = specFrom(selected);
 
 		const result = await controlService(selected.backend, spec, action);
 		setBusy(null);
@@ -77,11 +94,49 @@ export function RunningScreen({
 		await refresh();
 	}
 
+	/**
+	 * Remover PARA o serviço, tira do boot e apaga os arquivos gerados — é a
+	 * única ação daqui que não dá para desfazer com a tecla vizinha. Por isso
+	 * passa por confirmação explícita, com o nome na pergunta: numa lista onde
+	 * `p` (parar) é vizinho de `x`, apagar o serviço errado por um dedo torto
+	 * seria fácil demais.
+	 */
+	async function remove() {
+		if (!selected) return;
+		setConfirmRemove(false);
+		setBusy("removendo…");
+
+		const results = await uninstallService(
+			selected.backend,
+			specFrom(selected),
+		);
+		const falho = results.find((r) => !r.ok);
+		setBusy(null);
+		setMessage(
+			falho
+				? `falhou: ${falho.output.split("\n")[0] ?? ""}`
+				: `${selected.name} removido`,
+		);
+		setIndex(0);
+		await refresh();
+	}
+
 	useInput((input, key) => {
 		if (isMouseInput(input) || busy) return;
 
+		if (confirmRemove) {
+			if (input === "s" || input === "y") void remove();
+			// Qualquer outra tecla cancela: o caminho seguro é o padrão.
+			else setConfirmRemove(false);
+			return;
+		}
+
 		if (key.escape) {
 			onExit();
+			return;
+		}
+		if (input === "x") {
+			if (selected) setConfirmRemove(true);
 			return;
 		}
 		if (input === "R") {
@@ -121,19 +176,25 @@ export function RunningScreen({
 			columns={columns}
 			rows={rows}
 			notice={
-				busy
-					? { text: busy }
-					: message
-						? {
-								text: message,
-								tone: message.startsWith("falhou") ? "error" : "ok",
-							}
-						: undefined
+				confirmRemove && selected
+					? {
+							text: `remover ${selected.name}? para o serviço, tira do boot e apaga os arquivos gerados — s confirma, qualquer outra tecla cancela`,
+							tone: "warn",
+						}
+					: busy
+						? { text: busy }
+						: message
+							? {
+									text: message,
+									tone: message.startsWith("falhou") ? "error" : "ok",
+								}
+							: undefined
 			}
 			copy={() => selected?.name ?? null}
 			hints={[
 				{ keys: "↑↓", label: "serviço" },
 				{ keys: "i/p/t", label: "iniciar/parar/reiniciar" },
+				{ keys: "x", label: "remover" },
 				{ keys: "n", label: "instalar outro" },
 				{ keys: "l", label: "log ao vivo" },
 				{ keys: "R", label: "atualizar" },

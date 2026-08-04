@@ -24,8 +24,9 @@ bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync
 pulsar compose up      # idem, via binário instalado (bin:dev)
 bun run get:cli        # compila e instala o comando em ~/.local/bin (avisa se estiver fora do PATH)
 bun run rec:tui        # regrava os GIFs da TUI em docs/media (precisa de vhs+ttyd+ffmpeg)
-pulsar                 # sem argumento: abre a TUI (Ink) — cria config, roda, instala serviço, lê log
-pulsar tui             # idem, explícito
+pulsar                 # sem argumento: lista os comandos (ajuda). NÃO abre a TUI.
+pulsar start           # caminho guiado na CLI: escolhe/cria config → aqui ou background → supervisor
+pulsar tui             # abre a TUI (Ink) — cria config, roda, instala serviço, lê log
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
@@ -40,6 +41,7 @@ bun run src/cli.ts ttl --uri '...' --db x --all --derive-from-id --expire 30d   
 src/
   cli.ts                  # entrypoint, define os comandos CLI
   commands/
+    start.ts              # `pulsar start`: fluxo guiado na CLI (config → aqui/background → supervisor)
     migrate.ts            # orquestra o fluxo completo de dump/restore
     sync.ts               # orquestra o fluxo de watch; inicializa logConfig
     ttl.ts                # comando standalone: cria índices TTL em massa (yml ou CLI)
@@ -325,7 +327,29 @@ docker exec mongo-a mongosh --eval "rs.initiate({_id:'rs0', members:[{_id:0, hos
 bun run src/cli.ts sync configs/test-sync.yml --verbose
 ```
 
-## TUI (`pulsar` sem argumento)
+## Três portas de entrada — `pulsar`, `pulsar start`, `pulsar tui`
+
+`pulsar` sozinho **não abre mais a TUI**. Sequestrar o terminal com uma
+interface de tela cheia porque alguém digitou o nome do programa é hostil, e
+num script ou container (sem TTY) o comando morria com um erro sobre TTY em vez
+de mostrar a ajuda. Agora:
+
+- **`pulsar`** — lista os comandos. A resposta óbvia para "o que isso faz?".
+- **`pulsar start`** (`commands/start.ts`) — o caminho **guiado, na CLI**:
+  escolhe uma config detectada (ou cria uma ali mesmo), pergunta se roda **aqui
+  ou em background** e, no background, **qual supervisor** — mostrando os
+  indisponíveis riscados **com o motivo**, em vez de escondê-los. Mostra o
+  plano completo antes de executar. Sem ink de propósito: é um fluxo linear de
+  perguntas, não uma tela; usa o `prompt()` global do Bun, o mesmo do
+  `compose up`. `null` do prompt (ctrl+d/EOF) encerra em vez de seguir como se
+  a pessoa tivesse respondido vazio.
+- **`pulsar tui`** — a interface completa, para quem vai ficar operando.
+
+O formulário do `start` é DELIBERADAMENTE mínimo (origem, destino,
+collections): o ajuste fino segue na TUI ou no yml. Reproduzir o wizard inteiro
+aqui criaria duas implementações do mesmo formulário para manter em sincronia.
+
+## TUI (`pulsar tui`)
 
 Interface de terminal em **Ink** que cobre o ciclo inteiro sem editar yml à mão.
 `pulsar` sem subcomando abre a TUI; `pulsar tui` é o explícito. Os subcomandos
@@ -498,6 +522,24 @@ teclas do fim (mouse, sair) numa tela cheia de atalhos.
   - **Falha acionável:** um passo que falha devolve "comando — causa · saída
     sugerida" numa linha (`stepFailure`/`adviseFailure`) — bus ausente vira
     "troque o backend para docker ou pm2", e não um dump de stderr.
+  - **…e a saída COMPLETA junto (`StepResult.raw`).** O resumo de uma linha
+    cabe na lista de passos e é inútil para diagnosticar: a causa real do
+    `docker compose` vem no FIM do stderr, e a tela mostrava só a PRIMEIRA
+    linha, cortada em 80 caracteres. Resultado prático: "✖ parou num passo
+    obrigatório" e nenhuma pista do motivo — o pior estado possível, porque a
+    pessoa sabe que quebrou e não tem como descobrir por quê sem sair da TUI e
+    repetir o comando à mão. Agora `raw` guarda stderr **e** stdout juntos, a
+    tela mostra as últimas linhas em bloco e `ctrl+c` copia o erro inteiro.
+  - **Remover pela aba "rodando" (`x`)**, não só pela tela de background: é
+    onde se vê o que está no ar, e portanto onde dá vontade de matar o que não
+    deveria estar. Passa por confirmação com o nome na pergunta — `x` é vizinho
+    de `p` (parar), e remover apaga arquivos e tira do boot.
+  - **O prefixo do nome não é o mesmo em todos os supervisores.** O docker
+    registra `pulsar-sync-<nome>` (é o `container_name` do compose); systemd e
+    pm2 usam `pulsar-<nome>`. Reconstruir o spec tirando sempre `pulsar-` dava
+    `sync-<nome>` no docker, e o `down` procurava um
+    `docker-compose-limit-sync-<nome>.yml` inexistente: remover dizia que deu
+    certo e o container continuava no ar.
   - **A presença do compose é MEDIDA, não presumida.** `detectBackends` recebe
     um booleano dizendo se há `docker-compose-limit.yml` na pasta, e passá-lo
     fixo elimina (ou inventa) o docker silenciosamente. O atalho `b` passava

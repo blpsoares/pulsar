@@ -48,6 +48,17 @@ export type StepResult = {
 	output: string;
 	/** o que fazer a respeito, quando dá para saber (só em falha) */
 	advice?: string;
+	/**
+	 * A saída COMPLETA do comando que falhou, sem resumir.
+	 *
+	 * `output` é uma linha, porque é o que cabe na lista de passos. Só que o
+	 * erro de verdade do `docker compose` (ou do `systemctl`) quase nunca está
+	 * na primeira linha — vem depois, no fim do stderr. Guardar só o resumo
+	 * deixava a tela dizendo "parou num passo obrigatório" sem NENHUMA pista do
+	 * motivo, que é a pior combinação possível: o usuário sabe que quebrou e
+	 * não tem como descobrir por quê sem sair da TUI e repetir o comando à mão.
+	 */
+	raw?: string;
 };
 
 export type InstallResult = {
@@ -118,16 +129,18 @@ export async function installService(
 			});
 			results.push({ step, ok: true, output: (stdout + stderr).trim() });
 		} catch (err) {
-			const advice = adviseFailure(plan.backend, errorText(err));
+			const raw = errorText(err);
+			const advice = adviseFailure(plan.backend, raw);
 			results.push({
 				step,
 				ok: false,
-				output: stepFailure(step, errorText(err), advice),
+				output: stepFailure(step, raw, advice),
 				advice,
+				raw,
 			});
 			if (!step.optional) {
 				ok = false;
-				error = stepFailure(step, errorText(err), advice);
+				error = stepFailure(step, raw, advice);
 				// Parar no primeiro passo essencial que falha: seguir adiante
 				// deixaria um serviço meio instalado, pior que nenhum.
 				break;
@@ -212,7 +225,8 @@ export async function uninstallService(
 			});
 			results.push({ step, ok: true, output: (stdout + stderr).trim() });
 		} catch (err) {
-			results.push({ step, ok: false, output: errorText(err) });
+			const raw = errorText(err);
+			results.push({ step, ok: false, output: raw, raw });
 		}
 	}
 
@@ -381,12 +395,14 @@ export async function controlService(
 		});
 		return { step, ok: true, output: (stdout + stderr).trim() };
 	} catch (err) {
-		const advice = adviseFailure(backend, errorText(err));
+		const raw = errorText(err);
+		const advice = adviseFailure(backend, raw);
 		return {
 			step,
 			ok: false,
-			output: stepFailure(step, errorText(err), advice),
+			output: stepFailure(step, raw, advice),
 			advice,
+			raw,
 		};
 	}
 }
@@ -400,9 +416,20 @@ function parseProps(stdout: string): Record<string, string> {
 	return out;
 }
 
+/**
+ * Junta stderr E stdout, nessa ordem, em vez de escolher um.
+ *
+ * O `docker compose` escreve o progresso do build no stderr e a causa da falha
+ * pode sair em qualquer um dos dois; ficar só com o stderr (ou só com o
+ * primeiro não-vazio) descartava justamente a linha que explica o erro.
+ */
 function errorText(err: unknown): string {
 	const e = err as { stdout?: string; stderr?: string; message?: string };
-	return (e.stderr || e.stdout || e.message || String(err)).trim();
+	const partes = [e.stderr, e.stdout]
+		.map((p) => (p ?? "").trim())
+		.filter(Boolean);
+	if (partes.length === 0) return (e.message || String(err)).trim();
+	return partes.join("\n");
 }
 
 function shortError(err: unknown): string {

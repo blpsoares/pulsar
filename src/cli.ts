@@ -22,10 +22,19 @@ process.on("uncaughtException", (err) => {
 	console.error("[ ERROR ] uncaughtException:", err.message);
 });
 
-// `pulsar` sem subcomando abre a TUI. O título em ASCII art é pulado nesse
-// caminho: o ink toma conta da tela inteira e o banner só empurraria o layout
-// para fora da janela.
-const wantsTui = process.argv.length <= 2 || process.argv[2] === "tui";
+/**
+ * `pulsar` sozinho é CLI, não TUI.
+ *
+ * Abrir a interface de tela cheia sem ninguém pedir sequestra o terminal de
+ * quem só queria ver os comandos disponíveis — e num script ou container, onde
+ * não há TTY, o programa morria com um erro sobre TTY em vez de mostrar a
+ * ajuda. Agora `pulsar` lista os comandos, `pulsar tui` abre a interface e
+ * `pulsar start` é o caminho guiado.
+ *
+ * O título em ASCII art é pulado no caminho da TUI: o ink toma conta da tela
+ * inteira e o banner só empurraria o layout para fora da janela.
+ */
+const wantsTui = process.argv[2] === "tui";
 
 if (!wantsTui) await showTitle();
 
@@ -149,11 +158,25 @@ program
 		await startTui(process.cwd());
 	});
 
+program
+	.command("start")
+	.description(
+		"caminho guiado: escolhe a config (ou cria uma), pergunta se roda aqui ou em background e qual supervisor usar",
+	)
+	.action(async () => {
+		const { startCommand } = await import("./commands/start");
+		await startCommand(process.cwd());
+	});
+
 if (wantsTui) {
 	// Import dinâmico: quem roda `pulsar sync` num container não paga o custo de
 	// carregar react/ink.
 	const { startTui } = await import("./tui/index");
 	await startTui(process.cwd());
+} else if (process.argv.length <= 2) {
+	// Sem subcomando: a ajuda é a resposta certa — e ela já anuncia `tui` e
+	// `start` para quem quer o caminho visual ou o guiado.
+	program.outputHelp();
 } else {
 	program.parse(process.argv);
 }

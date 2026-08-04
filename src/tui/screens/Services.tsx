@@ -189,6 +189,19 @@ export function ServicesScreen({
 			columns={columns}
 			rows={rows}
 			notice={busy ? { text: busy } : undefined}
+			/**
+			 * Com uma falha na tela, `ctrl+c` leva o erro COMPLETO — inclusive as
+			 * linhas que não couberam no bloco. É o que permite colar o erro num
+			 * chat ou numa issue sem repetir o comando à mão fora da TUI.
+			 */
+			copy={() => {
+				const falho =
+					result?.results.find((r) => !r.ok && r.raw) ??
+					actionLog.find((r) => !r.ok && r.raw);
+				if (falho?.raw)
+					return `$ ${falho.step.cmd} ${falho.step.args.join(" ")}\n${falho.raw}`;
+				return file ? resolve(dir, file) : null;
+			}}
 			hints={[
 				{ keys: "tab", label: "painel" },
 				{ keys: "enter", label: "instalar" },
@@ -357,6 +370,11 @@ function PlanView({
 							{r.output ? ` — ${firstLine(r.output)}` : ""}
 						</Text>
 					))}
+					{/* o primeiro passo que falhou é o que interrompeu tudo */}
+					{(() => {
+						const falho = result.results.find((r) => !r.ok && r.raw);
+						return falho?.raw ? <ErrorBlock raw={falho.raw} /> : null;
+					})()}
 				</Box>
 			) : null}
 
@@ -372,6 +390,10 @@ function PlanView({
 							{r.output ? ` — ${firstLine(r.output)}` : ""}
 						</Text>
 					))}
+					{(() => {
+						const falho = actionLog.find((r) => !r.ok && r.raw);
+						return falho?.raw ? <ErrorBlock raw={falho.raw} /> : null;
+					})()}
 				</Box>
 			) : null}
 		</Box>
@@ -450,4 +472,40 @@ function StatusPanel({
 
 function firstLine(text: string): string {
 	return text.split("\n")[0]?.slice(0, 80) ?? "";
+}
+
+/**
+ * O erro cru do passo que falhou, em bloco e por inteiro (até `max` linhas).
+ *
+ * A lista de passos mostra uma linha por passo — que é o certo para ler o
+ * plano, e inútil para entender uma falha: a causa do `docker compose` vem no
+ * FIM do stderr, não no começo. Por isso o bloco começa pelo fim, que é onde a
+ * mensagem mora, e a tela anuncia `ctrl+c` para levar o texto completo embora.
+ */
+function ErrorBlock({ raw, max = 10 }: { raw: string; max?: number }) {
+	const linhas = raw
+		.split("\n")
+		.map((l) => l.trimEnd())
+		.filter(Boolean);
+	const cortou = linhas.length > max;
+	const mostradas = cortou ? linhas.slice(-max) : linhas;
+
+	return (
+		<Box flexDirection="column" marginTop={1}>
+			<Text color={theme.error} bold>
+				saída do comando{cortou ? ` (últimas ${max} linhas)` : ""}
+			</Text>
+			{mostradas.map((linha, i) => (
+				<Text
+					// biome-ignore lint/suspicious/noArrayIndexKey: linhas de um texto fixo, sem identidade própria
+					key={i}
+					color={theme.muted}
+					wrap="wrap"
+				>
+					{linha}
+				</Text>
+			))}
+			<Text color={theme.muted}>ctrl+c copia o erro inteiro</Text>
+		</Box>
+	);
 }
