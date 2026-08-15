@@ -16,6 +16,16 @@ import {
 } from "../src/tui/keys";
 import { listWindow, overlayBox } from "../src/tui/layout";
 import { formatStats } from "../src/tui/screens/ServiceDetail";
+import {
+	fieldNeedsDestination,
+	fieldNeedsSource,
+	formatCommaList,
+	formatIndexesList,
+	needsSudo,
+	parseCommaList,
+	parseIndexesList,
+	visibleFields,
+} from "../src/tui/screens/serviceFormFields";
 
 describe("overlayBox", () => {
 	test("centraliza a caixa com margem no terminal largo", () => {
@@ -243,5 +253,104 @@ describe("formatStats", () => {
 				}),
 			),
 		).toEqual([]);
+	});
+});
+
+describe("serviceFormFields (Task 13 — formulário único)", () => {
+	test("visibleFields: sync tem os 12 campos, incluindo views/índices", () => {
+		expect(visibleFields("sync")).toEqual([
+			"name",
+			"mode",
+			"config",
+			"sourceUri",
+			"sourceDb",
+			"destUri",
+			"destDb",
+			"collections",
+			"views",
+			"indexes",
+			"backend",
+			"boot",
+		]);
+	});
+
+	test("visibleFields: migrate tem destino mas não views/índices", () => {
+		const fields = visibleFields("migrate");
+		expect(fields).toContain("destUri");
+		expect(fields).toContain("destDb");
+		expect(fields).not.toContain("views");
+		expect(fields).not.toContain("indexes");
+	});
+
+	test("visibleFields: ttl não tem destino nem views/índices — opera num banco só", () => {
+		const fields = visibleFields("ttl");
+		expect(fields).not.toContain("destUri");
+		expect(fields).not.toContain("destDb");
+		expect(fields).not.toContain("views");
+		expect(fields).not.toContain("indexes");
+		// mas collections continua existindo: o ttl ainda escolhe em quais criar o índice
+		expect(fields).toContain("collections");
+	});
+
+	test("visibleFields nunca esconde um campo por FALTAR conexão — só por modo", () => {
+		// origem.db/collections aparecem sempre, independente de estar conectado
+		// (o componente é quem decide desabilitar/mostrar o motivo, não esta função).
+		for (const mode of ["sync", "migrate", "ttl"] as const) {
+			expect(visibleFields(mode)).toContain("sourceDb");
+			expect(visibleFields(mode)).toContain("collections");
+		}
+	});
+
+	test("fieldNeedsSource marca só os campos que dependem da conexão de ORIGEM", () => {
+		expect(fieldNeedsSource("sourceDb")).toBe(true);
+		expect(fieldNeedsSource("collections")).toBe(true);
+		expect(fieldNeedsSource("views")).toBe(true);
+		expect(fieldNeedsSource("indexes")).toBe(true);
+		expect(fieldNeedsSource("destDb")).toBe(false);
+		expect(fieldNeedsSource("name")).toBe(false);
+	});
+
+	test("fieldNeedsDestination marca só destino.db", () => {
+		expect(fieldNeedsDestination("destDb")).toBe(true);
+		expect(fieldNeedsDestination("sourceDb")).toBe(false);
+		expect(fieldNeedsDestination("destUri")).toBe(false);
+	});
+
+	test("needsSudo: só docker/pm2/systemd — launchd normalmente não pede", () => {
+		expect(needsSudo("docker")).toBe(true);
+		expect(needsSudo("pm2")).toBe(true);
+		expect(needsSudo("systemd")).toBe(true);
+		expect(needsSudo("launchd")).toBe(false);
+	});
+
+	test("parseCommaList/formatCommaList fazem ida e volta, ignorando espaços e vazios", () => {
+		expect(parseCommaList("a, b ,  c,,")).toEqual(["a", "b", "c"]);
+		expect(parseCommaList("")).toEqual([]);
+		expect(formatCommaList(["a", "b", "c"])).toBe("a, b, c");
+	});
+
+	test("parseIndexesList agrupa por collection a partir de 'collection.índice'", () => {
+		expect(
+			parseIndexesList("orders.status_1, orders.date_-1, users.email_1"),
+		).toEqual([
+			{ collection: "orders", indexes: ["status_1", "date_-1"] },
+			{ collection: "users", indexes: ["email_1"] },
+		]);
+	});
+
+	test("parseIndexesList ignora entrada sem '.' (não dá pra saber a collection)", () => {
+		expect(parseIndexesList("status_1, orders.date_-1")).toEqual([
+			{ collection: "orders", indexes: ["date_-1"] },
+		]);
+	});
+
+	test("formatIndexesList é o inverso de parseIndexesList para o formato achatado", () => {
+		const parsed = parseIndexesList("orders.status_1, orders.date_-1");
+		expect(formatIndexesList(parsed)).toBe("orders.status_1, orders.date_-1");
+	});
+
+	test("formatIndexesList devolve vazio para true/false (não há o que digitar de volta)", () => {
+		expect(formatIndexesList(true)).toBe("");
+		expect(formatIndexesList(false)).toBe("");
 	});
 });
