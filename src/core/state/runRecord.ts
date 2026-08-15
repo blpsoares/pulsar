@@ -1,3 +1,4 @@
+import { disableBootAfterSuccess } from "../service/oneshot";
 import { type RunStats, readRecord, writeRecord } from "./registry";
 
 /**
@@ -104,4 +105,8 @@ export function finishRun(
 		},
 		home,
 	);
+
+	// Fora do caminho síncrono: o comando já terminou e não deve esperar o
+	// supervisor responder para poder sair.
+	void disableBootAfterSuccess(name, outcome.status, home).catch(() => {});
 }

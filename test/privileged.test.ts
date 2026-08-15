@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import {
+	disableBootSteps,
+	shouldDisableBoot,
+} from "../src/core/service/oneshot";
 import { detectSudo, runPrivilegedStep } from "../src/core/service/privileged";
 import type { ServiceStep } from "../src/core/service/types";
+import { CREATED_BY_TUI, type ServiceRecord } from "../src/core/state/registry";
 import { DISABLE_MOUSE, ENTER_ALT, LEAVE_ALT } from "../src/core/tty/ansi";
 import { withTerminal } from "../src/core/tty/handoff";
 
@@ -279,5 +284,62 @@ describe("installService roda plan.manualSteps (rodada de fix 1/5)", () => {
 		// automático (falhou, optional) + manual (rodou de verdade)
 		expect(result.results).toHaveLength(2);
 		expect(result.results[1]?.ok).toBe(true);
+	});
+});
+
+const oneShot: ServiceRecord = {
+	name: "pulsar-migra",
+	mode: "migrate",
+	config: "/srv/m.yml",
+	workingDir: "/srv",
+	backend: "systemd",
+	boot: true,
+	createdBy: CREATED_BY_TUI,
+	lastRun: null,
+};
+
+describe("shouldDisableBoot", () => {
+	test("one-shot criado pelo pulsar, concluído com sucesso: desliga", () => {
+		expect(shouldDisableBoot(oneShot, "ok")).toBe(true);
+	});
+
+	test("erro NÃO desliga — senão a retentativa some sem ninguém saber", () => {
+		expect(shouldDisableBoot(oneShot, "error")).toBe(false);
+	});
+
+	test("serviço que o pulsar não criou fica intocado", () => {
+		expect(shouldDisableBoot({ ...oneShot, createdBy: "adotado" }, "ok")).toBe(
+			false,
+		);
+	});
+
+	test("sync nunca desliga o boot", () => {
+		expect(shouldDisableBoot({ ...oneShot, mode: "sync" }, "ok")).toBe(false);
+	});
+
+	test("boot já desligado não faz nada", () => {
+		expect(shouldDisableBoot({ ...oneShot, boot: false }, "ok")).toBe(false);
+	});
+});
+
+describe("disableBootSteps", () => {
+	test("systemd", () => {
+		const [step] = disableBootSteps(oneShot);
+		expect(step?.cmd).toBe("systemctl");
+		expect(step?.args).toEqual(["--user", "disable", "pulsar-migra.service"]);
+	});
+
+	test("docker", () => {
+		const [step] = disableBootSteps({ ...oneShot, backend: "docker" });
+		expect(step?.cmd).toBe("docker");
+		expect(step?.args).toEqual(["update", "--restart=no", "pulsar-migra"]);
+	});
+
+	test("pm2 remove e salva", () => {
+		const steps = disableBootSteps({ ...oneShot, backend: "pm2" });
+		expect(steps.map((s) => s.args.join(" "))).toEqual([
+			"delete pulsar-migra",
+			"save",
+		]);
 	});
 });
