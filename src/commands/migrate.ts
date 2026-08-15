@@ -8,6 +8,7 @@ import { renameNewCollections } from "../core/dump/renameCollections";
 import { initRestore } from "../core/dump/restoreDump";
 import {
 	beginRun,
+	describeError,
 	finishRun,
 	serviceNameFromEnv,
 } from "../core/state/runRecord";
@@ -84,7 +85,18 @@ const migrateCollections = async (
 		);
 
 		if (failedRestores.length > 0) {
-			customLog("error", t("migrate.restore_failed", { list: failedRestores }));
+			const message = t("migrate.restore_failed", { list: failedRestores });
+			customLog("error", message);
+			// Não é uma exceção — é "parou por decisão" —, mas pra quem lê o
+			// registro depois é indistinguível de um processo que morreu no meio
+			// se ficar preso em "running". beginRun já rodou lá em cima.
+			if (serviceName)
+				finishRun(serviceName, {
+					status: "error",
+					exitCode: 1,
+					stats: {},
+					error: message,
+				});
 			return;
 		}
 
@@ -188,7 +200,7 @@ const migrateCollections = async (
 				status: "error",
 				exitCode: 1,
 				stats: {},
-				error: error instanceof Error ? error.message : String(error),
+				error: describeError(error),
 			});
 		throw error;
 	}

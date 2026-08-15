@@ -9,6 +9,8 @@ const dict = {
 	"sync.shutdown_received":
 		"Recebido {signal} — encerrando e salvando checkpoints...",
 	"sync.shutdown_exceeded": "Shutdown excedeu {shutdownMs}ms — saída forçada.",
+	"sync.run_record_write_failed":
+		"Não deu para gravar o resultado no registro de serviços: {error} — o shutdown segue normalmente.",
 	"sync.opening_watch":
 		"Abrindo watch em {count} collection(s) — eventos: {events}...",
 	"sync.stophint.tty": "parar: Ctrl+C (salva o checkpoint)",

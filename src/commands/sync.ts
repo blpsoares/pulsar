@@ -4,7 +4,9 @@ import { SyncEngine } from "../core/sync/engine";
 import type { RunStats } from "../core/state/registry";
 import {
 	beginRun,
+	describeError,
 	finishRun,
+	isAlreadyHandled,
 	serviceNameFromEnv,
 } from "../core/state/runRecord";
 import { conn } from "../db/conn";
@@ -38,6 +40,12 @@ export async function syncCollections(
 	// grava nada no registro.
 	const serviceName = serviceNameFromEnv();
 	if (serviceName) beginRun(serviceName);
+	// `true` assim que QUALQUER desfecho final (ok ou erro) já foi gravado —
+	// impede o `finally` do shutdown() de sobrescrever um "error" já gravado
+	// pelo catch com "ok" (interleaving: engine.start() rejeita, o catch grava
+	// erro, o `throw` vira unhandledRejection não-fatal, e um SIGTERM chega
+	// depois — sem o flag, o finally gravava "ok" por cima, invertendo o sinal).
+	let outcomeRecorded = false;
 
 	setLang(
 		process.env.PULSAR_LANG || options.command.sync.logging?.lang || "en",
@@ -157,12 +165,32 @@ export async function syncCollections(
 				await client.close().catch(() => {});
 				await destClient.close().catch(() => {});
 			} finally {
-				if (serviceName)
-					finishRun(serviceName, {
-						status: "ok",
-						exitCode: 0,
-						stats: runStats,
-					});
+				// !outcomeRecorded: só grava "ok" se NINGUÉM já gravou um desfecho
+				// (ex.: o catch lá embaixo, que já rodou "error" antes deste shutdown
+				// chegar a ser chamado — ver o comentário no `let outcomeRecorded`).
+				if (serviceName && !outcomeRecorded) {
+					outcomeRecorded = true;
+					// Gravar o registro NUNCA pode derrubar o shutdown: writeRecord faz
+					// mkdirSync+writeFileSync, e um EACCES/ENOSPC/$HOME somente-leitura
+					// aqui não pode impedir o process.exit(0) logo abaixo (sem isto, a
+					// exceção escapava do finally e o shutdown limpo virava exit forçado
+					// pelo timer 30s depois).
+					try {
+						finishRun(serviceName, {
+							status: "ok",
+							exitCode: 0,
+							stats: runStats,
+						});
+					} catch (writeError) {
+						customLog(
+							"error",
+							t("sync.run_record_write_failed", {
+								error: describeError(writeError),
+							}),
+							true,
+						);
+					}
+				}
 				clearTimeout(forced);
 				process.exit(0);
 			}
@@ -303,13 +331,21 @@ export async function syncCollections(
 			}));
 		}
 	} catch (error) {
-		if (serviceName)
+		if (serviceName) {
+			outcomeRecorded = true;
 			finishRun(serviceName, {
 				status: "error",
 				exitCode: 1,
 				stats: {},
-				error: error instanceof Error ? error.message : String(error),
+				error: describeError(error),
 			});
+		}
+		// `error` já passou por um errorHandler mais embaixo (ex.: conn() falhou
+		// e lançou "CONN:MONGO:CLIENT") — chamar errorHandler DE NOVO aqui
+		// sobrescreveria esse breadcrumb pelo genérico "WATCH:COLL" e duplicaria
+		// a linha de log, escondendo a causa real. Só decora com o breadcrumb
+		// do comando quando `error` ainda não passou por nenhum errorHandler.
+		if (isAlreadyHandled(error)) throw error;
 		throw errorHandler(error, "WATCH:COLL");
 	}
 }

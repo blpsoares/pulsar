@@ -1,7 +1,9 @@
 import Bottleneck from "bottleneck";
 import {
 	beginRun,
+	describeError,
 	finishRun,
+	isAlreadyHandled,
 	serviceNameFromEnv,
 } from "../core/state/runRecord";
 import { applyTtl, type TtlResult } from "../core/ttl/applyTtl";
@@ -208,8 +210,13 @@ export async function ttlCommand(
 				status: "error",
 				exitCode: 1,
 				stats: {},
-				error: error instanceof Error ? error.message : String(error),
+				error: describeError(error),
 			});
+		// `error` já passou por um errorHandler mais embaixo (ex.: conn() falhou
+		// e lançou "CONN:MONGO:CLIENT") — chamar errorHandler DE NOVO aqui
+		// sobrescreveria esse breadcrumb pelo genérico "TTL:COMMAND" e duplicaria
+		// a linha de log, escondendo a causa real.
+		if (isAlreadyHandled(error)) throw error;
 		throw errorHandler(error, "TTL:COMMAND");
 	} finally {
 		await client?.close();

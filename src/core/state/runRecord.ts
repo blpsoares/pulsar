@@ -37,6 +37,45 @@ export function beginRun(name: string, home?: string): void {
 	);
 }
 
+// SGR (Select Graphic Rendition) — o formato que o chalk usa pra colorir
+// (`ESC[<códigos>m`). `errorHandler` (src/errors/errorHandler.ts) loga a
+// causa real e relança só um breadcrumb colorido com chalk; sem tirar isso,
+// o registro grava lixo tipo "\x1b[38;2;255;124;0mCONN:MONGO:CLIENT\x1b[39m".
+// biome-ignore lint/suspicious/noControlCharactersInRegex: precisa casar o byte de escape ANSI pra removê-lo.
+const ANSI_SGR = /\x1b\[[0-9;]*m/g;
+
+/**
+ * Desembrulha a mensagem gravável de um erro pego no catch de um comando.
+ *
+ * `errorHandler` já loga a causa real (`customLog`/`logger.error`) e relança
+ * só o breadcrumb colorido — o objeto de erro original não sobrevive até
+ * aqui. Por isso: quando `error` chega como STRING, é esse breadcrumb —
+ * tiramos os códigos ANSI e usamos como está (é a melhor informação que
+ * sobrou). Quando `error` é um `Error` de verdade (não passou por nenhum
+ * `errorHandler` no caminho), a causa real está em `.message` — essa é
+ * preferível, e é o formato que o brief pedia (`"ECONNREFUSED
+ * 127.0.0.1:27017"`).
+ */
+export function describeError(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === "string") return error.replace(ANSI_SGR, "");
+	return String(error);
+}
+
+/**
+ * `true` quando `error` já passou por um `errorHandler` — que loga e relança
+ * só uma string (o breadcrumb colorido), nunca o `Error`/`CustomError`
+ * original. Comandos cujo próprio `catch` também chama `errorHandler` (pra
+ * decorar com o breadcrumb do comando, ex.: "WATCH:COLL") precisam checar
+ * isso ANTES: chamar `errorHandler` de novo em cima de um erro já tratado
+ * sobrescreve o breadcrumb original (ex.: "CONN:MONGO:CLIENT") pelo genérico
+ * do comando e duplica a linha de log — mascarando a causa real num daemon
+ * que já roda sem ninguém olhando.
+ */
+export function isAlreadyHandled(error: unknown): boolean {
+	return typeof error === "string";
+}
+
 export function finishRun(
 	name: string,
 	outcome: {

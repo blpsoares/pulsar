@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Chalk } from "chalk";
 import {
 	CREATED_BY_TUI,
 	listRecords,
@@ -13,7 +14,9 @@ import {
 } from "../src/core/state/registry";
 import {
 	beginRun,
+	describeError,
 	finishRun,
+	isAlreadyHandled,
 	serviceNameFromEnv,
 } from "../src/core/state/runRecord";
 
@@ -147,5 +150,65 @@ describe("runRecord", () => {
 		expect(serviceNameFromEnv()).toBe("pulsar-x");
 		delete process.env.PULSAR_SERVICE_NAME;
 		expect(serviceNameFromEnv()).toBeNull();
+	});
+
+	test("um outcome final já gravado não pode ser sobrescrito por um posterior (mesma guarda do shutdown() do sync)", () => {
+		// Reproduz o interleaving real: engine.start() rejeita, o catch de
+		// sync.ts grava "error" e marca o flag; um SIGTERM chega DEPOIS e o
+		// finally do shutdown() tentaria gravar "ok" por cima. Com a guarda
+		// (`!outcomeRecorded`), a segunda escrita nunca acontece.
+		const h = home();
+		writeRecord(base, h);
+		beginRun("pulsar-ads", h);
+
+		let outcomeRecorded = false;
+
+		// catch: grava o erro e marca o flag.
+		finishRun(
+			"pulsar-ads",
+			{
+				status: "error",
+				exitCode: 1,
+				stats: {},
+				error: "ECONNREFUSED 127.0.0.1:27017",
+			},
+			h,
+		);
+		outcomeRecorded = true;
+
+		// finally do shutdown(), chegando depois: a guarda impede a escrita.
+		if (!outcomeRecorded) {
+			finishRun("pulsar-ads", { status: "ok", exitCode: 0, stats: {} }, h);
+		}
+
+		const run = readRecord("pulsar-ads", h)?.lastRun;
+		expect(run?.status).toBe("error");
+		expect(run?.error).toContain("ECONNREFUSED");
+	});
+});
+
+describe("describeError / isAlreadyHandled", () => {
+	// errorHandler (src/errors/errorHandler.ts) loga a causa real e relança só
+	// o breadcrumb colorido com chalk — força level 3 aqui pra garantir que os
+	// códigos ANSI existam mesmo rodando `bun test` sem TTY (chalk desativa
+	// cor automaticamente fora de terminal).
+	const chalk = new Chalk({ level: 3 });
+
+	test("Error de verdade (não passou por errorHandler): usa a .message", () => {
+		const err = new Error("ECONNREFUSED 127.0.0.1:27017");
+		expect(describeError(err)).toBe("ECONNREFUSED 127.0.0.1:27017");
+		expect(isAlreadyHandled(err)).toBe(false);
+	});
+
+	test("string colorida (já passou por errorHandler): tira os códigos ANSI", () => {
+		const colored = chalk.hex("#ff7c00").bold("CONN:MONGO:CLIENT");
+		expect(colored).toContain("\x1b["); // confirma que o teste testa algo real
+		expect(describeError(colored)).toBe("CONN:MONGO:CLIENT");
+		expect(isAlreadyHandled(colored)).toBe(true);
+	});
+
+	test("valor não-Error e não-string: cai no String()", () => {
+		expect(describeError(42)).toBe("42");
+		expect(isAlreadyHandled(42)).toBe(false);
 	});
 });
