@@ -4,6 +4,7 @@ import {
 	shouldDisableBoot,
 } from "../src/core/service/oneshot";
 import { detectSudo, runPrivilegedStep } from "../src/core/service/privileged";
+import { switchBackend } from "../src/core/service/switchBackend";
 import type { ServiceStep } from "../src/core/service/types";
 import { CREATED_BY_TUI, type ServiceRecord } from "../src/core/state/registry";
 import { DISABLE_MOUSE, ENTER_ALT, LEAVE_ALT } from "../src/core/tty/ansi";
@@ -341,5 +342,86 @@ describe("disableBootSteps", () => {
 			"delete pulsar-migra",
 			"save",
 		]);
+	});
+});
+
+const record: ServiceRecord = { ...oneShot, mode: "sync", backend: "systemd" };
+
+describe("switchBackend", () => {
+	test("caminho feliz: desinstala do antigo, instala no novo, atualiza o registro", async () => {
+		const ordem: string[] = [];
+		const result = await switchBackend(record, "docker", {
+			home: undefined,
+			uninstall: async (backend) => void ordem.push(`uninstall:${backend}`),
+			install: async (backend) => {
+				ordem.push(`install:${backend}`);
+				return { ok: true };
+			},
+			save: (r) => void ordem.push(`save:${r.backend}`),
+		});
+
+		expect(ordem).toEqual([
+			"uninstall:systemd",
+			"install:docker",
+			"save:docker",
+		]);
+		expect(result.ok).toBe(true);
+	});
+
+	test("falhando no novo, volta para o antigo", async () => {
+		// Sem isto, um docker mal configurado deixaria o usuário sem serviço
+		// nenhum: o antigo já foi removido quando o novo falhou.
+		const ordem: string[] = [];
+		const result = await switchBackend(record, "docker", {
+			home: undefined,
+			uninstall: async (backend) => void ordem.push(`uninstall:${backend}`),
+			install: async (backend) => {
+				ordem.push(`install:${backend}`);
+				return backend === "docker"
+					? { ok: false, error: "daemon não responde" }
+					: { ok: true };
+			},
+			save: () => {},
+		});
+
+		expect(ordem).toEqual([
+			"uninstall:systemd",
+			"install:docker",
+			"install:systemd",
+		]);
+		expect(result).toEqual({
+			ok: false,
+			error: "daemon não responde",
+			rolledBack: true,
+		});
+	});
+
+	test("se nem o rollback funciona, diz isso em vez de mentir", async () => {
+		const result = await switchBackend(record, "docker", {
+			home: undefined,
+			uninstall: async () => {},
+			install: async () => ({ ok: false, error: "nada funciona" }),
+			save: () => {},
+		});
+		expect(result).toEqual({
+			ok: false,
+			error: "nada funciona",
+			rolledBack: false,
+		});
+	});
+
+	test("trocar para o mesmo backend não faz nada", async () => {
+		const ordem: string[] = [];
+		const result = await switchBackend(record, "systemd", {
+			home: undefined,
+			uninstall: async () => void ordem.push("uninstall"),
+			install: async () => {
+				ordem.push("install");
+				return { ok: true };
+			},
+			save: () => {},
+		});
+		expect(ordem).toEqual([]);
+		expect(result.ok).toBe(true);
 	});
 });
