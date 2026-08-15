@@ -16,6 +16,7 @@ import {
 	type Layer,
 } from "../src/tui/keys";
 import { listWindow, overlayBox } from "../src/tui/layout";
+import { scrollWindow } from "../src/tui/screens/LogViewer";
 import { formatStats } from "../src/tui/screens/ServiceDetail";
 import {
 	fieldNeedsDestination,
@@ -117,6 +118,54 @@ describe("listWindow", () => {
 				const win = listWindow(total, height, cursor);
 				expect(win.start).toBeGreaterThanOrEqual(0);
 				expect(win.end).toBeLessThanOrEqual(total);
+				expect(win.start).toBeLessThanOrEqual(win.end);
+			}
+		}
+	});
+});
+
+describe("scrollWindow", () => {
+	test("offset 0 mostra o FIM do log (é o que interessa)", () => {
+		expect(scrollWindow(1000, 40, 0)).toEqual({ start: 960, end: 1000 });
+	});
+
+	test("rolar para cima anda para trás", () => {
+		expect(scrollWindow(1000, 40, 10)).toEqual({ start: 950, end: 990 });
+	});
+
+	test("não passa do começo do arquivo", () => {
+		expect(scrollWindow(1000, 40, 5000)).toEqual({ start: 0, end: 40 });
+	});
+
+	test("log menor que a tela mostra tudo", () => {
+		expect(scrollWindow(10, 40, 0)).toEqual({ start: 0, end: 10 });
+	});
+
+	test("log vazio não quebra (start e end em 0)", () => {
+		expect(scrollWindow(0, 40, 0)).toEqual({ start: 0, end: 0 });
+	});
+
+	test("colado no fim (offset 0), o log crescendo sempre mostra as últimas `height` linhas — é o que faz o 'seguir' funcionar sem tocar no offset", () => {
+		for (const total of [40, 41, 100, 12000]) {
+			const win = scrollWindow(total, 40, 0);
+			expect(win.end).toBe(total);
+			expect(win.start).toBe(Math.max(0, total - 40));
+		}
+	});
+
+	test("invariante: start nunca negativo, end nunca maior que total, janela nunca maior que height", () => {
+		for (const [total, height] of [
+			[0, 40],
+			[1, 40],
+			[40, 40],
+			[1000, 40],
+			[1000, 1],
+		] as const) {
+			for (const offset of [0, 1, height, total, total + 500, 999999]) {
+				const win = scrollWindow(total, height, offset);
+				expect(win.start).toBeGreaterThanOrEqual(0);
+				expect(win.end).toBeLessThanOrEqual(total);
+				expect(win.end - win.start).toBeLessThanOrEqual(height);
 				expect(win.start).toBeLessThanOrEqual(win.end);
 			}
 		}
