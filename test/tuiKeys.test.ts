@@ -274,12 +274,22 @@ describe("serviceFormFields (Task 13 — formulário único)", () => {
 		]);
 	});
 
-	test("visibleFields: migrate tem destino mas não views/índices", () => {
+	test("visibleFields: migrate tem destino mas não views/índices nem campos de ttl", () => {
 		const fields = visibleFields("migrate");
 		expect(fields).toContain("destUri");
 		expect(fields).toContain("destDb");
 		expect(fields).not.toContain("views");
 		expect(fields).not.toContain("indexes");
+		expect(fields).not.toContain("ttlField");
+		expect(fields).not.toContain("ttlDeriveFromId");
+		expect(fields).not.toContain("ttlExpire");
+	});
+
+	test("visibleFields: sync não tem campos de ttl", () => {
+		const fields = visibleFields("sync");
+		expect(fields).not.toContain("ttlField");
+		expect(fields).not.toContain("ttlDeriveFromId");
+		expect(fields).not.toContain("ttlExpire");
 	});
 
 	test("visibleFields: ttl não tem destino nem views/índices — opera num banco só", () => {
@@ -290,6 +300,23 @@ describe("serviceFormFields (Task 13 — formulário único)", () => {
 		expect(fields).not.toContain("indexes");
 		// mas collections continua existindo: o ttl ainda escolhe em quais criar o índice
 		expect(fields).toContain("collections");
+	});
+
+	test("visibleFields: ttl tem os 3 campos de defaults (Fix 1 da Rodada 1) — 11 campos ao todo", () => {
+		const fields = visibleFields("ttl");
+		expect(fields).toEqual([
+			"name",
+			"mode",
+			"config",
+			"sourceUri",
+			"sourceDb",
+			"collections",
+			"ttlField",
+			"ttlDeriveFromId",
+			"ttlExpire",
+			"backend",
+			"boot",
+		]);
 	});
 
 	test("visibleFields nunca esconde um campo por FALTAR conexão — só por modo", () => {

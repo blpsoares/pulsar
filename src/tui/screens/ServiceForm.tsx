@@ -3,7 +3,11 @@ import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { detectConfigs } from "../../core/compose/detectConfigs";
 import { buildConfig } from "../../core/config/buildConfig";
-import { emptyForm, type FormState } from "../../core/config/formState";
+import {
+	emptyForm,
+	type FormState,
+	validateForm,
+} from "../../core/config/formState";
 import {
 	type CollectionEntryRaw,
 	loadConfigFile,
@@ -37,12 +41,13 @@ import {
 	type ServiceRecord,
 	writeRecord,
 } from "../../core/state/registry";
+import { parseDuration } from "../../core/ttl/parseDuration";
 import { Overlay } from "../components/Overlay";
 import { Select } from "../components/Select";
 import { Stat } from "../components/Shell";
 import { TextInput } from "../components/TextInput";
 import { useInspector } from "../hooks/useInspector";
-import { overlayBox } from "../layout";
+import { listWindow, overlayBox } from "../layout";
 import { useClickable } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
 import { theme } from "../theme";
@@ -263,6 +268,24 @@ export function ServiceForm({
 		setBoot((b) => !b);
 	}
 
+	/**
+	 * `field` e `deriveFromId` são mutuamente exclusivos no schema do ttl (ver
+	 * `ttlCollectionEntrySchema`/`ttlDefaultsSchema` em `types/parseYml.ts` e o
+	 * `.refine` de `resolveTtlEntry.ts`) — ligar aqui DESLIGA o campo de data,
+	 * mesmo padrão já usado em `wizard/AdvancedStep.tsx`.
+	 */
+	function toggleDeriveFromId() {
+		updateForm({
+			ttlDefaults: {
+				...form.ttlDefaults,
+				deriveFromId: !form.ttlDefaults.deriveFromId,
+				field: form.ttlDefaults.deriveFromId
+					? form.ttlDefaults.field
+					: undefined,
+			},
+		});
+	}
+
 	useInput(
 		(input, key) => {
 			if (isMouseInput(input)) return;
@@ -283,11 +306,13 @@ export function ServiceForm({
 			}
 			if (input === " ") {
 				if (currentField === "boot") toggleBoot();
+				else if (currentField === "ttlDeriveFromId") toggleDeriveFromId();
 				return;
 			}
 			if (key.return) {
 				if (!currentField) return;
 				if (currentField === "boot") toggleBoot();
+				else if (currentField === "ttlDeriveFromId") toggleDeriveFromId();
 				else openEditor(currentField);
 				return;
 			}
@@ -355,7 +380,26 @@ export function ServiceForm({
 
 	async function submit(andStart: boolean) {
 		const config = buildConfig(form, preserved);
-		const errors = validateConfig(mode, config);
+		// `validateConfig` (Zod) sozinho NÃO barra um `ttl` sem `field`/
+		// `deriveFromId`/`expire` — o schema declara os três como opcionais
+		// (a exigência de "pelo menos um" é regra de negócio, resolvida em
+		// runtime por `resolveTtlEntry`, não em formato). `validateForm` cobre
+		// exatamente essa regra (e a mesma mutual-exclusão), com mensagem em
+		// português — Fix 1 da Rodada 1.
+		const errors = [
+			...validateForm(form).map((e) => e.message),
+			...validateConfig(mode, config),
+		];
+		if (mode === "ttl" && form.ttlDefaults.expire) {
+			// A unidade ('m' sozinho proibido, por ambíguo minuto/mês) só é
+			// validada pelo formato de `parseDuration` — reaproveitado aqui em vez
+			// de duplicar o regex.
+			try {
+				parseDuration(form.ttlDefaults.expire);
+			} catch (err) {
+				errors.push(err instanceof Error ? err.message : String(err));
+			}
+		}
 		if (errors.length > 0) {
 			setSubmitErrors(errors);
 			return;
@@ -443,6 +487,25 @@ export function ServiceForm({
 
 	const box = overlayBox(columns, rows);
 	const innerWidth = Math.max(20, box.width - 4);
+
+	// Fix 2 (Rodada 1): o `Box` do ink 7 não recorta o próprio conteúdo — com 12
+	// a 15 campos num overlay de terminal baixo, desenhar linha a mais não CORTA
+	// a saída, CORROMPE o frame (mesmo motivo documentado em `layout.ts` e já
+	// tratado assim em `ServicesPanel`). `listWindow` é o helper existente da
+	// Task 11; duas passadas porque reservar 1 linha por indicador (▲/▼) pode,
+	// ele mesmo, estourar a altura calculada na 1ª passada.
+	const fieldAreaHeight = Math.max(3, box.height - 4);
+	const provisionalWin = listWindow(fields.length, fieldAreaHeight, cur);
+	const reserved =
+		(provisionalWin.start > 0 ? 1 : 0) +
+		(provisionalWin.end < fields.length ? 1 : 0);
+	const fieldWin =
+		reserved > 0
+			? listWindow(fields.length, Math.max(1, fieldAreaHeight - reserved), cur)
+			: provisionalWin;
+	const fieldRows = fields
+		.slice(fieldWin.start, fieldWin.end)
+		.map((id, i) => ({ id, index: fieldWin.start + i }));
 
 	if (askStep) {
 		return (
@@ -556,11 +619,14 @@ export function ServiceForm({
 				/>
 			) : (
 				<Box flexDirection="column">
-					{fields.map((id, i) => (
+					{fieldWin.start > 0 ? (
+						<Text color={theme.muted}>▲ +{fieldWin.start} acima</Text>
+					) : null}
+					{fieldRows.map(({ id, index }) => (
 						<FieldRow
 							key={id}
 							id={id}
-							active={i === cur}
+							active={index === cur}
 							editing={editing === id}
 							width={innerWidth}
 							name={name}
@@ -611,13 +677,19 @@ export function ServiceForm({
 							availability={availability}
 							boot={boot}
 							onOpen={() => {
-								setCursor(i);
+								setCursor(index);
 								if (id === "boot") toggleBoot();
+								else if (id === "ttlDeriveFromId") toggleDeriveFromId();
 								else openEditor(id);
 							}}
 							onCloseEditor={closeEditor}
 						/>
 					))}
+					{fieldWin.end < fields.length ? (
+						<Text color={theme.muted}>
+							▼ +{fields.length - fieldWin.end} abaixo
+						</Text>
+					) : null}
 				</Box>
 			)}
 		</Overlay>
@@ -904,6 +976,23 @@ function displayFor(props: {
 						: "muted",
 				reason,
 			};
+		case "ttlField":
+			return form.ttlDefaults.deriveFromId
+				? { value: "— (usando derivar do _id)", tone: "muted" }
+				: {
+						value: form.ttlDefaults.field || "—",
+						tone: form.ttlDefaults.field ? undefined : "muted",
+					};
+		case "ttlDeriveFromId":
+			return {
+				value: form.ttlDefaults.deriveFromId ? "sim" : "não",
+				tone: form.ttlDefaults.deriveFromId ? "ok" : "muted",
+			};
+		case "ttlExpire":
+			return {
+				value: form.ttlDefaults.expire || "—",
+				tone: form.ttlDefaults.expire ? undefined : "muted",
+			};
 		case "backend":
 			return { value: backend };
 		case "boot": {
@@ -1061,6 +1150,49 @@ function EditorFor(props: {
 						});
 						props.onCloseEditor();
 					}}
+				/>
+			);
+
+		case "ttlField":
+			// `field` e `deriveFromId` são mutuamente exclusivos (schema em
+			// `types/parseYml.ts`): digitar um nome aqui DESLIGA `deriveFromId`,
+			// mesmo padrão de `wizard/AdvancedStep.tsx`.
+			return (
+				<TextInput
+					value={props.form.ttlDefaults.field ?? ""}
+					onChange={(field) =>
+						props.updateForm({
+							ttlDefaults: {
+								...props.form.ttlDefaults,
+								field: field || undefined,
+								deriveFromId: field
+									? false
+									: props.form.ttlDefaults.deriveFromId,
+							},
+						})
+					}
+					onSubmit={props.onCloseEditor}
+					focus
+					placeholder="createdAt (campo Date existente que ancora o TTL)"
+				/>
+			);
+
+		case "ttlExpire":
+			return (
+				<TextInput
+					value={props.form.ttlDefaults.expire ?? ""}
+					onChange={(expire) =>
+						props.updateForm({
+							ttlDefaults: {
+								...props.form.ttlDefaults,
+								expire: expire || undefined,
+							},
+						})
+					}
+					onSubmit={props.onCloseEditor}
+					focus
+					// 'm' sozinho é proibido (ambíguo minuto/mês) — use min ou mo.
+					placeholder="30d, 6mo, 1h… ('m' sozinho é proibido: use min ou mo)"
 				/>
 			);
 

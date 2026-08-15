@@ -21,6 +21,9 @@ export type FieldId =
 	| "collections"
 	| "views"
 	| "indexes"
+	| "ttlField"
+	| "ttlDeriveFromId"
+	| "ttlExpire"
 	| "backend"
 	| "boot";
 
@@ -35,14 +38,20 @@ export const FIELD_LABEL: Record<FieldId, string> = {
 	collections: "collections",
 	views: "views",
 	indexes: "índices",
+	ttlField: "ttl.campo",
+	ttlDeriveFromId: "ttl.derivar do _id",
+	ttlExpire: "ttl.duração",
 	backend: "backend",
 	boot: "boot",
 };
 
 /**
- * Campos visíveis pro modo atual — SEMPRE os mesmos 12, menos os que não
- * existem ESTRUTURALMENTE naquele modo (ttl não tem destino; migrate não
- * escolhe view/índice, o mongorestore leva o que existe sempre).
+ * Campos visíveis pro modo atual — os mesmos 12 da task original, mais os 3
+ * de TTL (Fix 1 da Rodada 1: o modo `ttl` estava na tela sem como resolver
+ * `defaults.field`/`deriveFromId`/`expire`, e `validateConfig` sempre recusa
+ * um `ttl` sem âncora de data — modo oferecido e inalcançável é pior que
+ * ausente). Cada bloco é excluído ESTRUTURALMENTE por modo (ttl não tem
+ * destino nem view/índice; sync/migrate não têm `defaults` de ttl).
  *
  * Isto é diferente de "campo que depende de algo ainda não preenchido" (ex.:
  * `collections` sem conexão): esse caso o componente trata como campo
@@ -54,6 +63,7 @@ export function visibleFields(mode: TuiMode): FieldId[] {
 	if (mode !== "ttl") fields.push("destUri", "destDb");
 	fields.push("collections");
 	if (mode === "sync") fields.push("views", "indexes");
+	if (mode === "ttl") fields.push("ttlField", "ttlDeriveFromId", "ttlExpire");
 	fields.push("backend", "boot");
 	return fields;
 }
