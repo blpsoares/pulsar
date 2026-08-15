@@ -52,12 +52,15 @@ describe("keys", () => {
 			expect(hintsFor(layer).length).toBeGreaterThan(0);
 	});
 
-	test("a barra mostra menos teclas do que a ajuda", () => {
-		// É a razão de o `?` existir: a barra não cabe tudo.
-		for (const layer of LAYERS) {
-			const naAjuda = helpFor(layer).flatMap((g) => g.keys).length;
-			expect(hintsFor(layer).length).toBeLessThanOrEqual(naAjuda);
-		}
+	test("toda camada tem tecla que só aparece na ajuda", () => {
+		// Comparar contra o total da AJUDA (que sempre soma as 3 globais, que
+		// nunca são `primary`) tornaria a asserção verdadeira para qualquer
+		// dado — inclusive se TODA tecla da camada virasse `primary`, cenário
+		// em que a barra tentaria mostrar tudo e o `?` perderia a razão de
+		// existir. Por isso a comparação é contra `KEYS[layer]` (só as teclas
+		// da própria camada, sem as globais).
+		for (const layer of LAYERS)
+			expect(hintsFor(layer).length).toBeLessThan(KEYS[layer].length);
 	});
 
 	test("nenhuma tecla duplicada dentro da mesma camada", () => {
