@@ -54,3 +54,34 @@ export function layout(columns: number, rows: number): Layout {
 		narrow,
 	};
 }
+
+/** Abaixo disto, moldura centralizada deixaria conteúdo ilegível. */
+const OVERLAY_MIN_COLUMNS = 60;
+/** Fração da tela que o overlay ocupa quando há espaço de sobra. */
+const OVERLAY_RATIO = 0.8;
+
+export type OverlayBox = {
+	width: number;
+	height: number;
+	marginLeft: number;
+	marginTop: number;
+};
+
+/**
+ * Geometria da caixa flutuante.
+ *
+ * Separada do componente pela mesma razão que `layout()`: é a conta que decide
+ * se o formulário respira ou não, e testá-la exige zero React.
+ */
+export function overlayBox(columns: number, rows: number): OverlayBox {
+	const full = columns < OVERLAY_MIN_COLUMNS;
+	const width = full ? columns : Math.round(columns * OVERLAY_RATIO);
+	const height = Math.max(6, Math.min(rows, Math.round(rows * OVERLAY_RATIO)));
+
+	return {
+		width,
+		height,
+		marginLeft: Math.floor((columns - width) / 2),
+		marginTop: Math.floor((rows - height) / 2),
+	};
+}
