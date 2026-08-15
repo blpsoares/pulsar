@@ -13,7 +13,7 @@ import {
 	KEYS,
 	type Layer,
 } from "../src/tui/keys";
-import { overlayBox } from "../src/tui/layout";
+import { listWindow, overlayBox } from "../src/tui/layout";
 
 describe("overlayBox", () => {
 	test("centraliza a caixa com margem no terminal largo", () => {
@@ -40,6 +40,70 @@ describe("overlayBox", () => {
 			const box = overlayBox(cols, rows);
 			expect(box.width + box.marginLeft).toBeLessThanOrEqual(cols);
 			expect(box.height + box.marginTop).toBeLessThanOrEqual(rows);
+		}
+	});
+});
+
+describe("listWindow", () => {
+	test("lista menor que a altura mostra tudo, começando em 0", () => {
+		const win = listWindow(5, 20, 2);
+		expect(win).toEqual({ start: 0, end: 5 });
+	});
+
+	test("cursor no fim de uma lista longa fica dentro da janela", () => {
+		const total = 500;
+		const height = 10;
+		const cursor = total - 1;
+		const win = listWindow(total, height, cursor);
+		expect(cursor).toBeGreaterThanOrEqual(win.start);
+		expect(cursor).toBeLessThan(win.end);
+	});
+
+	test("cursor no começo de uma lista longa fica dentro da janela", () => {
+		const win = listWindow(500, 10, 0);
+		expect(0).toBeGreaterThanOrEqual(win.start);
+		expect(0).toBeLessThan(win.end);
+	});
+
+	test("cursor no meio, rolando para baixo e para cima, nunca sai da janela", () => {
+		const total = 200;
+		const height = 8;
+
+		for (let cursor = 0; cursor < total; cursor++) {
+			const win = listWindow(total, height, cursor);
+			expect(cursor).toBeGreaterThanOrEqual(win.start);
+			expect(cursor).toBeLessThan(win.end);
+		}
+
+		// e voltando (rolar para cima) — mesma invariante, sem estado entre chamadas
+		for (let cursor = total - 1; cursor >= 0; cursor--) {
+			const win = listWindow(total, height, cursor);
+			expect(cursor).toBeGreaterThanOrEqual(win.start);
+			expect(cursor).toBeLessThan(win.end);
+		}
+	});
+
+	test("start nunca negativo e end nunca maior que total", () => {
+		for (const [total, height] of [
+			[0, 10],
+			[1, 10],
+			[10, 10],
+			[10, 3],
+			[500, 24],
+			[500, 0],
+		] as const) {
+			for (const cursor of [
+				0,
+				Math.floor(total / 2),
+				total - 1,
+				total + 5,
+				-5,
+			]) {
+				const win = listWindow(total, height, cursor);
+				expect(win.start).toBeGreaterThanOrEqual(0);
+				expect(win.end).toBeLessThanOrEqual(total);
+				expect(win.start).toBeLessThanOrEqual(win.end);
+			}
 		}
 	});
 });

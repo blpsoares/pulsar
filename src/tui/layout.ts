@@ -85,3 +85,42 @@ export function overlayBox(columns: number, rows: number): OverlayBox {
 		marginTop: Math.floor((rows - height) / 2),
 	};
 }
+
+export type Window = { start: number; end: number };
+
+/**
+ * Fatia visível de uma lista cujo CURSOR deve permanecer sempre à vista.
+ *
+ * Diferente do `scrollWindow` de tela de log (que ancora no FIM do conteúdo,
+ * como um `tail -f`), esta janela SEGUE o cursor: sobe quando ele sai por
+ * cima, desce quando ele sai por baixo, e não se move enquanto ele segue
+ * dentro dela — é o que evita a janela "pular" a cada tecla de navegação.
+ *
+ * Existe porque o `Box` do ink 7 não recorta o próprio conteúdo (não há
+ * `overflow: hidden` que funcione): desenhar mais linhas do que cabem no
+ * terminal não corta a saída, CORROMPE o frame — o ink não consegue subir o
+ * cursor o bastante para apagar o quadro anterior. Numa lista maior que a
+ * tela, é obrigatório recortar os dados ANTES de renderizar.
+ */
+export function listWindow(
+	total: number,
+	height: number,
+	cursor: number,
+): Window {
+	if (total <= 0) return { start: 0, end: 0 };
+	// Altura zero/negativa (terminal minúsculo) não pode virar janela invertida.
+	const size = Math.max(0, Math.min(height, total));
+	if (size <= 0) return { start: 0, end: 0 };
+
+	// Cursor fora dos limites (lista mudou de tamanho sob o pé do usuário) é
+	// grampeado antes de decidir a janela — senão `start`/`end` saem do range.
+	const at = Math.max(0, Math.min(total - 1, cursor));
+
+	// Centraliza o cursor na janela quando há folga dos dois lados; perto das
+	// pontas, o `clamp` a seguir gruda a janela no começo/fim da lista em vez
+	// de deixar espaço vazio sobrando.
+	const centered = at - Math.floor((size - 1) / 2);
+	const start = Math.max(0, Math.min(total - size, centered));
+
+	return { start, end: start + size };
+}

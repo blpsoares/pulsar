@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { discoverServices } from "../../core/service/discover";
 import { reconcile, type ServiceRow } from "../../core/state/reconcile";
 import { listRecords } from "../../core/state/registry";
+import { listWindow } from "../layout";
 import { useClickable } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
 import { theme } from "../theme";
@@ -130,9 +131,39 @@ export function ServicesPanel({
 		{ isActive: enabled },
 	);
 
+	// O `Box` do ink 7 não recorta o próprio conteúdo — desenhar mais linhas do
+	// que cabem no terminal não corta a saída, CORROMPE o frame (o ink não
+	// consegue subir o cursor o bastante para apagar o quadro anterior).
+	// Por isso a lista é fatiada ANTES de renderizar, com `listWindow` (pura,
+	// testada em test/tuiKeys.test.ts), e não confiada ao layout do terminal.
+	// Calculada mesmo nos estados de "carregando"/"vazio" (devolve janela vazia
+	// sem custo) para o `useClickable` logo abaixo poder ficar ANTES dos
+	// `return` antecipados — hooks não podem ser condicionais.
+	//
+	// Duas passadas: a 1ª decide a janela usando a altura cheia; se ela deixar
+	// itens de fora, reserva-se 1 linha por indicador (acima/abaixo) e a janela
+	// é recalculada com a altura reduzida — senão o indicador em si estouraria
+	// a altura disponível.
+	const provisional = listWindow(rows.length, screenRows, cursor);
+	const reserved =
+		(provisional.start > 0 ? 1 : 0) + (provisional.end < rows.length ? 1 : 0);
+	const win =
+		reserved > 0
+			? listWindow(rows.length, Math.max(1, screenRows - reserved), cursor)
+			: provisional;
+	const hasMoreAbove = win.start > 0;
+	const hasMoreBelow = win.end < rows.length;
+	const visible = rows.slice(win.start, win.end);
+
 	const listRef = useClickable({
 		onClick: ({ row }) => {
-			const index = row - 1;
+			// Não há linha de título dentro do `Box` abaixo (diferente de
+			// `ActionMenu`/`Home`, onde a linha 0 é um título) — a linha 0 do
+			// clique JÁ é o primeiro `Row` visível. Soma `win.start` para voltar
+			// ao índice absoluto na lista completa (a janela pode estar rolada).
+			// Não "padronize" de volta para `row - 1`: aqui isso erra o primeiro
+			// item (index -1) e desloca todo clique para o anterior.
+			const index = win.start + row;
 			if (index >= 0 && index < rows.length) {
 				setCursor(index);
 				const target = rows[index];
@@ -158,16 +189,24 @@ export function ServicesPanel({
 			</Box>
 		);
 
-	// screenRows não decide quantas linhas desenhar aqui: a lista cresce dentro
-	// do painel (Task 15 cuida do scroll/altura, como o ConfigTree já faz para
-	// a lista de configs). Mantido na assinatura por ser o contrato do brief.
-	void screenRows;
-
 	return (
-		<Box ref={listRef} flexDirection="column">
-			{rows.map((row, i) => (
-				<Row key={row.name} row={row} width={columns} selected={i === cursor} />
-			))}
+		<Box flexDirection="column">
+			{hasMoreAbove ? (
+				<Text color={theme.muted}>▲ +{win.start} acima</Text>
+			) : null}
+			<Box ref={listRef} flexDirection="column">
+				{visible.map((row, i) => (
+					<Row
+						key={row.name}
+						row={row}
+						width={columns}
+						selected={win.start + i === cursor}
+					/>
+				))}
+			</Box>
+			{hasMoreBelow ? (
+				<Text color={theme.muted}>▼ +{rows.length - win.end} abaixo</Text>
+			) : null}
 		</Box>
 	);
 }
