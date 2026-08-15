@@ -6,6 +6,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import {
+	GLOBAL_KEYS,
+	helpFor,
+	hintsFor,
+	KEYS,
+	type Layer,
+} from "../src/tui/keys";
 import { overlayBox } from "../src/tui/layout";
 
 describe("overlayBox", () => {
@@ -33,6 +40,46 @@ describe("overlayBox", () => {
 			const box = overlayBox(cols, rows);
 			expect(box.width + box.marginLeft).toBeLessThanOrEqual(cols);
 			expect(box.height + box.marginTop).toBeLessThanOrEqual(rows);
+		}
+	});
+});
+
+const LAYERS: Layer[] = ["list", "detail", "form", "logs"];
+
+describe("keys", () => {
+	test("toda camada declara pelo menos uma tecla primária", () => {
+		for (const layer of LAYERS)
+			expect(hintsFor(layer).length).toBeGreaterThan(0);
+	});
+
+	test("a barra mostra menos teclas do que a ajuda", () => {
+		// É a razão de o `?` existir: a barra não cabe tudo.
+		for (const layer of LAYERS) {
+			const naAjuda = helpFor(layer).flatMap((g) => g.keys).length;
+			expect(hintsFor(layer).length).toBeLessThanOrEqual(naAjuda);
+		}
+	});
+
+	test("nenhuma tecla duplicada dentro da mesma camada", () => {
+		for (const layer of LAYERS) {
+			const keys = KEYS[layer].map((k) => k.keys);
+			expect(new Set(keys).size).toBe(keys.length);
+		}
+	});
+
+	test("camada nenhuma redefine uma tecla global", () => {
+		// `ctrl+d` sair e `?` ajuda precisam significar a mesma coisa em todo lugar.
+		const globais = new Set(GLOBAL_KEYS.map((k) => k.keys));
+		for (const layer of LAYERS)
+			for (const binding of KEYS[layer])
+				expect(globais.has(binding.keys)).toBe(false);
+	});
+
+	test("a ajuda de toda camada termina com as globais", () => {
+		for (const layer of LAYERS) {
+			const grupos = helpFor(layer);
+			expect(grupos.at(-1)?.group).toBe("sempre");
+			expect(grupos.at(-1)?.keys).toEqual(GLOBAL_KEYS);
 		}
 	});
 });
