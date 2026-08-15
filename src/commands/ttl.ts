@@ -101,10 +101,16 @@ export async function ttlCommand(
 	const serviceName = serviceNameFromEnv();
 	if (serviceName) beginRun(serviceName);
 
-	const client = await conn(plan.uri, "ttl");
-	const db = client.db(plan.db);
+	// client é declarado fora do try (precisa existir pro `finally` fechar a
+	// conexão), mas a ATRIBUIÇÃO entra no try: sem isso, um ECONNREFUSED aqui
+	// deixava o registro preso em "running" pra sempre (beginRun já rodou logo
+	// acima, e nada chamava finishRun de erro nesse trecho).
+	let client: Awaited<ReturnType<typeof conn>> | undefined;
 
 	try {
+		client = await conn(plan.uri, "ttl");
+		const db = client.db(plan.db);
+
 		// resolve a lista de nomes (suporta --all reusando getCollections)
 		const collectionEntries = await getCollections(
 			db,
@@ -206,7 +212,7 @@ export async function ttlCommand(
 			});
 		throw errorHandler(error, "TTL:COMMAND");
 	} finally {
-		await client.close();
+		await client?.close();
 	}
 }
 

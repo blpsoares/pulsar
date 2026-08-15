@@ -108,58 +108,68 @@ export async function syncCollections(
 		}),
 	);
 
-	const client = await conn(options.command.sync.source.uri, "source");
-	const db = client.db(options.command.sync.source.db);
-
-	const destClient = await conn(
-		options.command.sync.destination.uri,
-		"destination",
-	);
-	const destDb = destClient.db(options.command.sync.destination.db);
-
-	// Shutdown gracioso — registrado ANTES do getCollections/dump, pra que um
-	// sinal no meio da listagem/conexão também feche os clients. Faz o flush
-	// final do resume token (o próximo restart RETOMA em vez de re-dumpar) e
-	// GARANTE a saída: se stop()/close() pendurar (ex.: stream travado no loop
-	// do evento >16MB), o timer força o exit. SIGKILL/OOM não passam por aqui
-	// (kernel não deixa interceptar), mas aí o próprio kernel fecha os sockets
-	// do processo morto → o Atlas recebe RST e derruba a escuta de qualquer jeito.
-	let engine: SyncEngine | null = null;
-	let stopping = false;
-	// Preenchido depois do dump inicial com os mesmos números do painel de
-	// fechamento (`PULSAR · INITIAL SYNC COMPLETE`) — é o que o shutdown grava
-	// no registro quando o serviço para de rodar (SIGINT/SIGTERM).
-	let runStats: RunStats = {};
-	const shutdown = async (signal: string) => {
-		if (stopping) return;
-		stopping = true;
-		customLog("warn", t("sync.shutdown_received", { signal }), true);
-		// Teto do shutdown: generoso o bastante p/ o flush concluir mesmo com rede
-		// degradada na preempção (ACPI dá ~2 min), mas bounded p/ nunca pendurar
-		// (ex.: stream travado no loop do evento >16MB). Configurável por env.
-		const shutdownMs = Number(process.env.PULSAR_SHUTDOWN_TIMEOUT_MS) || 30000;
-		const forced = setTimeout(() => {
-			customLog("error", t("sync.shutdown_exceeded", { shutdownMs }), true);
-			process.exit(1);
-		}, shutdownMs);
-		forced.unref?.();
-		try {
-			stopStatusReporter();
-			stopWatchHeartbeat();
-			await engine?.stop();
-			await client.close().catch(() => {});
-			await destClient.close().catch(() => {});
-		} finally {
-			if (serviceName)
-				finishRun(serviceName, { status: "ok", exitCode: 0, stats: runStats });
-			clearTimeout(forced);
-			process.exit(0);
-		}
-	};
-	process.once("SIGINT", () => void shutdown("SIGINT"));
-	process.once("SIGTERM", () => void shutdown("SIGTERM"));
-
+	// try/catch único a partir daqui: cobre também a conexão (origem/destino),
+	// que antes ficava ANTES do try — sem isso, um ECONNREFUSED na conexão
+	// deixava o registro preso em "running" pra sempre (beginRun já rodou lá em
+	// cima, e nada chamava finishRun de erro nesse trecho). Mesma ordem/lógica
+	// de antes, só a fronteira do try/catch mudou.
 	try {
+		const client = await conn(options.command.sync.source.uri, "source");
+		const db = client.db(options.command.sync.source.db);
+
+		const destClient = await conn(
+			options.command.sync.destination.uri,
+			"destination",
+		);
+		const destDb = destClient.db(options.command.sync.destination.db);
+
+		// Shutdown gracioso — registrado ANTES do getCollections/dump, pra que um
+		// sinal no meio da listagem/conexão também feche os clients. Faz o flush
+		// final do resume token (o próximo restart RETOMA em vez de re-dumpar) e
+		// GARANTE a saída: se stop()/close() pendurar (ex.: stream travado no loop
+		// do evento >16MB), o timer força o exit. SIGKILL/OOM não passam por aqui
+		// (kernel não deixa interceptar), mas aí o próprio kernel fecha os sockets
+		// do processo morto → o Atlas recebe RST e derruba a escuta de qualquer jeito.
+		let engine: SyncEngine | null = null;
+		let stopping = false;
+		// Preenchido depois do dump inicial com os mesmos números do painel de
+		// fechamento (`PULSAR · INITIAL SYNC COMPLETE`) — é o que o shutdown grava
+		// no registro quando o serviço para de rodar (SIGINT/SIGTERM).
+		let runStats: RunStats = {};
+		const shutdown = async (signal: string) => {
+			if (stopping) return;
+			stopping = true;
+			customLog("warn", t("sync.shutdown_received", { signal }), true);
+			// Teto do shutdown: generoso o bastante p/ o flush concluir mesmo com rede
+			// degradada na preempção (ACPI dá ~2 min), mas bounded p/ nunca pendurar
+			// (ex.: stream travado no loop do evento >16MB). Configurável por env.
+			const shutdownMs =
+				Number(process.env.PULSAR_SHUTDOWN_TIMEOUT_MS) || 30000;
+			const forced = setTimeout(() => {
+				customLog("error", t("sync.shutdown_exceeded", { shutdownMs }), true);
+				process.exit(1);
+			}, shutdownMs);
+			forced.unref?.();
+			try {
+				stopStatusReporter();
+				stopWatchHeartbeat();
+				await engine?.stop();
+				await client.close().catch(() => {});
+				await destClient.close().catch(() => {});
+			} finally {
+				if (serviceName)
+					finishRun(serviceName, {
+						status: "ok",
+						exitCode: 0,
+						stats: runStats,
+					});
+				clearTimeout(forced);
+				process.exit(0);
+			}
+		};
+		process.once("SIGINT", () => void shutdown("SIGINT"));
+		process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
 		const collections = await getCollections(
 			db,
 			cliParams,
