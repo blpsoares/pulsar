@@ -3,11 +3,17 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Chalk } from "chalk";
+import type { DiscoveredService } from "../src/core/service/discover";
 import {
 	adoptFromDocker,
 	adoptFromSystemd,
 	parseExecStart,
 } from "../src/core/state/adopt";
+import {
+	isOneShot,
+	reconcile,
+	type ServiceRow,
+} from "../src/core/state/reconcile";
 import {
 	CREATED_BY_TUI,
 	listRecords,
@@ -279,5 +285,119 @@ describe("adopt", () => {
 		expect(record?.mode).toBe("sync");
 		expect(record?.backend).toBe("docker");
 		expect(record?.createdBy).toBe("adotado");
+	});
+});
+
+describe("reconcile", () => {
+	// Helpers para os testes de reconciliação.
+	const live = (over: Partial<DiscoveredService>): DiscoveredService => ({
+		backend: "systemd",
+		name: "pulsar-ads",
+		running: true,
+		enabled: true,
+		...over,
+	});
+
+	function stateOf(rows: ServiceRow[], name: string) {
+		return rows.find((r) => r.name === name)?.state;
+	}
+
+	test("registro + supervisor no ar", () => {
+		const rows = reconcile([base], [live({})]);
+		expect(stateOf(rows, "pulsar-ads")).toBe("running");
+	});
+
+	test("registro + supervisor parado", () => {
+		const rows = reconcile([base], [live({ running: false })]);
+		expect(stateOf(rows, "pulsar-ads")).toBe("stopped");
+	});
+
+	test("supervisor sem registro vira adotado", () => {
+		const rows = reconcile([], [live({ name: "pulsar-orfao" })]);
+		expect(stateOf(rows, "pulsar-orfao")).toBe("adopted");
+		expect(rows[0]?.record).toBeNull();
+	});
+
+	test("registro sem supervisor vira não instalado", () => {
+		const rows = reconcile([base], []);
+		expect(stateOf(rows, "pulsar-ads")).toBe("uninstalled");
+	});
+
+	test("one-shot parado com lastRun ok é 'concluído', não 'parado'", () => {
+		// A diferença que o usuário pediu: migrate que terminou não é "parado".
+		const record = {
+			...base,
+			name: "pulsar-migra",
+			mode: "migrate" as const,
+			lastRun: {
+				startedAt: "2026-08-15T10:00:00Z",
+				endedAt: "2026-08-15T10:45:00Z",
+				status: "ok" as const,
+				exitCode: 0,
+				stats: { docs: 10 },
+				error: null,
+			},
+		};
+		const rows = reconcile(
+			[record],
+			[live({ name: "pulsar-migra", running: false })],
+		);
+		expect(stateOf(rows, "pulsar-migra")).toBe("done");
+	});
+
+	test("one-shot parado com lastRun de erro é 'falhou'", () => {
+		const record = {
+			...base,
+			name: "pulsar-migra",
+			mode: "migrate" as const,
+			lastRun: {
+				startedAt: "2026-08-15T10:00:00Z",
+				endedAt: "2026-08-15T10:05:00Z",
+				status: "error" as const,
+				exitCode: 1,
+				stats: {},
+				error: "ECONNREFUSED",
+			},
+		};
+		const rows = reconcile(
+			[record],
+			[live({ name: "pulsar-migra", running: false })],
+		);
+		expect(stateOf(rows, "pulsar-migra")).toBe("failed");
+	});
+
+	test("sync parado continua 'parado' mesmo com lastRun ok", () => {
+		// sync não "conclui": parar um sync é parar, não terminar.
+		const record = {
+			...base,
+			lastRun: {
+				startedAt: "2026-08-15T10:00:00Z",
+				endedAt: "2026-08-15T10:45:00Z",
+				status: "ok" as const,
+				exitCode: 0,
+				stats: {},
+				error: null,
+			},
+		};
+		expect(
+			stateOf(reconcile([record], [live({ running: false })]), "pulsar-ads"),
+		).toBe("stopped");
+	});
+
+	test("no ar primeiro, depois em ordem de nome", () => {
+		const rows = reconcile(
+			[base, { ...base, name: "pulsar-aaa" }],
+			[
+				live({ name: "pulsar-ads" }),
+				live({ name: "pulsar-aaa", running: false }),
+			],
+		);
+		expect(rows.map((r) => r.name)).toEqual(["pulsar-ads", "pulsar-aaa"]);
+	});
+
+	test("isOneShot", () => {
+		expect(isOneShot("migrate")).toBe(true);
+		expect(isOneShot("ttl")).toBe(true);
+		expect(isOneShot("sync")).toBe(false);
 	});
 });
