@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import type { ServiceStep } from "../src/core/service/types";
 import type { ServiceRecord } from "../src/core/state/registry";
 import {
 	GLOBAL_KEYS,
@@ -21,9 +22,11 @@ import {
 	fieldNeedsSource,
 	formatCommaList,
 	formatIndexesList,
+	manualStepResults,
 	needsSudo,
 	parseCommaList,
 	parseIndexesList,
+	resolveFinalBoot,
 	visibleFields,
 } from "../src/tui/screens/serviceFormFields";
 
@@ -379,5 +382,77 @@ describe("serviceFormFields (Task 13 — formulário único)", () => {
 	test("formatIndexesList devolve vazio para true/false (não há o que digitar de volta)", () => {
 		expect(formatIndexesList(true)).toBe("");
 		expect(formatIndexesList(false)).toBe("");
+	});
+
+	// Rodada de review 2: "a lógica mais arriscada é justamente a não
+	// testada" — as duas funções abaixo decidem o que o REGISTRO diz sobre o
+	// boot (requisitos 7 e 8), e antes só viviam inline em `submit()`.
+
+	function step(overrides: Partial<ServiceStep> = {}): ServiceStep {
+		return { cmd: "true", args: [], why: "passo de teste", ...overrides };
+	}
+
+	describe("manualStepResults", () => {
+		test("separa por IDENTIDADE do objeto ServiceStep — não por cmd/nome", () => {
+			const essential = step({ cmd: "systemctl" });
+			const manual = step({ cmd: "pm2", args: ["startup"] });
+			// Outro objeto com o MESMO cmd/args que `manual`, mas não é a mesma
+			// referência — não deve entrar (é assim que `installService` de
+			// verdade identifica: o objeto de `plan.manualSteps` FLUI sem clonar).
+			const lookalike = step({ cmd: "pm2", args: ["startup"] });
+
+			const results = [
+				{ step: essential, ok: true, output: "" },
+				{ step: manual, ok: true, output: "sudo env PATH=... pm2 startup" },
+				{ step: lookalike, ok: true, output: "não deveria contar" },
+			];
+
+			expect(manualStepResults(results, [manual])).toEqual([
+				{ step: manual, ok: true, output: "sudo env PATH=... pm2 startup" },
+			]);
+		});
+
+		test("lista vazia quando nada em `results` é um passo manual", () => {
+			const essential = step();
+			expect(
+				manualStepResults([{ step: essential, ok: true, output: "" }], []),
+			).toEqual([]);
+		});
+	});
+
+	describe("resolveFinalBoot", () => {
+		test("tudo certo: boot pedido, install ok, nada pulado, nenhum manual", () => {
+			expect(resolveFinalBoot(true, true, [], [])).toBe(true);
+		});
+
+		test("boot não pedido: continua false mesmo com tudo certo", () => {
+			expect(resolveFinalBoot(false, true, [], [])).toBe(false);
+		});
+
+		test("instalação NÃO terminou ok (passo essencial falhou): boot false mesmo sem pulado/manual", () => {
+			// É o cenário do Fix 1: o passo essencial falha e o laço quebra ANTES
+			// de chegar nos passos de boot — skippedPrivileged e manual saem
+			// vazios, e mesmo assim não é seguro dizer que o boot ficou pronto.
+			expect(resolveFinalBoot(true, false, [], [])).toBe(false);
+		});
+
+		test("passo com sudo RECUSADO: boot false", () => {
+			expect(resolveFinalBoot(true, true, [step()], [])).toBe(false);
+		});
+
+		test("caso pm2: passo manual RODOU e saiu ok (código 0), mas só imprimiu instrução — boot false", () => {
+			const pm2Startup = step({ cmd: "pm2", args: ["startup"] });
+			const manual = manualStepResults(
+				[
+					{
+						step: pm2Startup,
+						ok: true,
+						output: "sudo env PATH=... pm2 startup",
+					},
+				],
+				[pm2Startup],
+			);
+			expect(resolveFinalBoot(true, true, [], manual)).toBe(false);
+		});
 	});
 });

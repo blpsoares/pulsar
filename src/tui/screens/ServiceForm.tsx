@@ -29,6 +29,7 @@ import {
 	buildPlan,
 	type InstallResult,
 	installService,
+	type StepResult,
 } from "../../core/service/manager";
 import { detectSudo, type SudoMode } from "../../core/service/privileged";
 import type {
@@ -58,9 +59,12 @@ import {
 	fieldNeedsSource,
 	formatCommaList,
 	formatIndexesList,
+	type ManualStepResult,
+	manualStepResults,
 	needsSudo,
 	parseCommaList,
 	parseIndexesList,
+	resolveFinalBoot,
 	visibleFields,
 } from "./serviceFormFields";
 import { CollectionsStep } from "./wizard/CollectionsStep";
@@ -173,9 +177,16 @@ export function ServiceForm({
 	const [installing, setInstalling] = useState(false);
 	const [askStep, setAskStep] = useState<ServiceStep | null>(null);
 	const askResolver = useRef<((ok: boolean) => void) | null>(null);
+	// Uma instalação por vez — `ctrl+s`/`ctrl+o` disparado duas vezes rápido
+	// (dois eventos de tecla antes do 1º `await` resolver) não pode abrir duas
+	// instalações concorrentes.
+	const submitting = useRef(false);
 	const [pending, setPending] = useState<{
+		/** passo ESSENCIAL que falhou — instalação não terminou `ok` (Fix 1, Rodada 2) */
+		failed: StepResult | null;
 		skipped: ServiceStep[];
-		manual: { step: ServiceStep; ok: boolean; output: string }[];
+		manual: ManualStepResult[];
+		notes: string[];
 		draft: ServiceDraft;
 		andStart: boolean;
 	} | null>(null);
@@ -329,14 +340,22 @@ export function ServiceForm({
 	);
 
 	// `esc` fecha o editor dos campos COMPACTOS (TextInput, Select não tratam
-	// escape sozinhos). Os campos LARGOS (collections/views/índices) ficam de
-	// fora de propósito: o picker tem um modo de busca próprio em que `esc`
-	// significa "sair da busca", não "fechar o campo" — um handler genérico
-	// aqui fecharia o editor por baixo do usuário no meio de uma busca.
+	// escape sozinhos). Os campos LARGOS (collections/views/índices) só ficam
+	// de fora QUANDO conectados: aí é o picker de verdade (CollectionsStep etc)
+	// quem está na tela, com um modo de busca próprio em que `esc` significa
+	// "sair da busca", não "fechar o campo" — um handler genérico fecharia o
+	// editor por baixo do usuário no meio de uma busca.
+	//
+	// SEM conexão, porém, o editor desses mesmos campos é só o `TextInput` de
+	// texto livre do `WideEditor` (Requisito 2: "digitar os nomes à mão, sem
+	// Mongo" tem que funcionar até o fim) — e o rodapé dali literalmente
+	// anuncia "esc volta". Sem esta ressalva, `esc` não fazia NADA nesse
+	// caminho: tecla anunciada e sem efeito (Fix 2, Rodada 2).
 	useInput(
 		(input, key) => {
 			if (isMouseInput(input)) return;
-			if (!editing || isWideField(editing)) return;
+			if (!editing) return;
+			if (isWideField(editing) && sourceConnected) return;
 			if (key.escape) closeEditor();
 		},
 		{ isActive: Boolean(editing) },
@@ -358,9 +377,14 @@ export function ServiceForm({
 		{ isActive: Boolean(askStep) },
 	);
 
-	// Relatório final (pendências) — enter/esc fecham e entregam ao chamador.
+	// Relatório final (pendências/falha) — enter/esc fecham e entregam ao
+	// chamador. Faltava o guard de mouse aqui (único dos quatro `useInput` sem
+	// ele — Fix 4, Rodada 2): um chunk de mouse partido pode chegar como `\x1B`
+	// solto, que o ink lê como escape, e fechar o relatório antes da hora — e é
+	// justamente aqui que mora a saída do `pm2 startup` que o Fix 6 preserva.
 	useInput(
-		(_input, key) => {
+		(input, key) => {
+			if (isMouseInput(input)) return;
 			if (!pending) return;
 			if (key.return || key.escape) {
 				const { draft, andStart } = pending;
@@ -379,6 +403,21 @@ export function ServiceForm({
 	}
 
 	async function submit(andStart: boolean) {
+		// Fix 7 (Rodada 2): `ctrl+s` duas vezes rápido dispara `submit` duas
+		// vezes antes do 1º `await` resolver — sem este guard, isso abria duas
+		// instalações concorrentes do mesmo serviço. A checagem/gravação é
+		// SÍNCRONA (antes de qualquer `await`), então a 2ª chamada vê o ref já
+		// marcado e sai na hora.
+		if (submitting.current) return;
+		submitting.current = true;
+		try {
+			await doSubmit(andStart);
+		} finally {
+			submitting.current = false;
+		}
+	}
+
+	async function doSubmit(andStart: boolean) {
 		const config = buildConfig(form, preserved);
 		// `validateConfig` (Zod) sozinho NÃO barra um `ttl` sem `field`/
 		// `deriveFromId`/`expire` — o schema declara os três como opcionais
@@ -430,7 +469,11 @@ export function ServiceForm({
 		};
 
 		if (!andStart) {
-			writeRecord(recordFor(draft, initial));
+			// Fix 3 (Rodada 2): o registro sempre descreve ESTE `dir` — é onde
+			// `spec.workingDir` aponta (logo abaixo) e onde `ecosystemPath`/
+			// `composePath` gravam os arquivos do serviço. `initial.workingDir`
+			// nunca foi usado aqui de propósito.
+			writeRecord(recordFor(draft, dir, initial));
 			onSubmit(draft, false);
 			return;
 		}
@@ -457,25 +500,38 @@ export function ServiceForm({
 		});
 		setInstalling(false);
 
-		// `boot: false` gravado quando algum passo com sudo foi recusado — o boot
-		// REALMENTE não ficou habilitado, e o registro tem que descrever a
-		// realidade, não uma promessa. Não existe campo "pendente": ou está
-		// ligado, ou não está.
-		const finalBoot = boot && result.skippedPrivileged.length === 0;
+		const manual = manualStepResults(result.results, plan.manualSteps);
+		// `boot: false` gravado quando a instalação NÃO terminou `ok` (passo
+		// essencial falhou — os passos de boot nem rodaram), quando algum passo
+		// com sudo foi recusado, ou quando existiu QUALQUER passo manual (mesmo
+		// saindo com código 0, pode ter só IMPRESSO instrução — ver
+		// `resolveFinalBoot`). O boot REALMENTE não ficou habilitado nesses
+		// casos, e o registro tem que descrever a realidade, não uma promessa.
+		const finalBoot = resolveFinalBoot(
+			boot,
+			result.ok,
+			result.skippedPrivileged,
+			manual,
+		);
 		const finalDraft: ServiceDraft = { ...draft, boot: finalBoot };
-		writeRecord(recordFor(finalDraft, initial));
+		writeRecord(recordFor(finalDraft, dir, initial));
 
-		// Passo manual que RODOU mas só imprimiu instrução (ex.: `pm2 startup`,
-		// que é `privileged: true` sem precisar de sudo de verdade) também entra
-		// no relatório — `ok: true` ali não quer dizer "boot pronto".
-		const manual = result.results
-			.filter((r) => plan.manualSteps.includes(r.step))
-			.map((r) => ({ step: r.step, ok: r.ok, output: r.output }));
+		// Fix 1 (Rodada 2): `result.ok === false` (passo ESSENCIAL falhou, ex.:
+		// `systemctl --user start` ou `docker compose up --build` estourando o
+		// teto) não pode virar "start bem-sucedido" só porque nada ficou
+		// pulado/manual — muitas vezes é o OPOSTO: a falha interrompe o laço
+		// ANTES de chegar nos passos de boot, então `skippedPrivileged`/`manual`
+		// saem vazios mesmo a instalação tendo falhado. O passo que falhou é
+		// sempre o ÚLTIMO de `result.results` quando `!result.ok` — o loop em
+		// `manager.ts` grava o resultado e quebra na sequência, nunca depois.
+		const failed = result.ok ? null : (result.results.at(-1) ?? null);
 
-		if (result.skippedPrivileged.length > 0 || manual.length > 0) {
+		if (failed || result.skippedPrivileged.length > 0 || manual.length > 0) {
 			setPending({
+				failed,
 				skipped: result.skippedPrivileged,
 				manual,
+				notes: plan.notes,
 				draft: finalDraft,
 				andStart: true,
 			});
@@ -544,7 +600,30 @@ export function ServiceForm({
 
 	if (pending)
 		return (
-			<Overlay title="ficou pendente" columns={columns} rows={rows}>
+			<Overlay
+				title={pending.failed ? "instalação falhou" : "ficou pendente"}
+				columns={columns}
+				rows={rows}
+			>
+				{pending.failed ? (
+					<Box flexDirection="column" marginBottom={1}>
+						<Text color={theme.error} wrap="wrap">
+							✖ passo essencial falhou — o serviço NÃO foi instalado
+						</Text>
+						<Text wrap="wrap">
+							<Text color={theme.label}>
+								{pending.failed.step.cmd} {pending.failed.step.args.join(" ")}
+							</Text>
+							<Text color={theme.muted}> — {pending.failed.step.why}</Text>
+						</Text>
+						{pending.failed.output ? (
+							<Text color={theme.muted} wrap="wrap">
+								{"  "}
+								{pending.failed.output.split("\n").slice(-6).join("\n  ")}
+							</Text>
+						) : null}
+					</Box>
+				) : null}
 				{pending.skipped.length > 0 ? (
 					<Box flexDirection="column" marginBottom={1}>
 						<Text color={theme.warn}>─ pulados (sudo recusado) ─</Text>
@@ -579,6 +658,15 @@ export function ServiceForm({
 									</Text>
 								) : null}
 							</Box>
+						))}
+					</Box>
+				) : null}
+				{pending.notes.length > 0 ? (
+					<Box flexDirection="column" marginTop={1}>
+						{pending.notes.map((n) => (
+							<Text key={n} color={theme.muted} wrap="wrap">
+								· {n}
+							</Text>
 						))}
 					</Box>
 				) : null}
@@ -643,6 +731,11 @@ export function ServiceForm({
 								closeEditor();
 								if (value === HERE) {
 									setConfigPath("");
+									// Fix 8 (Rodada 2): sem isto, `preserved` (os filtros do
+									// yml anterior, indexados por nome de collection) sobrevivia
+									// à troca e `buildConfig` os mesclava de volta num arquivo
+									// NOVO que nunca teve esses filtros.
+									setPreserved(undefined);
 									return;
 								}
 								// `value` já vem relativo a `dir` (é como `detectConfigs`
@@ -696,15 +789,24 @@ export function ServiceForm({
 	);
 }
 
+/**
+ * `workingDir` é sempre `dir` (o diretório desta sessão da TUI) — nunca
+ * `initial.workingDir` (Fix 3, Rodada 2). Todas as outras telas registram
+ * `dir`, e é ele que `spec.workingDir` usa alguns passos acima: divergir
+ * aqui deixaria o registro descrevendo uma pasta diferente daquela onde a
+ * unit/ecosystem/compose foram de fato gravados (`ecosystemPath`/
+ * `composePath` são `join(spec.workingDir, …)`).
+ */
 function recordFor(
 	draft: ServiceDraft,
+	dir: string,
 	initial?: ServiceRecord,
 ): ServiceRecord {
 	return {
 		name: draft.name,
 		mode: draft.mode,
 		config: draft.configPath,
-		workingDir: initial?.workingDir ?? process.cwd(),
+		workingDir: dir,
 		backend: draft.backend,
 		boot: draft.boot,
 		createdBy: initial?.createdBy ?? CREATED_BY_TUI,

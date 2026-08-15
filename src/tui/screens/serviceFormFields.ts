@@ -1,5 +1,6 @@
 import type { TuiMode } from "../../core/inspect/summary";
-import type { Backend } from "../../core/service/types";
+import type { StepResult } from "../../core/service/execStep";
+import type { Backend, ServiceStep } from "../../core/service/types";
 import type { CopyIndexesOption } from "../../types/parseYml";
 
 /**
@@ -140,4 +141,59 @@ export function formatIndexesList(value: CopyIndexesOption): string {
 			entry.indexes.map((idx) => `${entry.collection}.${idx}`),
 		)
 		.join(", ");
+}
+
+export type ManualStepResult = {
+	step: ServiceStep;
+	ok: boolean;
+	output: string;
+};
+
+/**
+ * Isola os resultados dos passos MANUAIS de um `InstallResult` (Rodada 2).
+ *
+ * `installService` (`manager.ts`) roda `plan.steps` e depois, só se `ok`,
+ * `plan.manualSteps` — os DOIS tipos de passo terminam misturados no mesmo
+ * array `results`. O objeto `ServiceStep` que entra em `plan.manualSteps`
+ * FLUI por referência através de `execStep`/`runPrivilegedStep` até o
+ * `StepResult` (`result.step === step`, nunca clonado) — por isso dá pra
+ * identificar "isto era manual" com `includes`, sem precisar de `id`/nome.
+ */
+export function manualStepResults(
+	results: StepResult[],
+	manualSteps: ServiceStep[],
+): ManualStepResult[] {
+	return results
+		.filter((r) => manualSteps.includes(r.step))
+		.map((r) => ({ step: r.step, ok: r.ok, output: r.output }));
+}
+
+/**
+ * `boot` final a gravar no registro — a lógica mais arriscada do form (Rodada
+ * 2), porque errar aqui é o MESMO pecado que motivou o redesenho: afirmar que
+ * algo está configurado quando não está.
+ *
+ * Nunca `true` quando:
+ * - a instalação não terminou `ok` (passo essencial falhou — nada depois dele
+ *   rodou, incluindo os passos de boot);
+ * - algum passo com sudo foi RECUSADO (`skippedPrivileged` não vazio);
+ * - existiu QUALQUER passo manual, mesmo tendo saído com código 0 — um passo
+ *   manual pode ter só IMPRESSO uma instrução (`pm2 startup`, que é
+ *   `privileged: true` sem pedir sudo de verdade) em vez de efetivamente
+ *   configurado o boot, e o registro não tem como distinguir os dois casos.
+ *   Ser conservador aqui é a mesma régua do `needsSudo`: prometer errado é
+ *   pior que avisar demais.
+ */
+export function resolveFinalBoot(
+	requestedBoot: boolean,
+	installOk: boolean,
+	skippedPrivileged: unknown[],
+	manual: ManualStepResult[],
+): boolean {
+	return (
+		requestedBoot &&
+		installOk &&
+		skippedPrivileged.length === 0 &&
+		manual.length === 0
+	);
 }
