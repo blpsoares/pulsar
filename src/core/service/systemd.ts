@@ -103,12 +103,14 @@ export function systemdPlan(spec: ServiceSpec): InstallPlan {
 		// enable-linger normalmente funciona sem sudo (policykit permite ao
 		// próprio usuário), mas em máquina sem polkit cai para o comando manual.
 		steps.splice(1, 0, {
+			id: "linger",
 			cmd: "loginctl",
 			args: ["enable-linger", userInfo().username],
 			why: "permite o serviço subir no boot SEM ninguém fazer login",
 			optional: true,
 		});
 		manualSteps.push({
+			fallbackFor: "linger",
 			cmd: "sudo",
 			args: ["loginctl", "enable-linger", userInfo().username],
 			why: "só se o passo automático de linger tiver falhado acima",

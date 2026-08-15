@@ -145,3 +145,139 @@ describe("installService com passo privilegiado", () => {
 		expect(result.skippedPrivileged).toHaveLength(1);
 	});
 });
+
+describe("installService roda plan.manualSteps (rodada de fix 1/5)", () => {
+	// Sem isto, os três `privileged: true` reais do projeto (loginctl do
+	// systemd, `systemctl enable docker`, `pm2 startup`) vivem só em
+	// `manualSteps` — que `installService` nunca varria — e `runPrivilegedStep`
+	// nunca era chamado em produção.
+	const spec = {
+		name: "x",
+		mode: "sync" as const,
+		configPath: "/tmp/x.yml",
+		workingDir: "/tmp",
+		autostart: true,
+	};
+
+	test("manualSteps privilegiado com sudo passwordless RODA", async () => {
+		const { installService } = await import("../src/core/service/manager");
+		const plan = {
+			backend: "systemd" as const,
+			serviceName: "pulsar-x",
+			files: [],
+			steps: [],
+			manualSteps: [
+				{ cmd: "true", args: [], why: "manual root", privileged: true },
+			],
+			notes: [],
+		};
+
+		const result = await installService(plan, spec, { sudo: "passwordless" });
+		expect(result.ok).toBe(true);
+		expect(result.results).toHaveLength(1);
+		expect(result.results[0]?.ok).toBe(true);
+		expect(result.skippedPrivileged).toHaveLength(0);
+	});
+
+	test("manualSteps privilegiado recusado entra em skippedPrivileged e ok continua true", async () => {
+		const { installService } = await import("../src/core/service/manager");
+		const plan = {
+			backend: "systemd" as const,
+			serviceName: "pulsar-x",
+			files: [],
+			steps: [],
+			manualSteps: [
+				{ cmd: "false", args: [], why: "manual root", privileged: true },
+			],
+			notes: [],
+		};
+
+		const result = await installService(plan, spec, {
+			sudo: "needs-password",
+			ask: async () => false,
+		});
+		expect(result.ok).toBe(true);
+		expect(result.results).toHaveLength(0);
+		expect(result.skippedPrivileged).toHaveLength(1);
+	});
+
+	test("fallbackFor pula o manual quando o passo automático SUCEDEU — ask nunca é chamado", async () => {
+		const { installService } = await import("../src/core/service/manager");
+		let perguntou = false;
+		const plan = {
+			backend: "systemd" as const,
+			serviceName: "pulsar-x",
+			files: [],
+			steps: [
+				{ id: "linger", cmd: "true", args: [], why: "linger automático" },
+			],
+			manualSteps: [
+				{
+					fallbackFor: "linger",
+					cmd: "sudo",
+					args: ["loginctl", "enable-linger"],
+					why: "só se o automático falhar",
+					privileged: true,
+				},
+			],
+			notes: [],
+		};
+
+		const result = await installService(plan, spec, {
+			sudo: "needs-password",
+			ask: async () => {
+				perguntou = true;
+				return true;
+			},
+		});
+
+		expect(perguntou).toBe(false);
+		expect(result.skippedPrivileged).toHaveLength(0);
+		// só o passo automático rodou — o manual foi pulado, não executado nem recusado
+		expect(result.results).toHaveLength(1);
+		expect(result.results[0]?.step.id).toBe("linger");
+	});
+
+	test("fallbackFor OFERECE o manual quando o passo automático FALHOU — ask é chamado", async () => {
+		const { installService } = await import("../src/core/service/manager");
+		let perguntou = false;
+		const plan = {
+			backend: "systemd" as const,
+			serviceName: "pulsar-x",
+			files: [],
+			steps: [
+				{
+					id: "linger",
+					cmd: "false",
+					args: [],
+					why: "linger automático",
+					optional: true,
+				},
+			],
+			manualSteps: [
+				{
+					fallbackFor: "linger",
+					cmd: "true",
+					args: [],
+					why: "só se o automático falhar",
+					privileged: true,
+				},
+			],
+			notes: [],
+		};
+
+		const result = await installService(plan, spec, {
+			sudo: "needs-password",
+			ask: async () => {
+				perguntou = true;
+				return true;
+			},
+		});
+
+		expect(perguntou).toBe(true);
+		expect(result.ok).toBe(true);
+		// automático (falhou, optional) + manual (rodou de verdade)
+		expect(result.results).toHaveLength(2);
+		expect(result.results[1]?.ok).toBe(true);
+	});
+});

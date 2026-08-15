@@ -42,7 +42,7 @@ const run = promisify(execFile);
 /**
  * Executor: pega o plano de um backend, grava os arquivos e roda os passos.
  *
- * Duas regras que valem para todos os backends:
+ * Regras que valem para todos os backends:
  *
  * - Passo `privileged` é resolvido NA HORA via `runPrivilegedStep`
  *   (`./privileged.ts`): sem senha, roda direto; com senha, pergunta antes de
@@ -50,6 +50,16 @@ const run = promisify(execFile);
  *   `skippedPrivileged` e a instalação segue.
  * - Passo `optional` que falha não aborta a instalação — são os "pare o que
  *   talvez não exista" que precedem o start.
+ * - `plan.manualSteps` RODA TAMBÉM (não é só texto para o usuário copiar),
+ *   sempre DEPOIS de `plan.steps` — só faz sentido tentar o que exige sudo
+ *   depois que o serviço já foi instalado e iniciado. Um passo com
+ *   `fallbackFor: <id>` só roda se o passo automático de `id` correspondente
+ *   tiver falhado (ou nem rodado) — sem isso, o par "tenta sem sudo" +
+ *   "refaz com sudo" pediria senha à toa mesmo quando o automático já
+ *   resolveu (ex.: `loginctl enable-linger` do systemd, que costuma
+ *   funcionar sem sudo via polkit). Uma falha ou recusa em `manualSteps`
+ *   nunca reabre `ok`: o serviço já está no ar nesse ponto, só o boot
+ *   automático é que fica pendente.
  */
 
 export type InstallResult = {
@@ -113,20 +123,25 @@ export async function installService(
 
 	const results: StepResult[] = [];
 	const skippedPrivileged: ServiceStep[] = [];
+	// Por `id`, para os `fallbackFor` de `manualSteps` saberem se o passo
+	// automático correspondente já resolveu sozinho.
+	const resultsById = new Map<string, StepResult>();
 	let ok = true;
 
+	const stepOpts = {
+		cwd: spec.workingDir,
+		sudo: opts?.sudo ?? "needs-password",
+		ask: opts?.ask ?? (async () => false),
+		onOutput: opts?.onOutput,
+	};
+
+	const runOne = (step: ServiceStep) =>
+		step.privileged
+			? runPrivilegedStep(step, stepOpts)
+			: execStep(step, stepOpts);
+
 	for (const step of plan.steps) {
-		const result = step.privileged
-			? await runPrivilegedStep(step, {
-					cwd: spec.workingDir,
-					sudo: opts?.sudo ?? "needs-password",
-					ask: opts?.ask ?? (async () => false),
-					onOutput: opts?.onOutput,
-				})
-			: await execStep(step, {
-					cwd: spec.workingDir,
-					onOutput: opts?.onOutput,
-				});
+		const result = await runOne(step);
 
 		// Pular um passo com sudo é uma escolha, não uma falha: o serviço sobe
 		// mesmo assim e só o boot fica pendente.
@@ -136,12 +151,33 @@ export async function installService(
 		}
 
 		results.push(result);
+		if (step.id) resultsById.set(step.id, result);
 
 		if (!result.ok && !step.optional) {
 			ok = false;
 			// Parar no primeiro passo essencial que falha: seguir adiante
 			// deixaria um serviço meio instalado, pior que nenhum.
 			break;
+		}
+	}
+
+	// manualSteps só depois do serviço de pé — e só quando `plan.steps` não
+	// travou num passo essencial (ver comentário no topo do arquivo).
+	if (ok) {
+		for (const step of plan.manualSteps) {
+			if (step.fallbackFor && resultsById.get(step.fallbackFor)?.ok) continue;
+
+			const result = await runOne(step);
+
+			if (result === null) {
+				skippedPrivileged.push(step);
+				continue;
+			}
+
+			results.push(result);
+			if (step.id) resultsById.set(step.id, result);
+			// Falha aqui não derruba `ok`: são passos de complemento (boot),
+			// não do serviço em si — que já está rodando neste ponto.
 		}
 	}
 

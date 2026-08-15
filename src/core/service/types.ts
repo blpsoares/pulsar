@@ -49,8 +49,18 @@ export type ServiceStep = {
 	 * milissegundos.
 	 */
 	timeoutMs?: number;
-	/** precisa de sudo — a TUI NUNCA roda isso sozinha, só mostra */
+	/** precisa de sudo — resolvido na hora por `runPrivilegedStep`, nunca sozinho */
 	privileged?: boolean;
+	/** identifica o passo para outro poder referenciá-lo via `fallbackFor` */
+	id?: string;
+	/**
+	 * Só roda este passo se o passo cujo `id` é este valor tiver FALHADO (ou
+	 * nem chegado a rodar). Existe para o par "automático sem sudo" + "manual
+	 * com sudo" do mesmo objetivo (ex.: `loginctl enable-linger` do systemd):
+	 * sem isso, o passo manual perguntaria senha à toa toda vez que o
+	 * automático já tivesse resolvido sozinho.
+	 */
+	fallbackFor?: string;
 };
 
 export type InstallPlan = {
