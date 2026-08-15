@@ -1,17 +1,17 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { committedResources } from "../compose/committed";
 import { recommendResources } from "../compose/recommend";
-import { LineBuffer } from "../run/logLines";
 import {
 	composePath,
 	dockerPlan,
 	dockerServiceName,
 	dockerUninstallSteps,
 } from "./dockerService";
+import { execStep, type StepResult } from "./execStep";
 import {
 	agentLabel,
 	agentPath,
@@ -19,6 +19,11 @@ import {
 	launchdUninstallSteps,
 } from "./launchd";
 import { ecosystemPath, pm2Plan, pm2UninstallSteps } from "./pm2";
+import {
+	type AskCallback,
+	runPrivilegedStep,
+	type SudoMode,
+} from "./privileged";
 import { systemdPlan, systemdUninstallSteps, unitPath } from "./systemd";
 import {
 	type Backend,
@@ -29,6 +34,9 @@ import {
 	serviceName,
 } from "./types";
 
+export type { StepResult } from "./execStep";
+export { execStep } from "./execStep";
+
 const run = promisify(execFile);
 
 /**
@@ -36,91 +44,20 @@ const run = promisify(execFile);
  *
  * Duas regras que valem para todos os backends:
  *
- * - Passo `privileged` NUNCA é executado aqui. A TUI mostra o comando para o
- *   usuário rodar. Um menu que dispara sudo sozinho é exatamente o tipo de
- *   coisa que ninguém consegue auditar depois.
+ * - Passo `privileged` é resolvido NA HORA via `runPrivilegedStep`
+ *   (`./privileged.ts`): sem senha, roda direto; com senha, pergunta antes de
+ *   rodar, mostrando o comando literal. Recusar não é falha — o passo entra em
+ *   `skippedPrivileged` e a instalação segue.
  * - Passo `optional` que falha não aborta a instalação — são os "pare o que
  *   talvez não exista" que precedem o start.
  */
-
-export type StepResult = {
-	step: ServiceStep;
-	ok: boolean;
-	output: string;
-};
-
-/** Teto padrão de um passo — vale para tudo que não declara o seu. */
-const STEP_TIMEOUT_MS = 120_000;
-
-/** Quantas linhas da saída ficam guardadas para o relatório do passo. */
-const STEP_OUTPUT_LINES = 200;
-
-/**
- * Executa um passo com a saída em STREAMING.
- *
- * Não é `execFile`: ele acumula a saída inteira num buffer de 1 MB e mata o
- * processo quando estoura. O `docker compose up --build` é justamente o passo
- * que cospe muita saída e demora minutos — as duas coisas que o `execFile`
- * pune. Aqui a saída vai para um anel de N linhas (a cauda é o que interessa
- * quando algo falha) e cada linha é repassada na hora, para a tela poder
- * mostrar que ainda está vivo em vez de congelar sem explicação.
- */
-export function execStep(
-	step: ServiceStep,
-	opts: { cwd: string; onOutput?: (line: string) => void },
-): Promise<StepResult> {
-	return new Promise((resolve) => {
-		const buffer = new LineBuffer(STEP_OUTPUT_LINES);
-		const child = spawn(step.cmd, step.args, {
-			cwd: opts.cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-
-		let timedOut = false;
-		const timer = setTimeout(() => {
-			timedOut = true;
-			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 5_000).unref?.();
-		}, step.timeoutMs ?? STEP_TIMEOUT_MS);
-
-		const collect = (chunk: Buffer | string) => {
-			buffer.push(String(chunk));
-			// A tela mostra só a linha mais recente: é sinal de vida, não um log.
-			const last = buffer.all().at(-1);
-			if (last) opts.onOutput?.(last);
-		};
-
-		child.stdout?.on("data", collect);
-		child.stderr?.on("data", collect);
-
-		const finish = (ok: boolean, extra?: string) => {
-			clearTimeout(timer);
-			const output = [buffer.all().join("\n"), extra]
-				.filter(Boolean)
-				.join("\n")
-				.trim();
-			resolve({ step, ok, output });
-		};
-
-		child.on("error", (err) => finish(false, err.message));
-		child.on("close", (code) => {
-			if (timedOut)
-				finish(
-					false,
-					`o passo passou de ${Math.round(
-						(step.timeoutMs ?? STEP_TIMEOUT_MS) / 1000,
-					)}s e foi interrompido`,
-				);
-			else
-				finish(code === 0, code === 0 ? undefined : `saiu com código ${code}`);
-		});
-	});
-}
 
 export type InstallResult = {
 	plan: InstallPlan;
 	files: string[];
 	results: StepResult[];
+	/** passos com sudo que o usuário optou por não rodar agora */
+	skippedPrivileged: ServiceStep[];
 	ok: boolean;
 };
 
@@ -156,7 +93,11 @@ export function buildPlan(
 export async function installService(
 	plan: InstallPlan,
 	spec: ServiceSpec,
-	onOutput?: (line: string) => void,
+	opts?: {
+		onOutput?: (line: string) => void;
+		sudo?: SudoMode;
+		ask?: AskCallback;
+	},
 ): Promise<InstallResult> {
 	const written: string[] = [];
 
@@ -171,12 +112,29 @@ export async function installService(
 	mkdirSync(join(spec.workingDir, "logs"), { recursive: true });
 
 	const results: StepResult[] = [];
+	const skippedPrivileged: ServiceStep[] = [];
 	let ok = true;
 
 	for (const step of plan.steps) {
-		if (step.privileged) continue;
+		const result = step.privileged
+			? await runPrivilegedStep(step, {
+					cwd: spec.workingDir,
+					sudo: opts?.sudo ?? "needs-password",
+					ask: opts?.ask ?? (async () => false),
+					onOutput: opts?.onOutput,
+				})
+			: await execStep(step, {
+					cwd: spec.workingDir,
+					onOutput: opts?.onOutput,
+				});
 
-		const result = await execStep(step, { cwd: spec.workingDir, onOutput });
+		// Pular um passo com sudo é uma escolha, não uma falha: o serviço sobe
+		// mesmo assim e só o boot fica pendente.
+		if (result === null) {
+			skippedPrivileged.push(step);
+			continue;
+		}
+
 		results.push(result);
 
 		if (!result.ok && !step.optional) {
@@ -187,7 +145,7 @@ export async function installService(
 		}
 	}
 
-	return { plan, files: written, results, ok };
+	return { plan, files: written, results, skippedPrivileged, ok };
 }
 
 export async function uninstallService(

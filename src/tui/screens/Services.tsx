@@ -130,9 +130,11 @@ export function ServicesScreen({
 			// A saída do passo vira o texto do "ocupado": no docker a primeira
 			// construção leva MINUTOS, e uma tela parada em "instalando…" durante
 			// todo esse tempo é indistinguível de uma tela travada.
-			void installService(plan, spec, (line) => {
-				const clean = line.trim().slice(0, 80);
-				if (clean) setBusy(clean);
+			void installService(plan, spec, {
+				onOutput: (line) => {
+					const clean = line.trim().slice(0, 80);
+					if (clean) setBusy(clean);
+				},
 			}).then((r) => {
 				setBusy(null);
 				setResult(r);

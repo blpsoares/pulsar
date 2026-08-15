@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { detectSudo, runPrivilegedStep } from "../src/core/service/privileged";
+import type { ServiceStep } from "../src/core/service/types";
 import { DISABLE_MOUSE, ENTER_ALT, LEAVE_ALT } from "../src/core/tty/ansi";
 import { withTerminal } from "../src/core/tty/handoff";
 
@@ -53,5 +55,93 @@ describe("withTerminal", () => {
 			stdin: { isTTY: false },
 		});
 		expect(written.join("")).toBe("");
+	});
+});
+
+describe("detectSudo", () => {
+	test("sudo -n passando é passwordless", async () => {
+		expect(await detectSudo(async () => true)).toBe("passwordless");
+	});
+
+	test("sudo -n falhando pede senha", async () => {
+		expect(await detectSudo(async () => false)).toBe("needs-password");
+	});
+});
+
+describe("runPrivilegedStep", () => {
+	test("sem senha, roda sem perguntar nada", async () => {
+		let perguntou = false;
+		const result = await runPrivilegedStep(
+			{ cmd: "true", args: [], why: "x", privileged: true },
+			{
+				cwd: process.cwd(),
+				sudo: "passwordless",
+				ask: async () => {
+					perguntou = true;
+					return true;
+				},
+			},
+		);
+		expect(perguntou).toBe(false);
+		expect(result?.ok).toBe(true);
+	});
+
+	test("com senha, pergunta ANTES de rodar", async () => {
+		const vistos: ServiceStep[] = [];
+		await runPrivilegedStep(
+			{ cmd: "true", args: [], why: "x", privileged: true },
+			{
+				cwd: process.cwd(),
+				sudo: "needs-password",
+				ask: async (s) => {
+					vistos.push(s);
+					return true;
+				},
+			},
+		);
+		// O usuário vê o comando literal antes de qualquer coisa acontecer.
+		expect(vistos).toHaveLength(1);
+		expect(vistos[0]?.cmd).toBe("true");
+	});
+
+	test("recusar devolve null e não roda", async () => {
+		const result = await runPrivilegedStep(
+			{ cmd: "false", args: [], why: "x", privileged: true },
+			{ cwd: process.cwd(), sudo: "needs-password", ask: async () => false },
+		);
+		expect(result).toBeNull();
+	});
+});
+
+describe("installService com passo privilegiado", () => {
+	test("pular o privilegiado não falha a instalação", async () => {
+		// Era o comportamento antigo travestido de erro: o serviço subia, mas o
+		// relatório dizia que a instalação tinha falhado.
+		const { installService } = await import("../src/core/service/manager");
+		const plan = {
+			backend: "systemd" as const,
+			serviceName: "pulsar-x",
+			files: [],
+			steps: [
+				{ cmd: "true", args: [], why: "passo normal" },
+				{ cmd: "true", args: [], why: "passo root", privileged: true },
+			],
+			manualSteps: [],
+			notes: [],
+		};
+		const spec = {
+			name: "x",
+			mode: "sync" as const,
+			configPath: "/tmp/x.yml",
+			workingDir: "/tmp",
+			autostart: true,
+		};
+
+		const result = await installService(plan, spec, {
+			sudo: "needs-password",
+			ask: async () => false,
+		});
+		expect(result.ok).toBe(true);
+		expect(result.skippedPrivileged).toHaveLength(1);
 	});
 });

@@ -69,11 +69,14 @@ export function useBackgroundStart(dir: string) {
 					return;
 				}
 
-				const installed = await installService(plan, spec, (line) => {
-					const clean = line.trim().slice(0, 80);
-					if (clean) setProgress(clean);
+				const installed = await installService(plan, spec, {
+					onOutput: (line) => {
+						const clean = line.trim().slice(0, 80);
+						if (clean) setProgress(clean);
+					},
 				});
-				const pending = plan.manualSteps.length > 0;
+				const pending =
+					plan.manualSteps.length > 0 || installed.skippedPrivileged.length > 0;
 
 				setResult({
 					ok: installed.ok,
