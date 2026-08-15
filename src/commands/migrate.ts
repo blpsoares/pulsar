@@ -6,6 +6,11 @@ import { initMigration } from "../core/dump/dump";
 import { initRegistrationSync } from "../core/dump/initSync";
 import { renameNewCollections } from "../core/dump/renameCollections";
 import { initRestore } from "../core/dump/restoreDump";
+import {
+	beginRun,
+	finishRun,
+	serviceNameFromEnv,
+} from "../core/state/runRecord";
 import { conn } from "../db/conn";
 import { assertMongoTools } from "../functions/assertMongoTools";
 import { getCollections } from "../functions/getCollections";
@@ -28,6 +33,12 @@ const migrateCollections = async (
 
 	if (!fs.existsSync(outputExport)) fs.mkdirSync(outputExport);
 	const options = parseYml<MigrateYmlOptions>(ymlPath, migrateYmlSchema);
+
+	// PULSAR_SERVICE_NAME só existe quando um dos backends de serviço injeta a
+	// variável — execução avulsa no terminal não grava nada no registro.
+	const serviceName = serviceNameFromEnv();
+	if (serviceName) beginRun(serviceName);
+
 	const { migrate } = options.command;
 	const limiter = new Bottleneck({ maxConcurrent: cliParams.parallel ?? 2 });
 
@@ -146,6 +157,16 @@ const migrateCollections = async (
 	 * ? CLEAN LOCAL REGISTRES (GENERATED FOR migrateCollections)
 	 */
 	deleteTempFolder(outputExport);
+
+	// migrate não conta documentos em nenhum ponto (mongodump/mongorestore
+	// rodam via shell) — só a contagem de collections migradas existe como
+	// variável. "docs" do brief fica de fora por não ter de onde vir.
+	if (serviceName)
+		finishRun(serviceName, {
+			status: "ok",
+			exitCode: 0,
+			stats: { collections: successDrops.length },
+		});
 
 	/**
 	 *

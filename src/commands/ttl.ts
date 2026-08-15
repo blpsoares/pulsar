@@ -1,4 +1,9 @@
 import Bottleneck from "bottleneck";
+import {
+	beginRun,
+	finishRun,
+	serviceNameFromEnv,
+} from "../core/state/runRecord";
 import { applyTtl, type TtlResult } from "../core/ttl/applyTtl";
 import { type ResolvedTtl, resolveTtlEntry } from "../core/ttl/resolveTtlEntry";
 import { conn } from "../db/conn";
@@ -90,6 +95,12 @@ export async function ttlCommand(
 	cli: TtlOptionsCli,
 ): Promise<TtlResult[]> {
 	const plan = buildPlan(file, cli);
+
+	// PULSAR_SERVICE_NAME só existe quando um dos backends de serviço injeta a
+	// variável — execução avulsa no terminal não grava nada no registro.
+	const serviceName = serviceNameFromEnv();
+	if (serviceName) beginRun(serviceName);
+
 	const client = await conn(plan.uri, "ttl");
 	const db = client.db(plan.db);
 
@@ -167,8 +178,32 @@ export async function ttlCommand(
 					: ".",
 			}),
 		);
+
+		// materialized = soma dos docs que o deriveFromId materializou em _created
+		// (só existe quando a collection usou deriveFromId; senão fica 0).
+		const materialized = results.reduce(
+			(sum, r) => sum + (r.derivedCount ?? 0),
+			0,
+		);
+		if (serviceName)
+			finishRun(serviceName, {
+				status: "ok",
+				exitCode: 0,
+				stats: {
+					collections: resolved.length,
+					indexes: results.length,
+					materialized,
+				},
+			});
 		return results;
 	} catch (error) {
+		if (serviceName)
+			finishRun(serviceName, {
+				status: "error",
+				exitCode: 1,
+				stats: {},
+				error: error instanceof Error ? error.message : String(error),
+			});
 		throw errorHandler(error, "TTL:COMMAND");
 	} finally {
 		await client.close();

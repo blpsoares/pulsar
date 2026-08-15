@@ -1,6 +1,12 @@
 /** biome-ignore-all assist/source/organizeImports: <explanation> */
 import { acceptableEventOperations } from "../core/sync";
 import { SyncEngine } from "../core/sync/engine";
+import type { RunStats } from "../core/state/registry";
+import {
+	beginRun,
+	finishRun,
+	serviceNameFromEnv,
+} from "../core/state/runRecord";
 import { conn } from "../db/conn";
 import { errorHandler } from "../errors/errorHandler";
 import { getCollections } from "../functions/getCollections";
@@ -26,6 +32,12 @@ export async function syncCollections(
 	cliParams: SyncOptionsCli,
 ) {
 	const options = parseYml<SyncYmlOptions>(ymlPath, syncYmlSchema);
+
+	// PULSAR_SERVICE_NAME só existe quando um dos backends de serviço (systemd,
+	// launchd, pm2, docker) injeta a variável — execução avulsa no terminal não
+	// grava nada no registro.
+	const serviceName = serviceNameFromEnv();
+	if (serviceName) beginRun(serviceName);
 
 	setLang(
 		process.env.PULSAR_LANG || options.command.sync.logging?.lang || "en",
@@ -114,6 +126,10 @@ export async function syncCollections(
 	// do processo morto → o Atlas recebe RST e derruba a escuta de qualquer jeito.
 	let engine: SyncEngine | null = null;
 	let stopping = false;
+	// Preenchido depois do dump inicial com os mesmos números do painel de
+	// fechamento (`PULSAR · INITIAL SYNC COMPLETE`) — é o que o shutdown grava
+	// no registro quando o serviço para de rodar (SIGINT/SIGTERM).
+	let runStats: RunStats = {};
 	const shutdown = async (signal: string) => {
 		if (stopping) return;
 		stopping = true;
@@ -134,6 +150,8 @@ export async function syncCollections(
 			await client.close().catch(() => {});
 			await destClient.close().catch(() => {});
 		} finally {
+			if (serviceName)
+				finishRun(serviceName, { status: "ok", exitCode: 0, stats: runStats });
 			clearTimeout(forced);
 			process.exit(0);
 		}
@@ -222,6 +240,16 @@ export async function syncCollections(
 				: {}),
 		});
 		console.log(`\n${panel}\n`);
+		// Mesmos números do painel acima, guardados pro shutdown gravar no
+		// registro (o próprio painel vira texto só no terminal/log e se perde).
+		runStats = {
+			collections: total,
+			resumed: engine.resumedCount,
+			dumped: engine.dumpsPlanned - falhas.length,
+			docs: engine.docsDumped,
+			...(copyIndexesOn ? { indexes: engine.indexesCreated } : {}),
+			...(copyViewsOn ? { views: engine.viewsCreated } : {}),
+		};
 		// Linha única e greppável: nº de collections + início/fim (relógio) + total,
 		// pra reportar "banco up em X". Vai pro terminal e pro logs/debug.log.
 		customLog("info", formatLoadReport(total, startedAt, finishedAt), true);
@@ -265,6 +293,13 @@ export async function syncCollections(
 			}));
 		}
 	} catch (error) {
+		if (serviceName)
+			finishRun(serviceName, {
+				status: "error",
+				exitCode: 1,
+				stats: {},
+				error: error instanceof Error ? error.message : String(error),
+			});
 		throw errorHandler(error, "WATCH:COLL");
 	}
 }
