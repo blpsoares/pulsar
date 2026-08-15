@@ -1,4 +1,5 @@
 import { type ServiceRecord, writeRecord } from "../state/registry";
+import type { StepResult } from "./execStep";
 import { buildPlan, installService, uninstallService } from "./manager";
 import type { AskCallback, SudoMode } from "./privileged";
 import type { Backend, ServiceSpec } from "./types";
@@ -28,6 +29,27 @@ export type SwitchOps = {
 	) => Promise<{ ok: true } | { ok: false; error: string }>;
 	save: (record: ServiceRecord) => void;
 };
+
+/**
+ * Escolhe qual passo falhado explica a instalação.
+ *
+ * NÃO pode ser o primeiro `!ok` de `results`: planos reais colocam um passo
+ * `optional` ANTES do essencial de propósito (ex.: `loginctl enable-linger`
+ * em `systemd.ts` falha rotineiro sem polkit; `pm2 delete` em `pm2.ts` falha
+ * sempre que não há instância anterior para remover) — essas falhas são
+ * esperadas e não abortam nada. Se o primeiro `!ok` fosse usado como motivo,
+ * o usuário leria "process not found" do `pm2 delete` quando o problema real
+ * foi o `pm2 start` engasgar num ecosystem file inválido. Por isso: primeiro
+ * `!ok` NÃO-opcional; só na ausência de um, cai para o último `!ok` (opcional
+ * ou não) como melhor pista disponível; sem nenhum, mensagem genérica.
+ */
+export function pickInstallError(results: StepResult[]): string {
+	const essential = results.find((r) => !r.ok && !r.step.optional);
+	if (essential) return essential.output;
+
+	const failed = [...results].reverse().find((r) => !r.ok);
+	return failed?.output ?? "a instalação falhou sem mensagem";
+}
 
 export function defaultOps(opts: {
 	sudo: SudoMode;
@@ -62,12 +84,7 @@ export function defaultOps(opts: {
 			});
 			return result.ok
 				? { ok: true }
-				: {
-						ok: false,
-						error:
-							result.results.find((r) => !r.ok)?.output ??
-							"a instalação falhou sem mensagem",
-					};
+				: { ok: false, error: pickInstallError(result.results) };
 		},
 		save: (record) => writeRecord(record, opts.home),
 	};

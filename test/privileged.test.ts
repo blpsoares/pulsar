@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import type { StepResult } from "../src/core/service/execStep";
 import {
 	disableBootSteps,
 	shouldDisableBoot,
 } from "../src/core/service/oneshot";
 import { detectSudo, runPrivilegedStep } from "../src/core/service/privileged";
-import { switchBackend } from "../src/core/service/switchBackend";
+import {
+	pickInstallError,
+	switchBackend,
+} from "../src/core/service/switchBackend";
 import type { ServiceStep } from "../src/core/service/types";
 import { CREATED_BY_TUI, type ServiceRecord } from "../src/core/state/registry";
 import { DISABLE_MOUSE, ENTER_ALT, LEAVE_ALT } from "../src/core/tty/ansi";
@@ -423,5 +427,53 @@ describe("switchBackend", () => {
 		});
 		expect(ordem).toEqual([]);
 		expect(result.ok).toBe(true);
+	});
+});
+
+function fakeResult(
+	output: string,
+	opts: { ok?: boolean; optional?: boolean } = {},
+): StepResult {
+	return {
+		step: {
+			cmd: "x",
+			args: [],
+			why: "teste",
+			optional: opts.optional,
+		},
+		ok: opts.ok ?? false,
+		output,
+	};
+}
+
+describe("pickInstallError", () => {
+	test("passo opcional falho ANTES do essencial: o motivo é o essencial, não o opcional", () => {
+		// É o teste que impede a regressão: sem isto, "pm2 delete: process not
+		// found" (opcional, falha rotineira) apareceria como motivo no lugar de
+		// "pm2 start: ecosystem file inválido" (o que de fato quebrou a troca).
+		const results = [
+			fakeResult("pm2 delete: process not found", { optional: true }),
+			fakeResult("pm2 start: ecosystem file inválido"),
+		];
+
+		expect(pickInstallError(results)).toBe(
+			"pm2 start: ecosystem file inválido",
+		);
+	});
+
+	test("só falha opcional: usa a última como melhor pista disponível", () => {
+		const results = [
+			fakeResult("primeira falha opcional", { optional: true }),
+			fakeResult("última falha opcional", { optional: true }),
+			fakeResult("passo essencial ok", { ok: true }),
+		];
+
+		expect(pickInstallError(results)).toBe("última falha opcional");
+	});
+
+	test("nenhum passo falhou: mensagem genérica", () => {
+		expect(pickInstallError([fakeResult("tudo bem", { ok: true })])).toBe(
+			"a instalação falhou sem mensagem",
+		);
 	});
 });
