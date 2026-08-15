@@ -395,6 +395,48 @@ describe("reconcile", () => {
 		expect(rows.map((r) => r.name)).toEqual(["pulsar-ads", "pulsar-aaa"]);
 	});
 
+	test("one-shot parado com lastRun.status === 'running' é 'falhou'", () => {
+		// Processo morreu sem gravar desfecho (kill -9, OOM, queda VM).
+		const record = {
+			...base,
+			name: "pulsar-migra",
+			mode: "migrate" as const,
+			lastRun: {
+				startedAt: "2026-08-15T10:00:00Z",
+				endedAt: null,
+				status: "running" as const,
+				exitCode: null,
+				stats: {},
+				error: null,
+			},
+		};
+		const rows = reconcile(
+			[record],
+			[live({ name: "pulsar-migra", running: false })],
+		);
+		expect(stateOf(rows, "pulsar-migra")).toBe("failed");
+	});
+
+	test("sync parado com lastRun.status === 'running' continua 'parado'", () => {
+		// sync não tem "desfecho"; parar é parar. Preso em "running" no lastRun
+		// não muda isso (o user parou manualmente, não significa que o processo
+		// morreu).
+		const record = {
+			...base,
+			lastRun: {
+				startedAt: "2026-08-15T10:00:00Z",
+				endedAt: null,
+				status: "running" as const,
+				exitCode: null,
+				stats: {},
+				error: null,
+			},
+		};
+		expect(
+			stateOf(reconcile([record], [live({ running: false })]), "pulsar-ads"),
+		).toBe("stopped");
+	});
+
 	test("isOneShot", () => {
 		expect(isOneShot("migrate")).toBe(true);
 		expect(isOneShot("ttl")).toBe(true);

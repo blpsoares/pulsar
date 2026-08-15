@@ -81,5 +81,11 @@ function stateFor(
 	if (isOneShot(record.mode) && record.lastRun?.status === "error")
 		return "failed";
 
+	// Processo morreu sem conseguir gravar o desfecho: kill -9, OOM killer, queda
+	// de VM. O lastRun.status fica preso em "running". Para um one-shot, isso é
+	// falha — a execução não completou. Um sync nessa situação é só "parado".
+	if (isOneShot(record.mode) && record.lastRun?.status === "running")
+		return "failed";
+
 	return "stopped";
 }
