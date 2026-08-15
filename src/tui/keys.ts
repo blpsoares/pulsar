@@ -57,6 +57,12 @@ export const KEYS: Record<Layer, KeyBinding[]> = {
 		{ keys: "x", label: "remover", group: "configurar" },
 		{ keys: "l", label: "logs", group: "ver", primary: true },
 		{ keys: "v", label: "ver resultado / erro", group: "ver" },
+		// Só aparece quando o serviço está "adotado" (sem registro do pulsar) —
+		// reconstrói o registro a partir do supervisor (Task 5/`adopt.ts`).
+		{ keys: "a", label: "adotar (gravar registro)", group: "configurar" },
+		// Só aparece quando `boot: false` num serviço de modo contínuo (sync) —
+		// habilita depois o passo com sudo que a instalação pulou.
+		{ keys: "o", label: "ligar boot automático", group: "configurar" },
 	],
 	form: [
 		{ keys: "↑↓", label: "campo", group: "navegar", primary: true },

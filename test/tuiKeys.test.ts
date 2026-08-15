@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import type { ServiceRecord } from "../src/core/state/registry";
 import {
 	GLOBAL_KEYS,
 	helpFor,
@@ -14,6 +15,7 @@ import {
 	type Layer,
 } from "../src/tui/keys";
 import { listWindow, overlayBox } from "../src/tui/layout";
+import { formatStats } from "../src/tui/screens/ServiceDetail";
 
 describe("overlayBox", () => {
 	test("centraliza a caixa com margem no terminal largo", () => {
@@ -148,5 +150,98 @@ describe("keys", () => {
 			expect(grupos.at(-1)?.group).toBe("sempre");
 			expect(grupos.at(-1)?.keys).toEqual(GLOBAL_KEYS);
 		}
+	});
+});
+
+/** Registro mínimo válido, sobrescrito por teste via spread. */
+function record(overrides: Partial<ServiceRecord>): ServiceRecord {
+	return {
+		name: "pulsar-x",
+		mode: "sync",
+		config: "configs/x.yml",
+		workingDir: ".",
+		backend: "systemd",
+		boot: true,
+		createdBy: "pulsar-tui",
+		lastRun: null,
+		...overrides,
+	};
+}
+
+describe("formatStats", () => {
+	test("sync traduz os contadores do modo, incluindo resumed/dumped", () => {
+		const lines = formatStats(
+			record({
+				mode: "sync",
+				lastRun: {
+					startedAt: "2026-08-15T10:00:00.000Z",
+					endedAt: "2026-08-15T10:05:00.000Z",
+					status: "ok",
+					exitCode: 0,
+					stats: { collections: 12, resumed: 10, dumped: 2, docs: 15000 },
+					error: null,
+				},
+			}),
+		);
+		expect(lines).toContain("collections: 12");
+		expect(lines).toContain("retomadas: 10");
+		expect(lines).toContain("dump completo: 2");
+		expect(lines).toContain("documentos copiados: 15.000");
+	});
+
+	test("migrate não inventa contador de docs além do que veio nas stats", () => {
+		const lines = formatStats(
+			record({
+				mode: "migrate",
+				lastRun: {
+					startedAt: "2026-08-15T10:00:00.000Z",
+					endedAt: "2026-08-15T10:05:00.000Z",
+					status: "ok",
+					exitCode: 0,
+					stats: { collections: 5 },
+					error: null,
+				},
+			}),
+		);
+		// mongodump roda como processo filho e não expõe contagem de docs — só
+		// o que de fato veio em `stats` aparece, nada é inventado.
+		expect(lines).toEqual(["collections: 5"]);
+	});
+
+	test("ttl traduz índices e materializados, sem usar rótulos de sync", () => {
+		const lines = formatStats(
+			record({
+				mode: "ttl",
+				lastRun: {
+					startedAt: "2026-08-15T10:00:00.000Z",
+					endedAt: "2026-08-15T10:05:00.000Z",
+					status: "ok",
+					exitCode: 0,
+					stats: { collections: 3, indexes: 3, materialized: 4000 },
+					error: null,
+				},
+			}),
+		);
+		expect(lines).toContain("índices TTL criados: 3");
+		expect(lines).toContain("documentos com _created: 4.000");
+		expect(lines.some((l) => l.startsWith("índices criados"))).toBe(false);
+	});
+
+	test("stats vazio (ou sem lastRun) devolve lista vazia", () => {
+		expect(formatStats(record({ lastRun: null }))).toEqual([]);
+		expect(
+			formatStats(
+				record({
+					lastRun: {
+						startedAt: "2026-08-15T10:00:00.000Z",
+						endedAt: null,
+						status: "running",
+						exitCode: null,
+						stats: {},
+						error: null,
+					},
+				}),
+			),
+		).toEqual([]);
 	});
 });
