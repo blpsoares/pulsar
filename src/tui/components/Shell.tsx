@@ -180,6 +180,7 @@ export function Shell({
 	rows,
 	notice,
 	copy,
+	overlay,
 }: {
 	chips: Chip[];
 	hints: Hint[];
@@ -192,6 +193,12 @@ export function Shell({
 	 * o atalho e o aviso de "copiado" são os mesmos em toda a TUI.
 	 */
 	copy?: () => string | null;
+	/**
+	 * Camada desenhada por cima do corpo (ex.: menu de ações, ajuda). Entra
+	 * DEPOIS do corpo e ANTES da KeyBar: como é `position="absolute"`, não
+	 * empurra a barra de teclas para baixo.
+	 */
+	overlay?: ReactNode;
 }) {
 	const toast = useCopyShortcut(copy);
 
@@ -201,6 +208,7 @@ export function Shell({
 			<Box flexDirection="row" flexGrow={1}>
 				{children}
 			</Box>
+			{overlay}
 			<KeyBar hints={hints} notice={toast ?? notice} />
 		</Box>
 	);
