@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Chalk } from "chalk";
 import {
+	adoptFromDocker,
+	adoptFromSystemd,
+	parseExecStart,
+} from "../src/core/state/adopt";
+import {
 	CREATED_BY_TUI,
 	listRecords,
 	readRecord,
@@ -210,5 +215,69 @@ describe("describeError / isAlreadyHandled", () => {
 	test("valor não-Error e não-string: cai no String()", () => {
 		expect(describeError(42)).toBe("42");
 		expect(isAlreadyHandled(42)).toBe(false);
+	});
+});
+
+describe("adopt", () => {
+	test("extrai modo e yml de uma linha de comando", () => {
+		expect(
+			parseExecStart("/home/u/.local/bin/pulsar sync /srv/ads.yml"),
+		).toEqual({
+			mode: "sync",
+			config: "/srv/ads.yml",
+		});
+	});
+
+	test("funciona no modo código-fonte (bun + script)", () => {
+		expect(
+			parseExecStart(
+				"/usr/bin/bun /home/u/pulsar/src/cli.ts migrate /srv/m.yml",
+			),
+		).toEqual({ mode: "migrate", config: "/srv/m.yml" });
+	});
+
+	test("ignora flags depois do yml", () => {
+		expect(parseExecStart("pulsar sync /srv/ads.yml --verbose")).toEqual({
+			mode: "sync",
+			config: "/srv/ads.yml",
+		});
+	});
+
+	test("linha sem modo conhecido devolve null", () => {
+		expect(parseExecStart("/usr/bin/tail -f /var/log/x")).toBeNull();
+	});
+
+	test("adota uma unit do systemd", () => {
+		const show = [
+			"ExecStart={ path=/home/u/.local/bin/pulsar ; argv[]=/home/u/.local/bin/pulsar sync /srv/ads.yml ; ignore_errors=no }",
+			"WorkingDirectory=/srv",
+			"UnitFileState=enabled",
+		].join("\n");
+
+		expect(adoptFromSystemd("pulsar-ads", show)).toEqual({
+			name: "pulsar-ads",
+			mode: "sync",
+			config: "/srv/ads.yml",
+			workingDir: "/srv",
+			backend: "systemd",
+			boot: true,
+			createdBy: "adotado",
+			lastRun: null,
+		});
+	});
+
+	test("unit sem ExecStart reconhecível não é adotada", () => {
+		expect(adoptFromSystemd("pulsar-x", "WorkingDirectory=/srv")).toBeNull();
+	});
+
+	test("adota um container", () => {
+		const record = adoptFromDocker(
+			"pulsar-sync-loja",
+			"sync /app/loja.yml",
+			"/srv",
+		);
+		expect(record?.mode).toBe("sync");
+		expect(record?.backend).toBe("docker");
+		expect(record?.createdBy).toBe("adotado");
 	});
 });
