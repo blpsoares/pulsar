@@ -86,6 +86,11 @@ function kindOf(button: number, pressed: boolean): MouseEventKind {
 	return pressed ? "press" : "release";
 }
 
-/** Liga o rastreamento de cliques + o modo SGR. */
-export const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1006h";
-export const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1000l";
+/**
+ * Liga o rastreamento de cliques + o modo SGR.
+ *
+ * As sequências vivem em `core/tty/ansi.ts` (dali `withTerminal` também
+ * precisa delas para soltar/devolver o terminal ao sudo) — aqui é só
+ * reexportação, para não haver duas verdades sobre a mesma sequência.
+ */
+export { DISABLE_MOUSE, ENABLE_MOUSE } from "../../core/tty/ansi";
