@@ -243,24 +243,31 @@ function useCopyShortcut(
 		timer.current = setTimeout(() => setToast(undefined), 2500);
 	};
 
-	useInput((input, key) => {
-		if (isMouseInput(input)) return;
-		if (!key.ctrl || input !== "c") return;
+	// `isActive: Boolean(copy)` não é otimização: sem ele, o `ctrl+c` continuava
+	// copiando o item da LISTA com um formulário ou detalhe abertos por cima —
+	// e nem `KEYS.detail` nem `KEYS.form` anunciam esse atalho. A tela que não
+	// passa `copy` simplesmente não escuta a tecla.
+	useInput(
+		(input, key) => {
+			if (isMouseInput(input)) return;
+			if (!key.ctrl || input !== "c") return;
 
-		const value = copy?.();
-		if (!value) {
-			show("nada para copiar nesta tela", "warn");
-			return;
-		}
+			const value = copy?.();
+			if (!value) {
+				show("nada para copiar nesta tela", "warn");
+				return;
+			}
 
-		const result = copyToClipboard(value);
-		show(
-			result.ok
-				? `copiado: ${describeCopy(value)}`
-				: "não consegui copiar (terminal sem OSC 52 e sem pbcopy/wl-copy/xclip)",
-			result.ok ? "ok" : "warn",
-		);
-	});
+			const result = copyToClipboard(value);
+			show(
+				result.ok
+					? `copiado: ${describeCopy(value)}`
+					: "não consegui copiar (terminal sem OSC 52 e sem pbcopy/wl-copy/xclip)",
+				result.ok ? "ok" : "warn",
+			);
+		},
+		{ isActive: Boolean(copy) },
+	);
 
 	return toast;
 }

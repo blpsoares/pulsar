@@ -127,10 +127,19 @@ export function useMouse(): MouseContextValue {
 
 /**
  * Marca um Box como clicável. O `ref` devolvido vai no Box que delimita a área.
+ *
+ * `enabled` existe pelo mesmo motivo que o `isActive` do teclado: com overlay
+ * aberto, a lista de baixo CONTINUA montada (é o que preserva o cursor) e
+ * continuava registrada aqui. Como o hit-testing escolhe a menor área que
+ * contém o ponto, sem z-order, um clique fora da caixa centralizada caía na
+ * lista e empilhava um segundo `detail` por cima de um formulário aberto. O
+ * teclado tinha um dono por camada; o mouse tinha vários.
  */
 export function useClickable(handlers: {
 	onClick?: (info: ClickInfo) => void;
 	onWheel?: (direction: -1 | 1, info: ClickInfo) => void;
+	/** default true — false quando a camada não é a do topo */
+	enabled?: boolean;
 }): RefObject<DOMElement | null> {
 	const ref = useRef<DOMElement | null>(null);
 	const { register } = useMouse();
@@ -144,8 +153,16 @@ export function useClickable(handlers: {
 			register({
 				id: -1,
 				ref,
-				onClick: (info) => latest.current.onClick?.(info),
-				onWheel: (dir, info) => latest.current.onWheel?.(dir, info),
+				// A checagem é no DISPARO (via ref), não no registro: assim ligar e
+				// desligar a camada não precisa re-registrar a região a cada render.
+				onClick: (info) => {
+					if (latest.current.enabled === false) return;
+					latest.current.onClick?.(info);
+				},
+				onWheel: (dir, info) => {
+					if (latest.current.enabled === false) return;
+					latest.current.onWheel?.(dir, info);
+				},
 			}),
 		[register],
 	);

@@ -249,6 +249,7 @@ export function LogViewer({
 	}, [copyMsg]);
 
 	const wheelRef = useClickable({
+		enabled,
 		onWheel: (direction) => {
 			// roda para cima (-1) = voltar no tempo = afastar do fim, igual à seta.
 			if (direction < 0) setFollow(false);

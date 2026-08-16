@@ -24,6 +24,7 @@ import { HelpOverlay } from "./components/HelpOverlay";
 import { Overlay } from "./components/Overlay";
 import { Select } from "./components/Select";
 import { type Chip, layout, Panel, Shell } from "./components/Shell";
+import { SudoConfirm } from "./components/SudoConfirm";
 import { useTerminalSize } from "./hooks/useTerminalSize";
 import { hintsFor, type KeyContext, type Layer as KeyLayer } from "./keys";
 import { useMouse } from "./mouse/MouseProvider";
@@ -269,10 +270,26 @@ export function App({ dir }: { dir: string }) {
 			return;
 		}
 
+		// SAÍDA POR `esc` DE TODA CAMADA QUE NÃO TRATA O TECLADO SOZINHA.
+		//
+		// `detail`, `form` e `logs` têm handler próprio e fecham a si mesmos; a
+		// modal de troca de backend não tem (o `Select` só entende ↑↓ e enter) e
+		// virou um beco sem saída: com o detalhe já desabilitado por baixo, as
+		// únicas saídas eram encerrar a TUI ou ESCOLHER — disparando na hora a
+		// troca destrutiva. É o defeito do commit 4f8493d ("passo 'modo' era uma
+		// tela sem saída") de volta. Camada nova sem teclado próprio entra aqui.
+		if (key.escape && top?.kind === "switch") {
+			pop();
+			return;
+		}
+
 		// `?` das camadas com CAMPO DE TEXTO (formulário, busca do log) é tratado
 		// dentro delas, via `onHelp`: uma URI do Atlas tem `?retryWrites=true`, e
 		// um handler global roubaria essa tecla no meio da digitação.
-		if (input === "?" && (top === null || top.kind === "detail")) {
+		if (
+			input === "?" &&
+			(top === null || top.kind === "detail" || top.kind === "switch")
+		) {
 			push({ kind: "help" });
 			return;
 		}
@@ -320,9 +337,11 @@ export function App({ dir }: { dir: string }) {
 			? "logs"
 			: beneath?.kind === "form"
 				? "form"
-				: beneath?.kind === "detail" || beneath?.kind === "switch"
-					? "detail"
-					: "list";
+				: beneath?.kind === "switch"
+					? "switch"
+					: beneath?.kind === "detail"
+						? "detail"
+						: "list";
 
 	// O que a ajuda e a barra podem anunciar HONESTAMENTE para este serviço.
 	const keyContext: KeyContext = {
@@ -332,6 +351,7 @@ export function App({ dir }: { dir: string }) {
 				detailRow.record.mode === "sync" &&
 				!detailRow.record.boot,
 		),
+		hasResult: Boolean(detailRow?.record?.lastRun),
 	};
 
 	const help =
@@ -490,36 +510,19 @@ export function App({ dir }: { dir: string }) {
 
 	if (help) overlays.push(help);
 
+	// ALERTA: este push vem DEPOIS dos early returns de tela cheia — se um dia
+	// uma operação com sudo puder ser disparada com o log ou o runner no topo,
+	// a confirmação não aparecerá e a operação ficará esperando uma tecla que
+	// ninguém vê. Hoje as duas que pedem sudo (ligar boot, trocar backend)
+	// partem do detalhe, que é caminho de overlay.
 	if (askStep)
 		overlays.push(
-			<Overlay
+			<SudoConfirm
 				key="ask"
-				title="confirmar comando"
+				step={askStep}
 				columns={columns}
 				rows={screenRows}
-			>
-				<Text color={theme.muted} wrap="wrap">
-					vou rodar (pede senha):
-				</Text>
-				<Text color={theme.label} wrap="wrap">
-					{describe(askStep)}
-				</Text>
-				<Text color={theme.muted} wrap="wrap">
-					{askStep.why}
-				</Text>
-				<Box marginTop={1}>
-					<Text>
-						<Text color={theme.accent} bold>
-							enter
-						</Text>
-						<Text color={theme.muted}> digitar a senha agora · </Text>
-						<Text color={theme.accent} bold>
-							p
-						</Text>
-						<Text color={theme.muted}> pular</Text>
-					</Text>
-				</Box>
-			</Overlay>,
+			/>,
 		);
 
 	const l = layout(columns, screenRows);
@@ -533,8 +536,15 @@ export function App({ dir }: { dir: string }) {
 			notice={notice}
 			// Ctrl+C leva para fora o que serve de verdade: o caminho do yml
 			// (colável num `pulsar sync …`) e, sem registro, o nome do serviço.
-			copy={() =>
-				selected ? (selected.record?.config ?? selected.name) : null
+			// Só na RAIZ: `ctrl+c` é anunciado em `KEYS.list` e em nenhuma outra
+			// camada, e com um formulário aberto ele copiava o item da lista de
+			// BAIXO — atalho invisível agindo sobre o que não está em foco. Sem a
+			// prop, o `Shell` nem escuta a tecla (o log tem a sua própria, que
+			// copia a linha em foco).
+			copy={
+				stack.length === 0
+					? () => (selected ? (selected.record?.config ?? selected.name) : null)
+					: undefined
 			}
 			overlay={overlays.length > 0 ? overlays : undefined}
 		>

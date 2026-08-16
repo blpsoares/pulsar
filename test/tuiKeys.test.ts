@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ServiceStep } from "../src/core/service/types";
 import type { ServiceRecord } from "../src/core/state/registry";
+import { helpLines, helpWindow } from "../src/tui/components/HelpOverlay";
 import {
 	GLOBAL_KEYS,
 	helpFor,
@@ -228,6 +229,13 @@ describe("keysFor (Task 15 — ajuda que não mente sobre o estado)", () => {
 		expect(keysFor("detail").map((k) => k.keys)).not.toContain("o");
 	});
 
+	test("`v` só quando existe lastRun — senão abriria uma caixa vazia", () => {
+		expect(keysFor("detail").map((k) => k.keys)).not.toContain("v");
+		expect(keysFor("detail", { hasResult: true }).map((k) => k.keys)).toContain(
+			"v",
+		);
+	});
+
 	test("boot pendente: `o` aparece", () => {
 		expect(
 			keysFor("detail", { bootPending: true }).map((k) => k.keys),
@@ -256,6 +264,78 @@ describe("keysFor (Task 15 — ajuda que não mente sobre o estado)", () => {
 		const naBarra = hintsFor("detail", ctx).map((h) => h.keys);
 		for (const key of naBarra) expect(naAjuda).toContain(key);
 		expect(naAjuda).not.toContain("x");
+	});
+});
+
+describe("camada switch (modal de troca de backend)", () => {
+	test("tem barra PRÓPRIA — não empresta a do detalhe", () => {
+		const barra = hintsFor("switch").map((h) => h.keys);
+		expect(barra).toEqual(["↑↓", "enter", "esc"]);
+		// o que ela NÃO pode anunciar: as ações do detalhe, que ali estão mortas
+		for (const morta of ["i", "p", "r", "e", "l", "x"])
+			expect(barra).not.toContain(morta);
+	});
+
+	test("`esc` aparece na barra desta camada — é a saída, não um extra", () => {
+		// Modal cuja única saída anunciada fosse a ação irreversível é o defeito
+		// do commit 4f8493d ("passo 'modo' era uma tela sem saída").
+		expect(hintsFor("switch").at(-1)).toEqual({
+			keys: "esc",
+			label: "cancelar",
+		});
+		// e continua fora das outras camadas, que fecham por handler próprio
+		expect(hintsFor("list").map((h) => h.keys)).not.toContain("esc");
+	});
+});
+
+describe("helpWindow (a ajuda não pode estourar a caixa)", () => {
+	test("cabendo, mostra tudo e não acusa transbordo", () => {
+		expect(helpWindow(10, 17, 0)).toEqual({
+			start: 0,
+			end: 10,
+			overflow: false,
+		});
+	});
+
+	test("transbordando, reserva a linha do indicador", () => {
+		const win = helpWindow(23, 17, 0);
+		expect(win.overflow).toBe(true);
+		expect(win.end - win.start).toBe(16);
+	});
+
+	test("INVARIANTE: linhas desenhadas + indicador nunca passam da altura útil", () => {
+		for (const total of [0, 1, 10, 17, 18, 23, 40]) {
+			for (const usable of [1, 2, 3, 6, 17, 40]) {
+				for (const offset of [0, 1, 5, 100]) {
+					const win = helpWindow(total, usable, offset);
+					const desenhadas = win.end - win.start + (win.overflow ? 1 : 0);
+					expect(desenhadas).toBeLessThanOrEqual(Math.max(1, usable));
+					expect(win.start).toBeGreaterThanOrEqual(0);
+					expect(win.end).toBeLessThanOrEqual(total);
+				}
+			}
+		}
+	});
+
+	test("a última página encosta no fim da lista", () => {
+		const win = helpWindow(23, 17, 999);
+		expect(win.end).toBe(23);
+	});
+
+	test("modo compacto tira as linhas em branco entre grupos", () => {
+		const arejado = helpLines("logs", {}, false);
+		const compacto = helpLines("logs", {}, true);
+		expect(compacto.some((l) => l.kind === "blank")).toBe(false);
+		expect(compacto.length).toBeLessThan(arejado.length);
+	});
+
+	test("a ajuda de logs num terminal de 24 linhas cabe com rolagem, nunca sem recorte", () => {
+		// Era o caso concreto que corrompia o frame: ~23 linhas numa caixa de 19.
+		const box = overlayBox(100, 24);
+		const usable = box.height - 2;
+		const win = helpWindow(helpLines("logs", {}, true).length, usable, 0);
+		expect(win.overflow).toBe(true);
+		expect(win.end - win.start + 1).toBeLessThanOrEqual(usable);
 	});
 });
 

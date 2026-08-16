@@ -88,10 +88,13 @@ src/
     keys.ts               # fonte única das teclas por camada (barra = filtro; `?` = tudo, agrupado)
     layout.ts             # geometria pura: layout(), overlayBox(), listWindow()
     theme.ts              # paleta/glifos
-    components/           # Shell, Overlay, HelpOverlay, Select, TextInput, CollectionPicker,
-                          #   EntryPicker, SearchField + form/ (pickers de collections/views/índices)
+    components/           # Shell, Overlay, HelpOverlay, SudoConfirm, Select, TextInput,
+                          #   CollectionPicker, EntryPicker, SearchField
+                          #   + form/ (pickers de collections/views/índices, usados pelo ServiceForm)
+    mouse/                # MouseProvider (hit-testing + useClickable) e parse (SGR 1006)
     hooks/                # useInspector (Mongo), useProcess (filho), useSpinner, useTerminalSize
-    screens/              # ServicesPanel (raiz), ServiceDetail, ServiceForm, LogViewer, Runner
+    screens/              # ServicesPanel (raiz), ServiceDetail, ServiceForm (+ serviceFormFields:
+                          #   campos por modo, regras puras), LogViewer, Runner
   stubs/
     react-devtools-core.ts  # stub p/ o ink sobreviver ao bun build --compile
   functions/
@@ -336,10 +339,13 @@ em largura cheia. Todo o resto é **camada por cima dela**:
 | detalhe | `enter` num item | identidade + ações DAQUELE serviço |
 | formulário | `n`, ou `e` no detalhe | criar/editar serviço e config, todos os campos visíveis |
 | logs | `l` | tela cheia: rolagem, busca, cópia, troca de fonte |
-| ajuda | `?` | as teclas da camada atual + as globais |
+| ajuda | `?` | as teclas da camada atual + as globais (rola quando não cabe) |
+| trocar inicialização | `b` no detalhe | escolher o backend alvo — `esc` cancela sem executar nada |
 
-Há sempre **exatamente um dono do teclado**: a camada do topo da pilha (prop
-`enabled`). Isso substituiu o `tab` que trocava foco entre painéis vivos — o
+Há sempre **exatamente um dono do teclado E do mouse**: a camada do topo da
+pilha (prop `enabled`, que vai tanto no `useInput` quanto no `useClickable` —
+com overlay aberto, um clique fora da caixa não age na lista de baixo). Isso
+substituiu o `tab` que trocava foco entre painéis vivos — o
 arranjo que produzia `enter` agindo sobre o painel que não estava sendo
 olhado. `esc` fecha uma camada e **devolve o cursor ao mesmo item** (a lista
 não desmonta, e o cursor mora no `App`); `q` sai só na raiz; **`ctrl+d` sai de

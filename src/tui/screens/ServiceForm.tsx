@@ -51,6 +51,7 @@ import { ViewsStep } from "../components/form/ViewsStep";
 import { Overlay } from "../components/Overlay";
 import { Select } from "../components/Select";
 import { Stat } from "../components/Shell";
+import { SudoConfirm } from "../components/SudoConfirm";
 import { TextInput } from "../components/TextInput";
 import { useInspector } from "../hooks/useInspector";
 import { listWindow, overlayBox } from "../layout";
@@ -584,33 +585,8 @@ export function ServiceForm({
 		.slice(fieldWin.start, fieldWin.end)
 		.map((id, i) => ({ id, index: fieldWin.start + i }));
 
-	if (askStep) {
-		return (
-			<Overlay title="confirmar comando" columns={columns} rows={rows}>
-				<Text color={theme.muted} wrap="wrap">
-					vou rodar (pede senha):
-				</Text>
-				<Text color={theme.label} wrap="wrap">
-					{askStep.cmd} {askStep.args.join(" ")}
-				</Text>
-				<Text color={theme.muted} wrap="wrap">
-					{askStep.why}
-				</Text>
-				<Box marginTop={1}>
-					<Text>
-						<Text color={theme.accent} bold>
-							enter
-						</Text>
-						<Text color={theme.muted}> digitar a senha agora · </Text>
-						<Text color={theme.accent} bold>
-							p
-						</Text>
-						<Text color={theme.muted}> pular</Text>
-					</Text>
-				</Box>
-			</Overlay>
-		);
-	}
+	if (askStep)
+		return <SudoConfirm step={askStep} columns={columns} rows={rows} />;
 
 	if (installing)
 		return (
@@ -735,6 +711,7 @@ export function ServiceForm({
 						<FieldRow
 							key={id}
 							id={id}
+							clickable={enabled}
 							active={index === cur}
 							editing={editing === id}
 							width={innerWidth}
@@ -945,6 +922,8 @@ const TYPE_NEW = "\u0000novo";
 
 function FieldRow(props: {
 	id: FieldId;
+	/** false quando a ajuda está por cima: o clique também obedece à pilha */
+	clickable: boolean;
 	active: boolean;
 	editing: boolean;
 	width: number;
@@ -972,7 +951,10 @@ function FieldRow(props: {
 }) {
 	const { id, active, editing, width } = props;
 
-	const ref = useClickable({ onClick: props.onOpen });
+	const ref = useClickable({
+		onClick: props.onOpen,
+		enabled: props.clickable,
+	});
 
 	if (editing) {
 		return (

@@ -170,6 +170,10 @@ export function ServicesPanel({
 	const visible = rows.slice(win.start, win.end);
 
 	const listRef = useClickable({
+		// Mesmo `enabled` do teclado: com overlay aberto a lista segue montada
+		// (é o que preserva o cursor), e sem isto um clique fora da caixa
+		// centralizada ainda abria outro serviço por baixo dela.
+		enabled,
 		onClick: ({ row }) => {
 			// Não há linha de título dentro do `Box` abaixo (diferente de
 			// `ActionMenu`/`Home`, onde a linha 0 é um título) — a linha 0 do

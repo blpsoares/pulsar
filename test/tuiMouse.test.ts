@@ -6,13 +6,16 @@ import {
 	parsePm2List,
 	parseSystemdUnits,
 } from "../src/core/service/discover";
-import { buildRows } from "../src/tui/components/ConfigTree";
 import { isMouseInput, parseMouse } from "../src/tui/mouse/parse";
 
 /**
- * Parsing do protocolo de mouse e agrupamento da árvore de configs — as duas
- * peças puras do clique. O resto (hit-testing sobre a árvore do ink) é
+ * Parsing do protocolo de mouse — a peça pura do clique. O resto (hit-testing
+ * sobre a árvore do ink, e a regra de só a camada do topo receber o evento) é
  * verificado dirigindo a TUI num pty de verdade.
+ *
+ * A `árvore de configs` (`buildRows` do `ConfigTree`) saiu junto com a tela
+ * inicial que a desenhava: o painel de serviços não agrupa yml por pasta, e um
+ * teste exercitando componente que nada renderiza é manutenção sem cobertura.
  */
 
 describe("protocolo de mouse (SGR 1006)", () => {
@@ -63,48 +66,6 @@ describe("protocolo de mouse (SGR 1006)", () => {
 		expect(isMouseInput("\x1b[<0;10;5M")).toBe(true);
 		expect(isMouseInput("j")).toBe(false);
 		expect(isMouseInput("[<0;10;5")).toBe(false);
-	});
-});
-
-describe("árvore de configs", () => {
-	const configs = [
-		{ file: "raiz.yml", kind: "sync" as const },
-		{ file: "configs/a.yml", kind: "sync" as const },
-		{ file: "configs/b.yml", kind: "ttl" as const },
-		{ file: "infra/k8s/c.yml", kind: "migrate" as const },
-	];
-
-	test("agrupa por pasta, com o diretório atual primeiro", () => {
-		const rows = buildRows(configs, new Set());
-		expect(rows[0]).toMatchObject({ kind: "group", dir: ".", count: 1 });
-		expect(rows[1]).toMatchObject({ kind: "item" });
-
-		const dirs = rows
-			.filter((r) => r.kind === "group")
-			.map((r) => (r.kind === "group" ? r.dir : ""));
-		// "." primeiro, depois o mais raso, depois alfabético
-		expect(dirs).toEqual([".", "configs", "infra/k8s"]);
-	});
-
-	test("seção fechada esconde os itens mas mantém a contagem", () => {
-		const rows = buildRows(configs, new Set(["configs"]));
-		const group = rows.find((r) => r.kind === "group" && r.dir === "configs");
-		expect(group).toMatchObject({ collapsed: true, count: 2 });
-		expect(
-			rows.some(
-				(r) => r.kind === "item" && r.config.file.startsWith("configs/"),
-			),
-		).toBe(false);
-	});
-
-	test("fechar tudo deixa só os cabeçalhos", () => {
-		const rows = buildRows(configs, new Set([".", "configs", "infra/k8s"]));
-		expect(rows.every((r) => r.kind === "group")).toBe(true);
-		expect(rows).toHaveLength(3);
-	});
-
-	test("lista vazia não gera linha alguma", () => {
-		expect(buildRows([], new Set())).toEqual([]);
 	});
 });
 

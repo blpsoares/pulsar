@@ -18,7 +18,7 @@ export type KeyBinding = {
 	primary?: boolean;
 };
 
-export type Layer = "list" | "detail" | "form" | "logs" | "help";
+export type Layer = "list" | "detail" | "form" | "logs" | "switch" | "help";
 
 export const GLOBAL_KEYS: KeyBinding[] = [
 	{ keys: "?", label: "esta ajuda", group: "sempre" },
@@ -72,6 +72,18 @@ export const KEYS: Record<Layer, KeyBinding[]> = {
 		{ keys: "ctrl+s", label: "criar e subir", group: "gravar", primary: true },
 		{ keys: "ctrl+o", label: "só criar", group: "gravar" },
 	],
+	// Camada modal de UMA pergunta ("para qual backend?"). Ela precisa da própria
+	// entrada: emprestar a do `detail` fazia a barra anunciar iniciar/parar/
+	// editar/logs enquanto as únicas teclas vivas eram ↑↓, enter e esc.
+	switch: [
+		{ keys: "↑↓", label: "escolher", group: "escolher", primary: true },
+		{
+			keys: "enter",
+			label: "trocar para este backend",
+			group: "escolher",
+			primary: true,
+		},
+	],
 	logs: [
 		{ keys: "↑↓", label: "rolar linha", group: "rolar", primary: true },
 		{ keys: "PgUp/PgDn", label: "rolar página", group: "rolar" },
@@ -112,7 +124,19 @@ export type KeyContext = {
 	adopted?: boolean;
 	/** modo contínuo com o boot desligado: `o` tem o que ligar */
 	bootPending?: boolean;
+	/** existe `lastRun` gravado: `v` tem o que mostrar */
+	hasResult?: boolean;
 };
+
+/**
+ * Camadas em que `esc` é a saída PRINCIPAL e precisa aparecer na barra.
+ *
+ * `esc` é global (nenhuma camada pode redeclará-lo — há teste para isso), mas
+ * numa modal de escolha, não anunciá-lo é o defeito que já custou um commit
+ * neste projeto (`4f8493d`, "passo 'modo' era uma tela sem saída"): o usuário
+ * fica olhando para uma caixa cujo único fim aparente é a ação irreversível.
+ */
+const ESCAPE_IN_BAR: Layer[] = ["switch"];
 
 /** As teclas que REALMENTE funcionam nesta camada, neste estado. */
 export function keysFor(layer: Layer, ctx: KeyContext = {}): KeyBinding[] {
@@ -125,14 +149,23 @@ export function keysFor(layer: Layer, ctx: KeyContext = {}): KeyBinding[] {
 	if (ctx.adopted) return all.filter((b) => b.keys === "a" || b.keys === "l");
 
 	return all.filter(
-		(b) => b.keys !== "a" && (b.keys !== "o" || ctx.bootPending === true),
+		(b) =>
+			b.keys !== "a" &&
+			(b.keys !== "o" || ctx.bootPending === true) &&
+			// `v` sem `lastRun` abriria uma caixa de resultado vazia.
+			(b.keys !== "v" || ctx.hasResult === true),
 	);
 }
 
 export function hintsFor(layer: Layer, ctx: KeyContext = {}): Hint[] {
-	return keysFor(layer, ctx)
+	const hints = keysFor(layer, ctx)
 		.filter((binding) => binding.primary)
 		.map(({ keys, label }) => ({ keys, label }));
+
+	if (ESCAPE_IN_BAR.includes(layer))
+		hints.push({ keys: "esc", label: "cancelar" });
+
+	return hints;
 }
 
 export function helpFor(
