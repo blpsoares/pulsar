@@ -1,3 +1,4 @@
+import type { ResourceRec } from "../compose/recommend";
 import type { RunMode } from "../run/pulsarCommand";
 
 /**
@@ -72,6 +73,15 @@ export type InstallPlan = {
 	manualSteps: ServiceStep[];
 	/** avisos sobre limitações do backend nesta máquina */
 	notes: string[];
+	/**
+	 * Cerca de RAM/CPU aplicada — só o docker tem (é ele que usa cgroups).
+	 *
+	 * Fica NO PLANO, e não escondida dentro de quem gera o compose, porque o
+	 * plano é o que a tela e o `pulsar start` mostram antes de executar: sem
+	 * isso o pulsar decidia sozinho o teto de memória da máquina e ninguém
+	 * ficava sabendo — nem para conferir, nem para discordar.
+	 */
+	resources?: ResourceRec;
 };
 
 export type ServiceStatus = {

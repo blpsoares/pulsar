@@ -20,7 +20,6 @@ import { join } from "node:path";
 export type LogFile = { path: string; name: string; size: number };
 
 const CHUNK = 64 * 1024;
-const decoder = new TextDecoder();
 
 /** Os `*.log` de `<dir>/logs`, maiores/mais recentes primeiro. */
 export function listLogFiles(dir: string): LogFile[] {
@@ -75,6 +74,9 @@ export function tailFile(
 		while (position > 0) {
 			const length = Math.min(CHUNK, position);
 			position -= length;
+			// Uint8Array (e não Buffer) porque o `readSync` tipado por @types/node
+			// pede um ArrayBufferView cujo buffer é ArrayBuffer — o Buffer do
+			// bun-types declara ArrayBufferLike e o typecheck recusa.
 			const buf = new Uint8Array(length);
 			readSync(fd, buf, 0, length, position);
 			chunks.unshift(buf);
@@ -112,7 +114,7 @@ export function readSince(
 		const buf = new Uint8Array(length);
 		readSync(fd, buf, 0, length, offset);
 
-		return { lines: splitLines(decoder.decode(buf)), size };
+		return { lines: splitLines(decode(buf)), size };
 	} catch {
 		return { lines: [], size: offset };
 	} finally {
@@ -152,6 +154,18 @@ export function filterLines(lines: string[], query: string): string[] {
 	return lines.filter((line) => line.toLowerCase().includes(needle));
 }
 
+/**
+ * Decodifica um bloco lido do disco. `fatal: false` é o que permite ler pela
+ * CAUDA: um bloco de 64KB quase sempre começa no meio de um caractere multibyte,
+ * e o decoder devolve U+FFFD nesse pedaço em vez de lançar — o caractere quebrado
+ * some junto com a primeira linha, que é descartada de qualquer forma.
+ */
+const DECODER = new TextDecoder("utf-8", { fatal: false });
+
+function decode(bytes: Uint8Array): string {
+	return DECODER.decode(bytes);
+}
+
 function splitLines(text: string): string[] {
 	const lines = text.split(/\r?\n/);
 	// A última linha costuma ser vazia (arquivo termina em \n).
@@ -170,5 +184,5 @@ function decodeAll(chunks: Uint8Array[]): string {
 		at += chunk.length;
 	}
 
-	return decoder.decode(joined);
+	return decode(joined);
 }

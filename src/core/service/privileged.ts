@@ -48,12 +48,17 @@ export async function runPrivilegedStep(
 		sudo: SudoMode;
 		ask: AskCallback;
 		onOutput?: (line: string) => void;
+		advise?: (raw: string) => string | undefined;
 	},
 ): Promise<StepResult | null> {
 	if (opts.sudo === "unavailable") return null;
 
 	if (opts.sudo === "passwordless")
-		return execStep(step, { cwd: opts.cwd, onOutput: opts.onOutput });
+		return execStep(step, {
+			cwd: opts.cwd,
+			onOutput: opts.onOutput,
+			advise: opts.advise,
+		});
 
 	if (!(await opts.ask(step))) return null;
 
@@ -68,6 +73,7 @@ export async function runPrivilegedStep(
 			cwd: opts.cwd,
 			onOutput: opts.onOutput,
 			interactive: true,
+			advise: opts.advise,
 		}),
 	);
 }

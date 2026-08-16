@@ -4,6 +4,7 @@ import { addFieldsOnMongoDocument } from "../../utils/mongo";
 import { buildReplaceWithMigratedAt } from "./writeDoc";
 import { customLog, fileLog } from "../../utils/customLog";
 import { t } from "../../utils/i18n";
+import { idKey } from "../../utils/idKey";
 import { getLogConfig } from "../../utils/logConfig";
 import {
 	createBar,
@@ -45,19 +46,6 @@ function isTransientDumpError(err: unknown): boolean {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Chave estável de `_id` para mapas em memória. `_id.toString()` COLIDE para `_id`
- * composto/objeto (todos viram "[object Object]") → quebra a decisão
- * insert/update no re-dump. ObjectId/number/string têm toString único; objeto é
- * serializado com JSON.
- */
-const idKey = (id: unknown): string =>
-	id != null &&
-	typeof id === "object" &&
-	!(id as { _bsontype?: string })._bsontype
-		? JSON.stringify(id)
-		: String(id);
 
 // Ordem canônica dos tipos BSON (do menor pro maior), agrupada pelos aliases de
 // `$type`. Usada pra montar "_id ABAIXO da fronteira na ordem TOTAL" mesmo com
@@ -123,10 +111,18 @@ export type DumpOptions = {
 	}) => void;
 };
 
+/**
+ * Conjunto VIVO de chaves `idKey` de docs que o watch deletou no destino
+ * enquanto o dump roda — o cursor do dump não pode ressuscitá-los. É lido a cada
+ * lote (o engine segue inserindo nele durante o dump), por isso é uma referência,
+ * não uma cópia.
+ */
+export type DeletedKeys = { has(key: string): boolean };
+
 export async function dumpCollections(
 	sourceCollection: Collection,
 	destCollection: Collection,
-	deletedIds: string[],
+	deletedKeys: DeletedKeys,
 	opts: DumpOptions = {},
 ): Promise<boolean> {
 	const { filter, resumeFromId, onProgress } = opts;
@@ -145,20 +141,26 @@ export async function dumpCollections(
 	let lastLogged = 0;
 	// Fronteira VIVA: menor _id já processado. Avança a cada lote e é o ponto de
 	// retomada tanto entre restarts quanto entre RETRIES dentro do mesmo run.
-	let frontier: unknown = resumeFromId ?? null;
+	//
+	// `hasFrontier` é um flag SEPARADO, e não `frontier != null`, porque `null` é
+	// um `_id` LEGÍTIMO no Mongo: uma collection pode ter (no máximo) um doc com
+	// `_id: null`, e ele é o MENOR de todos na ordem BSON — ou seja, é justamente
+	// o último a ser processado e vira a fronteira final. Usar `!= null` como
+	// sentinela confundiria "fronteira em null" com "sem fronteira" e faria a
+	// varredura recomeçar do zero.
+	let frontier: unknown = resumeFromId;
+	let hasFrontier = resumeFromId !== undefined;
 
 	// Query do recorte ainda-não-copiado: tudo, ou "abaixo da fronteira" na ordem
 	// TOTAL do BSON (type-safe p/ _id misto — ver belowFrontier).
 	const remainingFilter = (): Document =>
-		frontier != null
-			? { $and: [baseFilter, belowFrontier(frontier)] }
-			: baseFilter;
+		hasFrontier ? { $and: [baseFilter, belowFrontier(frontier)] } : baseFilter;
 
 	try {
 		// Sem filtro/retomada: estimatedDocumentCount (metadados, instantâneo).
 		// Senão countDocuments (exato — a guarda depende de um total confiável).
 		const total =
-			!filter && frontier == null
+			!filter && !hasFrontier
 				? await sourceCollection.estimatedDocumentCount()
 				: await sourceCollection.countDocuments(remainingFilter());
 
@@ -167,10 +169,9 @@ export async function dumpCollections(
 		trackDumpStart(collectionName, total);
 
 		if (!bar) {
-			const resumeMsg =
-				frontier != null
-					? t("dump.start_resume_suffix", { frontier: String(frontier) })
-					: "";
+			const resumeMsg = hasFrontier
+				? t("dump.start_resume_suffix", { frontier: String(frontier) })
+				: "";
 			customLog(
 				"info",
 				t("dump.start", { coll: collectionName, total, resume: resumeMsg }),
@@ -179,11 +180,12 @@ export async function dumpCollections(
 
 		const flush = async (page: Document[]) => {
 			if (page.length === 0) return;
-			await processBatch(page, destCollection, deletedIds, stats);
+			await processBatch(page, destCollection, deletedKeys, stats);
 			processed += page.length;
 			trackDumpProgress(collectionName, processed, total);
 			// Cursor varre _id desc → o último doc do lote tem o menor _id visto.
 			frontier = page[page.length - 1]._id;
+			hasFrontier = true;
 			bar?.increment(page.length, {
 				skip: stats.skipped,
 				upd: stats.updated,
@@ -221,8 +223,14 @@ export async function dumpCollections(
 					.sort({ _id: -1 });
 				let page: Document[] = [];
 				for await (const coldDocument of cursor) {
-					// nullish, não falsy: um _id legítimo de 0 ou "" não pode ser descartado
-					if (coldDocument?._id == null) continue;
+					// Só descarta o que NÃO é documento. `_id` nulo/0/"" é legítimo no
+					// Mongo e NÃO pode ser pulado: descartar `_id: null` travava o dump
+					// num laço infinito — a guarda de reconciliação contava o doc como
+					// faltando, o cursor o entregava, o loop o jogava fora, a fronteira
+					// não andava, e a collection falhava após todos os retries, em TODO
+					// restart. Achado numa collection real (skus: 1 doc com _id null
+					// entre 42.090 com _id int).
+					if (!coldDocument) continue;
 					page.push(coldDocument);
 					if (page.length >= batchSize) {
 						await flush(page);
@@ -323,10 +331,14 @@ export async function dumpCollections(
 async function processBatch(
 	page: Document[],
 	destCollection: Collection,
-	deletedIds: string[],
+	deletedKeys: DeletedKeys,
 	stats: { skipped: number; updated: number; inserted: number },
 ) {
-	const docs = page.filter((d) => !deletedIds.includes(d._id.toString()));
+	// `idKey`, NUNCA `_id.toString()`: com toString, um `_id` composto vira
+	// "[object Object]" e UM único delete durante o dump fazia este filtro
+	// descartar TODOS os docs de _id composto — o dump seguia "avançando" e ainda
+	// era carimbado como concluído. Era a perda silenciosa de 2,36M de 3,2M docs.
+	const docs = page.filter((d) => !deletedKeys.has(idKey(d._id)));
 	if (docs.length === 0) return;
 
 	const ids = docs.map((d) => d._id);

@@ -247,9 +247,7 @@ describe("seleção de quais índices copiar", () => {
 
 		expect(res.created).toBe(0);
 		// Nada criado significa que a collection nem chegou a existir no destino.
-		const existe = await dstDb
-			.listCollections({ name: "pedidos" })
-			.toArray();
+		const existe = await dstDb.listCollections({ name: "pedidos" }).toArray();
 		expect(existe).toHaveLength(0);
 	});
 

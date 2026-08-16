@@ -130,3 +130,84 @@ export function listWindow(
 
 	return { start, end: start + size };
 }
+
+/**
+ * Encurta um caminho preservando o NOME DO ARQUIVO.
+ *
+ * O nome é o que identifica a config; cortar `ads-staging.yml` em `ads-s…`
+ * (que era o que a sidebar de 19 colunas fazia) transforma a lista em
+ * adivinhação. Quando não cabe, some o MEIO do caminho — `pulsar/…/ads.yml` —
+ * porque a pasta raiz e o arquivo são o que orientam.
+ */
+export function shortenPath(path: string, max: number): string {
+	if (max <= 1) return path.slice(0, Math.max(0, max));
+	if (path.length <= max) return path;
+
+	const parts = path.split("/");
+	const file = parts[parts.length - 1] ?? path;
+	const head = parts[0] ?? "";
+
+	if (parts.length > 2) {
+		const withHead = `${head}/…/${file}`;
+		if (withHead.length <= max) return withHead;
+	}
+
+	const tail = `…/${file}`;
+	if (parts.length > 1 && tail.length <= max) return tail;
+
+	// O nome sozinho cabe: some com o caminho inteiro, sem reticências — elas
+	// dariam a impressão de que o NOME foi cortado, que é a leitura errada.
+	if (file.length <= max) return file;
+
+	// Nem o nome do arquivo cabe: corta o FIM dele (a extensão importa menos
+	// que o começo, que é onde mora a diferença entre um yml e outro).
+	return `${file.slice(0, max - 1)}…`;
+}
+
+export type HintLike = { keys: string; label: string };
+
+/**
+ * Escolhe quais teclas cabem na barra, com as OBRIGATÓRIAS garantidas.
+ *
+ * A barra tem altura fixa (reservada no CHROME_ROWS) e o texto quebra por
+ * palavra. Quando a lista passa das linhas disponíveis, o excedente não é
+ * "cortado com reticências": ele some sem deixar rastro, porque o Box recorta
+ * a terceira linha inteira. Foi o que aconteceu com `ctrl+d sair da TUI` na
+ * tela inicial a 140 colunas — o único jeito anunciado de sair da TUI
+ * desapareceu justamente na tela onde mais falta.
+ *
+ * Por isso o orçamento é calculado ANTES de renderizar: as teclas obrigatórias
+ * (sair, seleção de texto) reservam seu espaço primeiro, e as teclas da
+ * TELA ocupam o que sobrou, na ordem em que a tela as listou — as últimas caem
+ * fora, que é o comportamento certo, porque cada tela lista da mais para a
+ * menos usada.
+ */
+export function fitHints(
+	leading: HintLike[],
+	screen: HintLike[],
+	trailing: HintLike[],
+	columns: number,
+	rows: number,
+): HintLike[] {
+	// " · " entre itens, "keys label" dentro de cada um.
+	const cost = (h: HintLike) => h.keys.length + 1 + h.label.length;
+	const SEP = 3;
+
+	const budget = Math.max(0, columns * rows);
+	const fixed = [...leading, ...trailing];
+	// -1 por linha: quebrar por palavra raramente preenche a coluna final.
+	let used =
+		fixed.reduce((sum, h) => sum + cost(h), 0) +
+		Math.max(0, fixed.length - 1) * SEP +
+		rows;
+
+	const kept: HintLike[] = [];
+	for (const h of screen) {
+		const next = used + cost(h) + SEP;
+		if (next > budget) break;
+		used = next;
+		kept.push(h);
+	}
+
+	return [...leading, ...kept, ...trailing];
+}

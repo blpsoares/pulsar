@@ -4,7 +4,7 @@ import { cpus, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { committedResources } from "../compose/committed";
-import { recommendResources } from "../compose/recommend";
+import { type ResourceRec, recommendResources } from "../compose/recommend";
 import {
 	composePath,
 	dockerPlan,
@@ -70,11 +70,33 @@ export type InstallResult = {
 	/** passos com sudo que o usuário optou por não rodar agora */
 	skippedPrivileged: ServiceStep[];
 	ok: boolean;
+	/** uma linha explicando a falha e o que fazer — vazia quando deu certo */
+	error?: string;
 };
+
+/**
+ * Recursos recomendados para uma instância nova nesta máquina.
+ *
+ * A mesma conta do `pulsar compose up`, via a mesma função: parte do orçamento
+ * da VM e SUBTRAI o que as instâncias existentes já comprometeram. Exportada
+ * para que a tela e o `pulsar start` possam MOSTRAR o número antes de aplicar
+ * — e oferecer o ajuste manual.
+ */
+export function recommendedResources(): ResourceRec {
+	const committed = committedResources();
+	return recommendResources(
+		totalmem(),
+		cpus().length,
+		committed.mem,
+		committed.cpus,
+	);
+}
 
 export function buildPlan(
 	backend: Backend,
 	spec: ServiceSpec,
+	/** cerca de RAM/CPU escolhida (docker); omitido = a recomendada */
+	resources?: ResourceRec,
 ): InstallPlan | { error: string } {
 	switch (backend) {
 		case "systemd":
@@ -83,21 +105,8 @@ export function buildPlan(
 			return launchdPlan(spec);
 		case "pm2":
 			return pm2Plan(spec);
-		case "docker": {
-			// Os recursos saem do uso atual da máquina, descontando o que as
-			// instâncias existentes já comprometeram — a mesma conta do
-			// `pulsar compose up`, via a mesma função.
-			const committed = committedResources();
-			return dockerPlan(
-				spec,
-				recommendResources(
-					totalmem(),
-					cpus().length,
-					committed.mem,
-					committed.cpus,
-				),
-			);
-		}
+		case "docker":
+			return dockerPlan(spec, resources ?? recommendedResources());
 	}
 }
 
@@ -128,12 +137,16 @@ export async function installService(
 	// automático correspondente já resolveu sozinho.
 	const resultsById = new Map<string, StepResult>();
 	let ok = true;
+	let error: string | undefined;
 
 	const stepOpts = {
 		cwd: spec.workingDir,
 		sudo: opts?.sudo ?? "needs-password",
 		ask: opts?.ask ?? (async () => false),
 		onOutput: opts?.onOutput,
+		// O `execStep` preenche `advice`/`raw` no resultado; quem sabe traduzir a
+		// falha é aqui, que conhece o backend do plano.
+		advise: (raw: string) => adviseFailure(plan.backend, raw),
 	};
 
 	const runOne = (step: ServiceStep) =>
@@ -156,6 +169,7 @@ export async function installService(
 
 		if (!result.ok && !step.optional) {
 			ok = false;
+			error = stepFailure(step, result.raw ?? result.output, result.advice);
 			// Parar no primeiro passo essencial que falha: seguir adiante
 			// deixaria um serviço meio instalado, pior que nenhum.
 			break;
@@ -182,7 +196,58 @@ export async function installService(
 		}
 	}
 
-	return { plan, files: written, results, skippedPrivileged, ok };
+	return { plan, files: written, results, skippedPrivileged, ok, error };
+}
+
+/**
+ * Mensagem de falha ACIONÁVEL: comando + causa + saída sugerida, numa linha só.
+ *
+ * O stderr cru (`Failed to connect to bus: No medium found`) diz o que o
+ * systemd sentiu, não o que o usuário deve fazer — e a tela mostra só a
+ * primeira linha do output, então a saída sugerida tem que caber ali.
+ */
+export function stepFailure(
+	step: ServiceStep,
+	output: string,
+	advice?: string,
+): string {
+	const cause = output.split("\n")[0]?.trim() || "sem saída do comando";
+	const cmd = `${step.cmd} ${step.args.join(" ")}`.trim();
+	return advice ? `${cmd} — ${cause} · ${advice}` : `${cmd} — ${cause}`;
+}
+
+/**
+ * Traduz as falhas que já vimos em campo para a ação que resolve. Sempre
+ * termina propondo TROCAR DE BACKEND: quem está numa tela de instalação quer
+ * o serviço no ar, não um diagnóstico do systemd.
+ */
+export function adviseFailure(
+	backend: Backend,
+	output: string,
+): string | undefined {
+	const text = output.toLowerCase();
+
+	if (backend === "systemd") {
+		if (
+			/failed to connect to bus|no medium found|failed to get d-?bus/.test(text)
+		)
+			return "esta sessão não tem bus de usuário (WSL/container): troque o backend para docker ou pm2";
+		if (text.includes("interactive authentication required"))
+			return "o systemd pediu autenticação: troque para docker ou pm2, que não dependem de polkit";
+	}
+
+	if (backend === "pm2" && /not found|enoent/.test(text))
+		return "instale o pm2 (bun add -g pm2) ou troque o backend para docker";
+
+	if (
+		backend === "docker" &&
+		/cannot connect to the docker daemon|permission denied|is the docker daemon running/.test(
+			text,
+		)
+	)
+		return "o daemon do Docker não respondeu: suba o Docker ou troque o backend para pm2";
+
+	return "se o backend não funciona nesta máquina, troque na tela (tab) por um que esteja disponível";
 }
 
 /**
@@ -223,6 +288,8 @@ export async function uninstallService(
 					: dockerUninstallSteps(spec);
 
 	const results: StepResult[] = [];
+	// `execStep` (e não `execFile`): a saída completa da falha fica em `raw`,
+	// que é o que a tela mostra ao abrir o passo.
 	for (const step of steps)
 		results.push(await execStep(step, { cwd: spec.workingDir }));
 
@@ -385,7 +452,10 @@ export async function controlService(
 		}
 	})();
 
-	return execStep(step, { cwd: spec.workingDir });
+	return execStep(step, {
+		cwd: spec.workingDir,
+		advise: (raw: string) => adviseFailure(backend, raw),
+	});
 }
 
 function parseProps(stdout: string): Record<string, string> {
@@ -397,9 +467,20 @@ function parseProps(stdout: string): Record<string, string> {
 	return out;
 }
 
+/**
+ * Junta stderr E stdout, nessa ordem, em vez de escolher um.
+ *
+ * O `docker compose` escreve o progresso do build no stderr e a causa da falha
+ * pode sair em qualquer um dos dois; ficar só com o stderr (ou só com o
+ * primeiro não-vazio) descartava justamente a linha que explica o erro.
+ */
 function errorText(err: unknown): string {
 	const e = err as { stdout?: string; stderr?: string; message?: string };
-	return (e.stderr || e.stdout || e.message || String(err)).trim();
+	const partes = [e.stderr, e.stdout]
+		.map((p) => (p ?? "").trim())
+		.filter(Boolean);
+	if (partes.length === 0) return (e.message || String(err)).trim();
+	return partes.join("\n");
 }
 
 function shortError(err: unknown): string {

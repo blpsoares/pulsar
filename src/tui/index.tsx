@@ -42,8 +42,22 @@ export async function startTui(dir = process.cwd()): Promise<void> {
 		process.stdout.write(SHOW_CURSOR + LEAVE_ALT);
 	};
 	process.once("exit", restore);
-	process.once("SIGTERM", restore);
-	process.once("uncaughtException", restore);
+	// SIGTERM/SIGHUP precisam RESTAURAR **e encerrar**. Registrar um handler que
+	// só restaura substitui a ação padrão do sinal (terminar) por nada: a TUI
+	// passaria a IGNORAR `kill` e o fechamento do terminal, ficando viva e presa.
+	for (const sinal of ["SIGTERM", "SIGHUP"] as const)
+		process.once(sinal, () => {
+			restore();
+			// 128 + número do sinal é a convenção de shell para "morto por sinal".
+			process.exit(sinal === "SIGTERM" ? 143 : 129);
+		});
+	// Um crash não pode virar uma TUI viva em estado inconsistente: restaura a
+	// tela, mostra o erro (que o alternate screen esconderia) e sai com falha.
+	process.once("uncaughtException", (err) => {
+		restore();
+		console.error(err);
+		process.exit(1);
+	});
 
 	const instance = render(
 		<MouseProvider>

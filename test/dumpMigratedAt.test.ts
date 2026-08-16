@@ -50,7 +50,11 @@ beforeEach(async () => {
 describe("dump grava __migratedAt", () => {
 	test("dump inicial grava __migratedAt Date; re-dump preserva", async () => {
 		await seed(srcDb, "c", 5);
-		await dumpCollections(srcDb.collection("c"), dstDb.collection("c"), []);
+		await dumpCollections(
+			srcDb.collection("c"),
+			dstDb.collection("c"),
+			new Set(),
+		);
 		const first = await dstDb.collection("c").findOne({ _id: 0 as any });
 		expect(first?.__migratedAt).toBeInstanceOf(Date);
 		const at = (first?.__migratedAt as Date).getTime();
@@ -60,7 +64,11 @@ describe("dump grava __migratedAt", () => {
 			.collection("c")
 			.updateOne({ _id: 0 as any }, { $set: { v: 999 } });
 		await new Promise((r) => setTimeout(r, 15));
-		await dumpCollections(srcDb.collection("c"), dstDb.collection("c"), []);
+		await dumpCollections(
+			srcDb.collection("c"),
+			dstDb.collection("c"),
+			new Set(),
+		);
 		const second = await dstDb.collection("c").findOne({ _id: 0 as any });
 		expect(second?.v).toBe(999); // re-dump atualizou o dado
 		expect((second?.__migratedAt as Date).getTime()).toBe(at); // data preservada

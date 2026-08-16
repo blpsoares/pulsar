@@ -22,7 +22,9 @@ const syncCollectionEntrySchema = z.union([
 	z
 		.object({
 			name: z.string(),
-			filter: z.record(z.unknown()).optional(),
+			// zod 4 exige o tipo da CHAVE além do valor: `z.record(z.unknown())`
+			// compilava no zod 3 e virou erro aqui.
+			filter: z.record(z.string(), z.unknown()).optional(),
 			filterFile: z.string().optional(),
 		})
 		.refine((d) => !(d.filter && d.filterFile), {
@@ -56,6 +58,10 @@ export const syncYmlSchema = z.object({
 			copyIndexes: z
 				.union([z.boolean(), z.array(collectionIndexesSchema)])
 				.optional(),
+			// Confere origem x destino no startup das collections que iriam RETOMAR
+			// e re-dumpa as que estão devendo. Default TRUE — o carimbo de dump
+			// concluído não é evidência de que o dado chegou.
+			integrityCheck: z.boolean().optional(),
 			// Recria as views da origem no destino (metadados, fora do sync):
 			// `true` = todas; array de nomes = só essas; omitido = nenhuma.
 			copyViews: z.union([z.boolean(), z.array(z.string())]).optional(),

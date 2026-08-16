@@ -1,11 +1,18 @@
 // src/core/sync/changeBuffer.ts
+import { idKey } from "../../utils/idKey";
+
 export type ChangeOp = "upsert" | "delete";
 
 /**
  * Acumula eventos de change stream como gatilhos `{coll, id, op}` com DEDUPE por
  * (coll, id): a última operação vence (um delete posterior suprime um upsert e
  * vice-versa). `drain()` esvazia e agrupa por collection. Guarda o `id` original
- * (ObjectId/number/string) — a chave de dedupe é `String(id)`.
+ * (ObjectId/number/string/composto) — a chave de dedupe é `idKey(id)`.
+ *
+ * A chave PRECISA ser `idKey`, não `String(id)`: com `String`, todo `_id`
+ * composto vira `"[object Object]"` e a collection inteira colapsa numa única
+ * entrada de buffer — o watch aplicaria 1 doc por collection por flush e
+ * descartaria todos os outros em silêncio.
  */
 export class ChangeBuffer {
 	private readonly byColl = new Map<
@@ -19,7 +26,7 @@ export class ChangeBuffer {
 			m = new Map();
 			this.byColl.set(coll, m);
 		}
-		m.set(String(id), { id, op });
+		m.set(idKey(id), { id, op });
 	}
 
 	size(): number {

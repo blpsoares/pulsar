@@ -5,6 +5,7 @@ import { composeUp } from "./commands/compose";
 import migrateCollections from "./commands/migrate";
 import { syncCollections } from "./commands/sync";
 import { ttlCommand } from "./commands/ttl";
+import { verifyCommand } from "./commands/verify";
 import { logger } from "./utils/customLog";
 import { showTitle } from "./utils/showCliTitle";
 
@@ -21,9 +22,19 @@ process.on("uncaughtException", (err) => {
 	console.error("[ ERROR ] uncaughtException:", err.message);
 });
 
-// `pulsar` sem subcomando abre a TUI. O título em ASCII art é pulado nesse
-// caminho: o ink toma conta da tela inteira e o banner só empurraria o layout
-// para fora da janela.
+/**
+ * `pulsar` sem subcomando abre a TUI; `pulsar tui` é o explícito.
+ *
+ * Houve uma tentativa de fazer `pulsar` sozinho apenas listar os comandos, pelo
+ * argumento (correto) de que abrir uma tela cheia sem ninguém pedir sequestra o
+ * terminal e quebra em script/container sem TTY. A decisão vigente é a outra: a
+ * TUI é a porta de entrada. O caso do script segue coberto — `startTui` EXIGE
+ * TTY e, sem ele, manda usar os subcomandos em vez de estourar. Quem quer o
+ * caminho guiado em texto tem o `pulsar start`.
+ *
+ * O título em ASCII art é pulado no caminho da TUI: o ink toma conta da tela
+ * inteira e o banner só empurraria o layout para fora da janela.
+ */
 const wantsTui = process.argv.length <= 2 || process.argv[2] === "tui";
 
 if (!wantsTui) await showTitle();
@@ -67,6 +78,29 @@ program
 	.action(syncCollections);
 
 program
+	.command("verify <file>")
+	.description(
+		"confere se o destino REALMENTE tem o que a origem tem. O sync se diz 'em dia' pelo carimbo no __sync, que é bookkeeping — este comando olha o dado. Sai com código 1 se divergir.",
+	)
+	.option("-a --all", "confere todas as collections da origem")
+	.option(
+		"--collections <list>",
+		"confere só estas, separadas por vírgula, ex.: pedidos,usuarios",
+	)
+	.option(
+		"-d --deep",
+		"compara _id a _id (exato, diz QUAIS docs faltam). Sem isso, só compara totais.",
+	)
+	.option(
+		"-r --reconcile",
+		"recopia da origem os docs faltantes encontrados (implica --deep).",
+	)
+	.option("-p --parallel <number>", "collections em paralelo. Padrão: 4.")
+	.option("-b --batch <number>", "docs por rodada de comparação. Padrão: 2000.")
+	.option("--json", "saída em JSON (para cron/CI)")
+	.action(verifyCommand);
+
+program
 	.command("ttl [file]")
 	.description(
 		"cria índices TTL em massa. Com [file] usa yml granular; sem arquivo, usa as flags abaixo (config uniforme).",
@@ -88,8 +122,10 @@ program
 		"-p --parallel <number>",
 		"quantas collections recebem TTL em paralelo. Padrão: 4.",
 	)
-	.action((file, opts) =>
-		ttlCommand(file, {
+	// O commander espera `void | Promise<void>`: devolver o array de resultados
+	// do ttlCommand tipava a action errado (e ninguém consome esse retorno aqui).
+	.action(async (file, opts) => {
+		await ttlCommand(file, {
 			uri: opts.uri,
 			db: opts.db,
 			collections: opts.collections,
@@ -98,8 +134,8 @@ program
 			deriveFromId: opts.deriveFromId,
 			expire: opts.expire,
 			parallel: opts.parallel,
-		}),
-	);
+		});
+	});
 
 const compose = program
 	.command("compose")
@@ -121,6 +157,16 @@ program
 	.action(async () => {
 		const { startTui } = await import("./tui/index");
 		await startTui(process.cwd());
+	});
+
+program
+	.command("start")
+	.description(
+		"caminho guiado: escolhe a config (ou cria uma), pergunta se roda aqui ou em background e qual supervisor usar",
+	)
+	.action(async () => {
+		const { startCommand } = await import("./commands/start");
+		await startCommand(process.cwd());
 	});
 
 if (wantsTui) {

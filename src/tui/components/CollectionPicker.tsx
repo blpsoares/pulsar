@@ -8,6 +8,7 @@ import {
 import type { CollIndexes } from "../../core/inspect/indexSummary";
 import { type DbEntry, filterEntries } from "../../core/inspect/inspectDb";
 import { useClickable } from "../mouse/MouseProvider";
+import { isMouseInput } from "../mouse/parse";
 import { glyph, theme } from "../theme";
 import { SearchField } from "./SearchField";
 import { windowRange } from "./Select";
@@ -92,6 +93,10 @@ export function CollectionPicker({
 	// voltaria de tela. Handler único é o que torna o modo busca possível.
 	useInput(
 		(input, key) => {
+			// Sequência de mouse chega como texto pelo ink: sem esta guarda, um
+			// clique durante a busca injetaria `[<0;10;5M` no termo procurado e a
+			// lista esvaziaria sem explicação.
+			if (isMouseInput(input)) return;
 			// Modo busca: as teclas viram texto. Sem esse modo, digitar "a" para
 			// procurar "accounts" selecionaria TODAS as collections.
 			if (searching) {

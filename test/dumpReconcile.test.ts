@@ -58,7 +58,10 @@ beforeEach(async () => {
  * `truncations`: quantas varreduras cortam; demais voltam inteiras.
  */
 function wrapCursor(
-	cursor: { [k: string]: unknown },
+	// Indexável por símbolo (o proxy intercepta `Symbol.asyncIterator`) e já
+	// declarado como iterável: sem isso o `target[Symbol.asyncIterator]` e o
+	// `for await (… of target)` não passam pelo typecheck.
+	cursor: AsyncIterable<unknown> & Record<string | symbol, unknown>,
 	cutAfter: number,
 	budget: { left: number },
 ) {
@@ -109,9 +112,9 @@ function shortCursorCollection(
 			if (prop === "find") {
 				return (...args: unknown[]) =>
 					wrapCursor(
-						(target.find as (...a: unknown[]) => unknown)(...args) as {
-							[k: string]: unknown;
-						},
+						(target.find as (...a: unknown[]) => unknown)(
+							...args,
+						) as AsyncIterable<unknown> & Record<string | symbol, unknown>,
 						cutAfter,
 						budget,
 					);
@@ -128,7 +131,7 @@ describe("dumpCollections — guarda de reconciliação (cursor que encerra cedo
 		await seed(srcDb, "colA", 100); // _id 0..99 (cursor varre 99→0)
 		const src = shortCursorCollection(srcDb.collection("colA"), 82, 1);
 
-		const ok = await dumpCollections(src, dstDb.collection("colA"), [], {
+		const ok = await dumpCollections(src, dstDb.collection("colA"), new Set(), {
 			batchSize: 500, // 1 lote: o corte em 82 deixa 18 docs (os _id mais baixos)
 		});
 
@@ -146,7 +149,7 @@ describe("dumpCollections — guarda de reconciliação (cursor que encerra cedo
 		const src = shortCursorCollection(srcDb.collection("colA"), 0, 999);
 		process.env.DUMP_MAX_RETRIES = "2";
 
-		const ok = await dumpCollections(src, dstDb.collection("colA"), [], {
+		const ok = await dumpCollections(src, dstDb.collection("colA"), new Set(), {
 			batchSize: 500,
 		});
 
@@ -171,10 +174,15 @@ describe("dumpCollections — guarda de reconciliação (cursor que encerra cedo
 		// Passa uma fronteira ObjectId — com o $lt type-bracketing ANTIGO, isso
 		// pularia os 10 docs de _id objeto (copiaria só 10). Com o fix, o _id não é
 		// ObjectId-puro → ignora a fronteira, varre tudo e copia os 20.
-		const ok = await dumpCollections(coll, dstDb.collection("mixed"), [], {
-			resumeFromId: new ObjectId("ffffffffffffffffffffffff"),
-			batchSize: 500,
-		});
+		const ok = await dumpCollections(
+			coll,
+			dstDb.collection("mixed"),
+			new Set(),
+			{
+				resumeFromId: new ObjectId("ffffffffffffffffffffffff"),
+				batchSize: 500,
+			},
+		);
 
 		expect(ok).toBe(true);
 		expect(await dstDb.collection("mixed").countDocuments()).toBe(20);
@@ -189,9 +197,14 @@ describe("dumpCollections — guarda de reconciliação (cursor que encerra cedo
 		// detectar que faltam 18 e retomar (re-varre do topo) até fechar 30.
 		const src = shortCursorCollection(coll, 12, 1);
 
-		const ok = await dumpCollections(src, dstDb.collection("objids"), [], {
-			batchSize: 500,
-		});
+		const ok = await dumpCollections(
+			src,
+			dstDb.collection("objids"),
+			new Set(),
+			{
+				batchSize: 500,
+			},
+		);
 
 		expect(ok).toBe(true);
 		expect(await dstDb.collection("objids").countDocuments()).toBe(30);

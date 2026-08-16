@@ -24,11 +24,13 @@ bun run compose:up     # atalho interativo: cria uma 2ª+ instância pulsar-sync
 pulsar compose up      # idem, via binário instalado (bin:dev)
 bun run get:cli        # compila e instala o comando em ~/.local/bin (avisa se estiver fora do PATH)
 bun run rec:tui        # regrava os GIFs da TUI em docs/media (precisa de vhs+ttyd+ffmpeg)
-pulsar                 # sem argumento: abre a TUI (Ink) — cria config, roda, instala serviço, lê log
-pulsar tui             # idem, explícito
+pulsar                 # sem argumento: abre a TUI (Ink)
+pulsar start           # caminho guiado na CLI: escolhe/cria config → aqui ou background → supervisor
+pulsar tui             # abre a TUI (Ink) — cria config, roda, instala serviço, lê log
 bun run src/cli.ts migrate configs/test.yml -p 4
 bun run src/cli.ts sync configs/test.yml
 bun run src/cli.ts sync configs/test.yml --verbose
+bun run src/cli.ts verify configs/test.yml --deep     # confere se o destino tem o que a origem tem
 bun run src/cli.ts ttl configs/ttl-example.yml                                       # TTL em massa via yml
 bun run src/cli.ts ttl --uri '...' --db x --all --derive-from-id --expire 30d        # TTL em massa via CLI
 ```
@@ -39,9 +41,11 @@ bun run src/cli.ts ttl --uri '...' --db x --all --derive-from-id --expire 30d   
 src/
   cli.ts                  # entrypoint, define os comandos CLI
   commands/
+    start.ts              # `pulsar start`: fluxo guiado na CLI (config → aqui/background → supervisor)
     migrate.ts            # orquestra o fluxo completo de dump/restore
     sync.ts               # orquestra o fluxo de watch; inicializa logConfig
     ttl.ts                # comando standalone: cria índices TTL em massa (yml ou CLI)
+    verify.ts             # comando standalone: audita origem x destino (--deep/--reconcile), exit 1 se divergir
     compose.ts            # comando interativo `compose up`: gera docker-compose-limit-<N>.yml de uma nova instância
   core/
     dump/
@@ -62,6 +66,8 @@ src/
       changeBuffer.ts     # ChangeBuffer: dedupe/drain de IDs por collection para flush em lote
       deleteEvent.ts      # loga [collection] delete | _id quando verbose
       copyViews.ts        # recria views da origem no destino (copyViews): paralelo ao dump, idempotente
+    verify/
+      verifyCollection.ts   # compara origem x destino (count ou deep por _id) e recopia faltantes
     ttl/
       parseDuration.ts      # "30d"/"1h"/"3mo" -> segundos (mês=30d, ano=365d; 'm' proibido)
       resolveTtlEntry.ts    # precedência defaults+override por collection; erro se não resolve
@@ -101,6 +107,7 @@ src/
     getCollections.ts     # resolve lista de collections; carrega filter/filterFile
     freeze.ts             # chamado no início do sync (operação no destino)
   utils/
+    idKey.ts              # chave canônica de _id (BSON) — NUNCA String(id): colide em _id composto
     mongo.ts              # addFieldsOnMongoDocument + hash SHA-1 + transformFilterForChangeStream
     logConfig.ts          # singleton { verbose, progress } — setado em sync.ts, lido nos handlers
     parseYml.ts           # valida yml via Zod
@@ -139,6 +146,45 @@ Estado no `__sync` do destino: 1 doc por collection `{ id, dumpCompletedAt, dump
 **Retry do dump dentro do run (`dumpEvent.ts`):** além da retomada entre restarts, uma falha **transitória** de conexão no meio do dump (ECONNREFUSED, reset, failover de nó do Atlas, cursor morto no getMore) **não aborta** a collection. O cursor reabre **da fronteira viva** (a mesma `_id` que vinha sendo carimbada, sem re-escanear) com backoff exponencial (`DUMP_RETRY_BASE_MS` → cap 30s), até `DUMP_MAX_RETRIES` tentativas (default 30 ≈ 14min). Crítico p/ collections enormes (215M) rodando sem supervisão: sem isso, um blip às 3h da manhã abortava o dump e ele só retomava num restart manual. Erro **lógico** (não-transitório) não é retentado. Esgotados os retries, a collection entra em `SyncEngine.failedDumps` (sem `dumpCompletedAt` → re-dumpa da fronteira no próximo restart) e o `sync.ts` loga um relatório honesto ("N FALHARAM e serão retomadas") em vez de "concluído em 54".
 
 Decisão e detector do 286 vivem em `core/sync/restartDecision.ts`. Testado em `test/` (40 testes contra Mongo real: cold, restart offline, fallback 286, race, `--full`, volumetria ~25× mais rápido, dump retomável por fronteira, e stream único roteando várias collections / token global). Rodar: `bun test` (precisa dos containers: `bun run test:up`). Desenho completo em `docs/superpowers/specs/2026-06-18-sync-resume-token-design.md`.
+
+### `_id` não-escalar — chave canônica (`utils/idKey.ts`)
+
+**Nunca use `String(id)` / `id.toString()` como chave de `_id` em memória.** Todo `_id` composto (`{chave, target}`) vira `"[object Object]"`, e o número `5` e a string `"5"` viram ambos `"5"`. Use `idKey(id)` (`BSON.serialize` em base64: carrega o tipo e preserva a ordem das chaves — a mesma semântica de igualdade de `_id` do Mongo).
+
+Essa colisão foi a causa de perda silenciosa de dados em produção (`_m_snapshotDados`: 3.199.407 na origem, 841.008 no destino, marcada como concluída):
+
+- **`dumpEvent.processBatch`** filtrava com `deletedIds.includes(d._id.toString())`. Bastava **um** delete chegar pelo watch durante o dump inicial para que, dali em diante, **todo** doc de `_id` composto casasse com `"[object Object]"` e fosse descartado. O dump seguia avançando a fronteira, a guarda de reconciliação (que confere a origem *abaixo da fronteira*) passava, e a collection era carimbada com `dumpCompletedAt`.
+- **`ChangeBuffer.add`** dedupava por `String(id)` → todos os `_id` compostos de uma collection colapsavam numa entrada; o watch aplicava 1 doc por collection por flush.
+- **`engine.flush`** comparava `found`/`missing` por `String(_id)` → doc vivo na origem podia ser classificado como ausente e **apagado** do destino via `deleteMany`.
+
+Testes: `test/idKey.test.ts`, `test/idKeyCollision.test.ts`, `test/engine.compositeId.test.ts` (3 dos 4 falham no código anterior).
+
+### Checagem de integridade no startup (`integrityCheck`, default **true**)
+
+`dumpCompletedAt` é bookkeeping, não medição. Antes disso, uma collection carimbada por engano **retomava para sempre**: o change stream só entrega mudança nova e nunca reinjeta doc pré-existente, então o buraco era permanente e invisível. Foi assim que 6,2M docs em 33 collections ficaram de fora enquanto o painel dizia `52/52 up to date` em 9s.
+
+Agora, no startup, toda collection que **iria retomar** tem origem e destino contados (`countDocuments`, exato — `estimatedDocumentCount` é aproximado e aproximar aqui significa re-dumpar à toa ou deixar passar buraco real). Se o destino está **devendo**, o carimbo é ignorado e ela cai no dump.
+
+- Um re-dump espúrio é seguro: é idempotente e pula doc idêntico por hash (`500 docs | 120 skipped | 380 inserted`).
+- Destino com **mais** docs que a origem **não** dispara re-dump — isso é órfão (doc que sumiu da origem via `drop`, que o watch não propaga), outro problema.
+- O filtro da collection entra na contagem da origem, senão collection filtrada acusaria déficit falso.
+- Falha ao contar (blip de rede) **não** força re-dump — só loga.
+- `integrityCheck: false` no yml volta ao comportamento antigo.
+
+Testes em `test/engine.integrity.test.ts` (5 casos, incluindo o cenário real: run legítimo carimba, destino perde docs, restart detecta e fecha).
+
+### Comando `verify` — auditoria de integridade
+
+`dumpCompletedAt` é **bookkeeping, não medição**. Uma collection carimbada por engano retoma para sempre, e o change stream nunca reconcilia (só entrega mudança nova; jamais reinjeta doc pré-existente que ficou para trás). Por isso "up to date 52/52" no painel não é evidência de nada.
+
+```sh
+pulsar verify config.yml                      # compara totais (rápido)
+pulsar verify config.yml --deep               # _id a _id: diz QUAIS docs faltam
+pulsar verify config.yml --deep --reconcile   # recopia da origem os faltantes
+pulsar verify config.yml --deep --json        # p/ cron/CI
+```
+
+Sai com **código 1** quando sobra déficit (após a reconciliação, se houver) — dá pra pendurar em cron. A comparação usa `idKey`, então funciona com `_id` composto. Lógica em `core/verify/verifyCollection.ts`, testes em `test/verifyCollection.test.ts`.
 
 ### Dump inicial (`core/sync/dumpEvent.ts`)
 
@@ -316,7 +362,31 @@ docker exec mongo-a mongosh --eval "rs.initiate({_id:'rs0', members:[{_id:0, hos
 bun run src/cli.ts sync configs/test-sync.yml --verbose
 ```
 
-## TUI (`pulsar` sem argumento)
+## Três portas de entrada — `pulsar`, `pulsar start`, `pulsar tui`
+
+**`pulsar` sem argumento ABRE A TUI**; `pulsar tui` é o explícito. Houve uma
+tentativa de fazer o comando nu apenas listar os comandos — o argumento (bom) é
+que tela cheia sem ninguém pedir sequestra o terminal e quebra em script sem
+TTY. A decisão vigente é a outra: a TUI é a porta de entrada, e o caso do
+script segue coberto porque `startTui` EXIGE TTY e, sem ele, manda usar os
+subcomandos em vez de estourar.
+
+- **`pulsar`** — abre a TUI (o mesmo que `pulsar tui`).
+- **`pulsar start`** (`commands/start.ts`) — o caminho **guiado, na CLI**:
+  escolhe uma config detectada (ou cria uma ali mesmo), pergunta se roda **aqui
+  ou em background** e, no background, **qual supervisor** — mostrando os
+  indisponíveis riscados **com o motivo**, em vez de escondê-los. Mostra o
+  plano completo antes de executar. Sem ink de propósito: é um fluxo linear de
+  perguntas, não uma tela; usa o `prompt()` global do Bun, o mesmo do
+  `compose up`. `null` do prompt (ctrl+d/EOF) encerra em vez de seguir como se
+  a pessoa tivesse respondido vazio.
+- **`pulsar tui`** — a interface completa, para quem vai ficar operando.
+
+O formulário do `start` é DELIBERADAMENTE mínimo (origem, destino,
+collections): o ajuste fino segue na TUI ou no yml. Reproduzir o wizard inteiro
+aqui criaria duas implementações do mesmo formulário para manter em sincronia.
+
+## TUI (`pulsar tui`)
 
 Interface de terminal em **Ink** que cobre o ciclo inteiro sem editar yml à mão.
 `pulsar` sem subcomando abre a TUI; `pulsar tui` é o explícito. Os subcomandos
@@ -461,7 +531,9 @@ no tsconfig para resolver isso. Desenho completo em
 `docs/superpowers/specs/2026-08-15-tui-service-panel-design.md` (o de
 `2026-07-28-tui-design.md` descreve a camada de tela ANTERIOR). Testes em
 `test/tuiKeys.test.ts`, `test/tuiService.test.ts`, `test/tuiConfig.test.ts`,
-`test/tuiInspect.test.ts`, `test/state.test.ts` e `test/privileged.test.ts`.
+`test/tuiInspect.test.ts`, `test/tuiLayout.test.ts` (geometria pura da barra de
+teclas), `test/tuiMouse.test.ts` (parse SGR e hit-testing), `test/state.test.ts`
+e `test/privileged.test.ts`.
 
 ## Pontos de atenção
 

@@ -6,6 +6,19 @@ export type StepResult = {
 	step: ServiceStep;
 	ok: boolean;
 	output: string;
+	/** o que fazer a respeito, quando dá para saber (só em falha) */
+	advice?: string;
+	/**
+	 * A saída COMPLETA do comando que falhou, sem resumir.
+	 *
+	 * `output` é o que cabe na lista de passos. Só que o erro de verdade do
+	 * `docker compose` (ou do `systemctl`) quase nunca está na primeira linha —
+	 * vem depois, no fim do stderr. Guardar só o resumo deixava a tela dizendo
+	 * "parou num passo obrigatório" sem NENHUMA pista do motivo, que é a pior
+	 * combinação possível: o usuário sabe que quebrou e não tem como descobrir
+	 * por quê sem sair da TUI e repetir o comando à mão.
+	 */
+	raw?: string;
 };
 
 /** Teto padrão de um passo — vale para tudo que não declara o seu. */
@@ -42,6 +55,13 @@ export function execStep(
 		 * aparece na tela real durante o handoff.
 		 */
 		interactive?: boolean;
+		/**
+		 * Traduz a saída crua de uma falha na AÇÃO que resolve. Vem de fora
+		 * (`manager.adviseFailure`, que conhece o backend) porque o `execStep` não
+		 * sabe qual supervisor está sendo instalado — e importar o manager aqui
+		 * refaria o ciclo de import que tirou o `StepResult` de lá.
+		 */
+		advise?: (raw: string) => string | undefined;
 	},
 ): Promise<StepResult> {
 	return new Promise((resolve) => {
@@ -74,7 +94,14 @@ export function execStep(
 				.filter(Boolean)
 				.join("\n")
 				.trim();
-			resolve({ step, ok, output });
+			if (ok) {
+				resolve({ step, ok, output });
+				return;
+			}
+			// Em falha o texto inteiro é preservado em `raw` (é o que o
+			// `pulsar start` imprime e o que a tela mostra ao abrir o passo).
+			const raw = output;
+			resolve({ step, ok, output, raw, advice: opts.advise?.(raw) });
 		};
 
 		child.on("error", (err) => finish(false, err.message));

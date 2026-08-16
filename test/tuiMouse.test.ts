@@ -6,7 +6,13 @@ import {
 	parsePm2List,
 	parseSystemdUnits,
 } from "../src/core/service/discover";
-import { isMouseInput, parseMouse } from "../src/tui/mouse/parse";
+import { dispatch, type Region } from "../src/tui/mouse/MouseProvider";
+import {
+	ENABLE_MOUSE,
+	isMouseInput,
+	parseMouse,
+	type TerminalMouseEvent,
+} from "../src/tui/mouse/parse";
 
 /**
  * Parsing do protocolo de mouse — a peça pura do clique. O resto (hit-testing
@@ -60,6 +66,30 @@ describe("protocolo de mouse (SGR 1006)", () => {
 		expect(second.events[0]).toMatchObject({ x: 9, y: 4 });
 	});
 
+	test("shift sai do bitfield sozinho, sem contaminar o botão", () => {
+		// 0 + 4 (shift) — botão esquerdo COM shift continua sendo botão 0
+		const event = parseMouse("\x1b[<4;5;5M").events[0];
+		expect(event).toMatchObject({ kind: "press", button: 0, shift: true });
+		expect(event?.ctrl).toBe(false);
+		expect(event?.alt).toBe(false);
+
+		// roda com shift: 64 + 4
+		const wheel = parseMouse("\x1b[<68;5;5M").events[0];
+		expect(wheel).toMatchObject({ kind: "wheel-up", shift: true });
+
+		// sem shift o bit fica desligado
+		expect(parseMouse("\x1b[<0;5;5M").events[0]?.shift).toBe(false);
+	});
+
+	test("liga o modo 1000 (clique+roda), nunca 1002/1003", () => {
+		// Rastrear arrasto (1002) ou movimento (1003) tomaria do terminal o gesto
+		// de selecionar texto — e o 1003 ainda satura o stdin.
+		expect(ENABLE_MOUSE).toContain("[?1000h");
+		expect(ENABLE_MOUSE).toContain("[?1006h");
+		expect(ENABLE_MOUSE).not.toContain("1002");
+		expect(ENABLE_MOUSE).not.toContain("1003");
+	});
+
 	test("reconhece a sequência como o ink a entrega (sem ESC)", () => {
 		// Verificado na prática: o ink entrega o corpo do escape como "texto"
 		expect(isMouseInput("[<0;10;5M")).toBe(true);
@@ -69,6 +99,85 @@ describe("protocolo de mouse (SGR 1006)", () => {
 	});
 });
 
+describe("dispatch do mouse", () => {
+	/**
+	 * Área de clique falsa: o dispatch só pergunta ao yoga a posição/tamanho
+	 * computados, então um stub com esses quatro números basta para exercitar o
+	 * hit-testing sem montar a árvore do ink.
+	 */
+	function regionAt(rect: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}): { region: Region; clicks: number[]; wheels: number[] } {
+		const clicks: number[] = [];
+		const wheels: number[] = [];
+		const node = {
+			yogaNode: {
+				getComputedLeft: () => rect.x,
+				getComputedTop: () => rect.y,
+				getComputedWidth: () => rect.width,
+				getComputedHeight: () => rect.height,
+			},
+			parentNode: null,
+		};
+
+		return {
+			clicks,
+			wheels,
+			region: {
+				id: 0,
+				ref: { current: node } as unknown as Region["ref"],
+				onClick: (info) => clicks.push(info.row),
+				onWheel: (dir) => wheels.push(dir),
+			},
+		};
+	}
+
+	function event(over: Partial<TerminalMouseEvent> = {}): TerminalMouseEvent {
+		return {
+			kind: "press",
+			x: 5,
+			y: 5,
+			button: 0,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			...over,
+		};
+	}
+
+	test("clique simples chega na área, com a linha relativa", () => {
+		const { region, clicks } = regionAt({ x: 0, y: 3, width: 20, height: 10 });
+		dispatch(new Map([[0, region]]), event({ x: 5, y: 5 }));
+		expect(clicks).toEqual([2]);
+	});
+
+	test("shift+clique é ignorado: o arrasto pertence ao terminal", () => {
+		// Terminal que NÃO faz o override nativo manda o press até aqui; se a TUI
+		// reagisse, tentar selecionar texto abriria o menu do item.
+		const { region, clicks } = regionAt({ x: 0, y: 0, width: 20, height: 10 });
+		dispatch(new Map([[0, region]]), event({ shift: true }));
+		expect(clicks).toEqual([]);
+	});
+
+	test("shift também neutraliza a roda", () => {
+		const { region, wheels } = regionAt({ x: 0, y: 0, width: 20, height: 10 });
+		dispatch(new Map([[0, region]]), event({ kind: "wheel-down" }));
+		dispatch(
+			new Map([[0, region]]),
+			event({ kind: "wheel-down", shift: true }),
+		);
+		expect(wheels).toEqual([1]);
+	});
+
+	test("soltar não dispara ação (senão o clique contaria duas vezes)", () => {
+		const { region, clicks } = regionAt({ x: 0, y: 0, width: 20, height: 10 });
+		dispatch(new Map([[0, region]]), event({ kind: "release" }));
+		expect(clicks).toEqual([]);
+	});
+});
 describe("descrição do que foi copiado", () => {
 	test("corta e achata quebras de linha", () => {
 		expect(describeCopy("uma\nlinha  só")).toBe("uma linha só");

@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { platform } from "node:os";
 import { basename, join, relative } from "node:path";
 import { buildInstanceCompose } from "../compose/buildCompose";
 import type { ResourceRec } from "../compose/recommend";
@@ -20,11 +22,51 @@ import {
  * Gerar um compose do zero criaria uma segunda verdade que envelheceria em
  * relação ao base.
  *
- * Autostart aqui não é um passo nosso: quem garante é `restart: unless-stopped`
- * (já no base) somado ao serviço do Docker estar habilitado no boot.
+ * Autostart aqui NÃO é um passo nosso e não pede comando de sistema: o
+ * `restart: unless-stopped` do compose base já faz o container voltar sozinho
+ * assim que o daemon do Docker sobe — e o daemon subir no boot é o padrão de
+ * toda instalação normal (o pacote da distro já habilita `docker.service`;
+ * Docker Desktop/WSL/colima sobem pelo próprio mecanismo, onde `systemctl
+ * enable docker` nem existe). Mandar o usuário rodar `sudo systemctl enable
+ * docker` era, na prática, pedir sudo à toa em quase toda máquina — e quebrava
+ * de vez em WSL. Por isso o assunto virou NOTA, e só aparece quando há systemd
+ * de sistema real E o `docker.service` está comprovadamente desabilitado.
  */
 
 export const BASE_COMPOSE = "docker-compose-limit.yml";
+
+/**
+ * O que se sabe sobre o Docker subir no boot desta máquina.
+ * `unitEnabled: null` = não deu para saber (sem systemd, Docker Desktop,
+ * comando ausente) — e nesse caso não se diz nada, porque um aviso baseado em
+ * "não sei" só assusta.
+ */
+export type DockerBootInfo = {
+	/** há systemd de SISTEMA (não o `--user`) governando os serviços */
+	systemdSystem: boolean;
+	/** `systemctl is-enabled docker` disse "enabled"? null = indeterminado */
+	unitEnabled: boolean | null;
+};
+
+/** Probe barato e SEM sudo — `is-enabled` é consulta, não alteração. */
+export function probeDockerBoot(): DockerBootInfo {
+	if (platform() !== "linux" || !existsSync("/run/systemd/system"))
+		return { systemdSystem: false, unitEnabled: null };
+
+	const out = spawnSync("systemctl", ["is-enabled", "docker"], {
+		encoding: "utf8",
+		timeout: 4000,
+	});
+	if (out.error) return { systemdSystem: true, unitEnabled: null };
+
+	const state = (out.stdout ?? "").trim().split("\n")[0]?.trim() ?? "";
+	if (state === "enabled" || state === "enabled-runtime")
+		return { systemdSystem: true, unitEnabled: true };
+	if (state === "disabled") return { systemdSystem: true, unitEnabled: false };
+	// "static", "masked", "not-found", vazio: não é um "desabilitado" que o
+	// usuário resolva com enable — melhor calar do que dar instrução errada.
+	return { systemdSystem: true, unitEnabled: null };
+}
 
 export function composePath(spec: ServiceSpec): string {
 	return join(spec.workingDir, `docker-compose-limit-${slug(spec.name)}.yml`);
@@ -33,6 +75,8 @@ export function composePath(spec: ServiceSpec): string {
 export function dockerPlan(
 	spec: ServiceSpec,
 	res: ResourceRec,
+	/** injetável nos testes; só é sondado quando o autostart está ligado */
+	boot?: DockerBootInfo,
 ): InstallPlan | { error: string } {
 	const basePath = join(spec.workingDir, BASE_COMPOSE);
 	if (!existsSync(basePath))
@@ -65,23 +109,22 @@ export function dockerPlan(
 	});
 
 	const notes = [
-		"O container reinicia sozinho (restart: unless-stopped) e volta no boot se o serviço do Docker estiver habilitado.",
+		"O container reinicia sozinho (restart: unless-stopped) e volta no boot junto com o daemon do Docker — nenhum comando de sistema é necessário.",
 		"Cada instância precisa de um DESTINO diferente: duas apontando para o mesmo banco brigam pelo resume token em __sync.",
 	];
 
-	const manualSteps: InstallPlan["manualSteps"] = [];
 	if (spec.autostart) {
-		manualSteps.push({
-			cmd: "sudo",
-			args: ["systemctl", "enable", "docker"],
-			why: "faz o próprio Docker subir no boot (sem isso, nenhum container volta)",
-			privileged: true,
-		});
+		const info = boot ?? probeDockerBoot();
+		if (info.systemdSystem && info.unitEnabled === false)
+			notes.push(
+				"O serviço do Docker está DESABILITADO no boot nesta máquina: o container só volta depois que alguém subir o daemon (systemctl enable docker resolve, com sudo — não é preciso em Docker Desktop/WSL).",
+			);
 	}
 
 	return {
 		backend: "docker",
 		serviceName: dockerServiceName(spec),
+		resources: res,
 		files: [{ path: file, content }],
 		steps: [
 			{
@@ -97,7 +140,9 @@ export function dockerPlan(
 				timeoutMs: 30 * 60_000,
 			},
 		],
-		manualSteps,
+		// Nenhum comando privilegiado: o docker não precisa de sudo para o
+		// container voltar sozinho — o restart policy já cobre.
+		manualSteps: [],
 		notes,
 	};
 }

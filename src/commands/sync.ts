@@ -93,8 +93,13 @@ export async function syncCollections(
 		1000;
 	const full = Boolean(cliParams.full);
 	const copyIndexes = options.command.sync.copyIndexes ?? false;
-	// `true` ou uma lista de índices escolhidos — as duas ligam a cópia.
+	// `true` ou uma lista de índices escolhidos — as duas ligam a cópia. NÃO
+	// coagir para boolean aqui: o engine precisa da lista para criar só os
+	// índices escolhidos, e um `Boolean()` faria ele criar TODOS.
 	const copyIndexesOn = copyIndexes === true || Array.isArray(copyIndexes);
+	// Default TRUE: sem a conferência, um dump carimbado por engano nunca mais é
+	// revisto e o buraco fica invisível pra sempre. Só desliga quem pedir.
+	const integrityCheck = options.command.sync.integrityCheck ?? true;
 	const copyViews = options.command.sync.copyViews ?? false;
 	const copyViewsOn = copyViews === true || Array.isArray(copyViews);
 
@@ -226,6 +231,7 @@ export async function syncCollections(
 			full,
 			copyIndexes,
 			copyViews,
+			integrityCheck,
 		});
 
 		// Sem barra (não-TTY/container): liga o STATUS heartbeat no docker logs.

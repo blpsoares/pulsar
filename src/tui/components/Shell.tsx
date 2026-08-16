@@ -1,12 +1,19 @@
 import { Box, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { copyToClipboard, describeCopy } from "../../core/clipboard";
-import { SIDEBAR_WIDTH } from "../layout";
+import { fitHints, SIDEBAR_WIDTH } from "../layout";
+import { useMouse } from "../mouse/MouseProvider";
 import { isMouseInput } from "../mouse/parse";
 import { glyph, gradient, theme } from "../theme";
 
 export type { Layout } from "../layout";
-export { ASIDE_WIDTH, CHROME_ROWS, layout, SIDEBAR_WIDTH } from "../layout";
+export {
+	ASIDE_WIDTH,
+	CHROME_ROWS,
+	layout,
+	SIDEBAR_WIDTH,
+	shortenPath,
+} from "../layout";
 
 /**
  * O esqueleto visual da TUI: cabeçalho, sidebar, painéis e barra de teclas.
@@ -201,6 +208,7 @@ export function Shell({
 	overlay?: ReactNode;
 }) {
 	const toast = useCopyShortcut(copy);
+	const mouse = useMouse();
 
 	return (
 		<Box flexDirection="column" width={columns} height={rows}>
@@ -209,7 +217,12 @@ export function Shell({
 				{children}
 			</Box>
 			{overlay}
-			<KeyBar hints={hints} notice={toast ?? notice} />
+			<KeyBar
+				hints={hints}
+				notice={toast ?? notice}
+				mouse={mouse.enabled}
+				columns={columns}
+			/>
 		</Box>
 	);
 }
@@ -293,12 +306,20 @@ function Header({ chips, columns }: { chips: Chip[]; columns: number }) {
 	);
 }
 
+/** Altura reservada para as teclas — ver CHROME_ROWS em layout.ts. */
+const KEYBAR_ROWS = 1;
+
 function KeyBar({
 	hints,
 	notice,
+	mouse,
+	columns,
 }: {
 	hints: Hint[];
 	notice?: { text: string; tone?: "ok" | "warn" | "error" };
+	/** rastreamento de cliques ligado: só então shift+arrastar é notícia */
+	mouse: boolean;
+	columns: number;
 }) {
 	return (
 		<Box flexDirection="column">
@@ -311,8 +332,28 @@ function KeyBar({
 				 * A saída é acrescentada pelo Shell, não por cada tela: uma tela que
 				 * esquecesse de anunciá-la (ou que a anunciasse errado) deixaria o
 				 * usuário preso sem saber como sair. Aqui isso é impossível.
+				 *
+				 * E o orçamento é calculado ANTES de renderizar (`fitHints`): o
+				 * `truncate-end` cortava a lista sempre no mesmo ponto, e quem caía
+				 * fora era o FIM dela — justamente onde mora "ctrl+d sair da TUI".
+				 * Agora as obrigatórias reservam espaço primeiro e as teclas da tela
+				 * ocupam o resto, na ordem em que a tela as listou.
 				 */}
-				{[...hints, { keys: "ctrl+d", label: "sair da TUI" }].map((h, i) => (
+				{fitHints(
+					[],
+					hints,
+					[
+						// Com o mouse rastreando cliques, a seleção nativa do terminal só
+						// volta com shift (o MouseProvider ignora todo evento com shift).
+						// Sem este anúncio, o usuário descobre isso lendo o código-fonte.
+						...(mouse
+							? [{ keys: "shift+arrastar", label: "selecionar texto" }]
+							: []),
+						{ keys: "ctrl+d", label: "sair da TUI" },
+					],
+					columns,
+					KEYBAR_ROWS,
+				).map((h, i) => (
 					<Text key={h.keys}>
 						{i > 0 ? <Text color={theme.border}>{" · "}</Text> : null}
 						<Text color={theme.accent} bold>
