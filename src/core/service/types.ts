@@ -90,6 +90,35 @@ export function serviceName(spec: Pick<ServiceSpec, "name">): string {
 	return `pulsar-${slug(spec.name)}`;
 }
 
+/**
+ * O nome pelo qual o SUPERVISOR conhece o serviço — que não é o mesmo em todos.
+ *
+ * `serviceName()` é a identidade do pulsar (é o nome do registro em
+ * `~/.pulsar/services`), e systemd e pm2 usam exatamente ela. Docker e launchd
+ * NÃO: o container nasce `pulsar-sync-<slug>` (herdado do `docker-compose-limit
+ * .yml`, onde o serviço se chama `pulsar-sync`) e o LaunchAgent nasce
+ * `com.pulsar.<slug>` (launchd exige domínio reverso). É assim que
+ * `discoverServices()` os enxerga.
+ *
+ * Ter os dois nomes em UM lugar é o que impede o defeito que existia: o
+ * `reconcile` cruzava registro e supervisor por nome exato, então TODO serviço
+ * docker ou launchd aparecia em duas linhas — "não instalado" (o registro, que
+ * não achava o supervisor) e "adotado" (o supervisor, que não achava registro).
+ */
+export function supervisorName(
+	backend: Backend,
+	spec: Pick<ServiceSpec, "name">,
+): string {
+	switch (backend) {
+		case "docker":
+			return `pulsar-sync-${slug(spec.name)}`;
+		case "launchd":
+			return `com.pulsar.${slug(spec.name)}`;
+		default:
+			return serviceName(spec);
+	}
+}
+
 export function slug(value: string): string {
 	return (
 		value

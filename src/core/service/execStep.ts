@@ -26,13 +26,29 @@ const STEP_OUTPUT_LINES = 200;
  */
 export function execStep(
 	step: ServiceStep,
-	opts: { cwd: string; onOutput?: (line: string) => void },
+	opts: {
+		cwd: string;
+		onOutput?: (line: string) => void;
+		/**
+		 * Entrega o TERMINAL ao filho (`stdio: "inherit"`), em vez de capturar a
+		 * saída. É o que o `sudo` precisa para desenhar o prompt e ler a senha sem
+		 * eco: com `["ignore","pipe","pipe"]` ele não tem stdin nem TTY e sai na
+		 * hora com "a terminal is required to read the password".
+		 *
+		 * O preço é não haver saída capturada — `output` fica vazio. Não é uma
+		 * limitação contornável: o que dá o prompt ao usuário é justamente o filho
+		 * escrever DIRETO no terminal, e não em um pipe nosso. Quem chama assim já
+		 * mostrou o comando literal ao usuário antes (`SudoConfirm`), e a saída
+		 * aparece na tela real durante o handoff.
+		 */
+		interactive?: boolean;
+	},
 ): Promise<StepResult> {
 	return new Promise((resolve) => {
 		const buffer = new LineBuffer(STEP_OUTPUT_LINES);
 		const child = spawn(step.cmd, step.args, {
 			cwd: opts.cwd,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: opts.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
 		});
 
 		let timedOut = false;

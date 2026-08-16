@@ -13,6 +13,11 @@ import type { Backend, ServiceSpec } from "./types";
  * rollback reinstala o antigo — e quando nem isso funciona, o resultado diz
  * `rolledBack: false` em vez de fingir que está tudo bem.
  *
+ * A ordem inversa também é tratada: se a REMOÇÃO do antigo falha, a troca é
+ * abortada antes de instalar o novo. Ignorar isso (o que se fazia) era o
+ * caminho para dois serviços no ar com a mesma config — proibido: dois `sync`
+ * no mesmo destino disputam o resume token global em `__sync`.
+ *
  * As operações entram por parâmetro para o teste não precisar de supervisor.
  */
 
@@ -22,7 +27,10 @@ export type SwitchOutcome =
 
 export type SwitchOps = {
 	home?: string;
-	uninstall: (backend: Backend, record: ServiceRecord) => Promise<void>;
+	uninstall: (
+		backend: Backend,
+		record: ServiceRecord,
+	) => Promise<{ ok: boolean; detail?: string }>;
 	install: (
 		backend: Backend,
 		record: ServiceRecord,
@@ -72,7 +80,8 @@ export function defaultOps(opts: {
 	return {
 		home: opts.home,
 		uninstall: async (backend, record) => {
-			await uninstallService(backend, toSpec(record));
+			const result = await uninstallService(backend, toSpec(record));
+			return { ok: result.ok, detail: result.status?.detail };
 		},
 		install: async (backend, record) => {
 			const plan = buildPlan(backend, toSpec(record));
@@ -101,7 +110,20 @@ export async function switchBackend(
 	if (record.backend === target) return { ok: true, record };
 
 	const previous = record.backend;
-	await ops.uninstall(previous, record);
+	const removed = await ops.uninstall(previous, record);
+
+	// O antigo NÃO caiu: instalar o novo agora deixaria DOIS processos com a
+	// mesma config no ar — dois `sync` no mesmo destino brigam pelo resume token
+	// global em `__sync` e duplicam escrita. Abortar mantém exatamente um
+	// serviço de pé (o antigo, que nunca saiu), que é o pior caso aceitável.
+	if (!removed.ok)
+		return {
+			ok: false,
+			error: `não consegui remover o serviço do ${previous}${
+				removed.detail ? ` (${removed.detail})` : ""
+			} — troca abortada para não deixar dois rodando na mesma config`,
+			rolledBack: true,
+		};
 
 	const installed = await ops.install(target, { ...record, backend: target });
 	if (installed.ok) {

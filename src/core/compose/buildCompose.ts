@@ -4,7 +4,36 @@ export type InstanceOpts = {
 	suffix: string; // "2" -> pulsar-sync-2
 	configPath: string; // "configs/sync2.yml" (relativo ao projeto)
 	res: ResourceRec;
+	/** variáveis a garantir no bloco `environment:` (sobrescrevem as do base) */
+	env?: Record<string, string>;
 };
+
+/**
+ * Garante `KEY=VALUE` no bloco `environment:` (formato de LISTA, que é o do
+ * compose base). Chave já presente é substituída no lugar — duplicar uma env
+ * no mesmo serviço é comportamento indefinido no compose, e "a última vence"
+ * não é algo em que valha apostar.
+ */
+function setComposeEnv(src: string, key: string, value: string): string {
+	const entry = new RegExp(`^(\\s*-\\s*)${key}=.*$`, "m");
+	if (entry.test(src)) return src.replace(entry, `$1${key}=${value}`);
+
+	const block = /^(\s*)environment:\s*$/m.exec(src);
+	if (block) {
+		const indent = `${block[1]}  `;
+		return src.replace(
+			block[0],
+			`${block[0]}\n${indent}- ${key}=${value}`.trimEnd(),
+		);
+	}
+
+	// Base sem bloco `environment:` (usuário apagou): cria um logo depois do
+	// container_name, que é a única linha que garantidamente existe no serviço.
+	return src.replace(
+		/^(\s*)(container_name:.*)$/m,
+		`$1$2\n$1environment:\n$1  - ${key}=${value}`,
+	);
+}
 
 /** Substitui o valor de uma chave YAML (preserva indentação/comentários). */
 function setYamlValue(src: string, key: string, value: string): string {
@@ -52,6 +81,9 @@ export function buildInstanceCompose(
 	src = setYamlValue(src, "memswap_limit", `${opts.res.memLimitMiB}m`);
 	src = setYamlValue(src, "mem_reservation", `${opts.res.memReservMiB}m`);
 	src = setYamlValue(src, "cpus", String(opts.res.cpus));
+
+	for (const [key, value] of Object.entries(opts.env ?? {}))
+		src = setComposeEnv(src, key, value);
 
 	return src;
 }

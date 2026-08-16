@@ -5,8 +5,10 @@ import {
 	type ServiceRecord,
 	writeRecord,
 } from "../state/registry";
+import { dockerServiceName } from "./dockerService";
 import { execStep } from "./execStep";
-import { agentLabel } from "./launchd";
+import { specFromRecord } from "./fromRecord";
+import { agentLabel, guiTarget } from "./launchd";
 import type { ServiceStep } from "./types";
 
 /**
@@ -31,6 +33,12 @@ export function shouldDisableBoot(
 
 export function disableBootSteps(record: ServiceRecord): ServiceStep[] {
 	const why = "one-shot concluído: não subir mais no boot";
+	// `record.name` é o nome do REGISTRO (`pulsar-x`) e serve para systemd e pm2;
+	// docker e launchd conhecem o serviço por outro nome. `specFromRecord` tira o
+	// prefixo, e cada backend reaplica o SEU — sem isso o alvo era
+	// `com.pulsar.pulsar-x` / um container inexistente, o comando falhava e o
+	// registro carimbava `boot: false` mentindo: o agent continuava subindo.
+	const spec = specFromRecord(record);
 
 	switch (record.backend) {
 		case "systemd":
@@ -43,32 +51,25 @@ export function disableBootSteps(record: ServiceRecord): ServiceStep[] {
 			];
 		case "docker":
 			return [
-				{ cmd: "docker", args: ["update", "--restart=no", record.name], why },
+				{
+					cmd: "docker",
+					args: ["update", "--restart=no", dockerServiceName(spec)],
+					why,
+				},
 			];
 		case "pm2":
 			return [
 				{ cmd: "pm2", args: ["delete", record.name], why },
 				{ cmd: "pm2", args: ["save"], why },
 			];
-		case "launchd": {
-			// agentLabel espera um ServiceSpec completo (é a mesma conta usada pra
-			// montar o plist original); o registro guarda os mesmos campos com
-			// outros nomes, então a conversão é só de rótulo.
-			const label = agentLabel({
-				name: record.name,
-				mode: record.mode,
-				configPath: record.config,
-				workingDir: record.workingDir,
-				autostart: record.boot,
-			});
+		case "launchd":
 			return [
 				{
 					cmd: "launchctl",
-					args: ["bootout", `gui/${process.getuid?.() ?? 501}/${label}`],
+					args: ["bootout", guiTarget(agentLabel(spec))],
 					why,
 				},
 			];
-		}
 	}
 }
 
@@ -80,8 +81,15 @@ export async function disableBootAfterSuccess(
 	const record = readRecord(name, home);
 	if (!record || !shouldDisableBoot(record, status)) return;
 
-	for (const step of disableBootSteps(record))
-		await execStep(step, { cwd: record.workingDir });
+	let ok = true;
+	for (const step of disableBootSteps(record)) {
+		const result = await execStep(step, { cwd: record.workingDir });
+		if (!result.ok) ok = false;
+	}
 
-	writeRecord({ ...record, boot: false }, home);
+	// `boot: false` só quando o supervisor CONFIRMOU. Carimbar mesmo com o
+	// comando falhando deixava o registro mentindo — a tela dizia "não sobe no
+	// boot" e o serviço subia assim mesmo, re-executando a migração inteira.
+	// Sem carimbo, a próxima execução tenta desligar de novo.
+	if (ok) writeRecord({ ...record, boot: false }, home);
 }

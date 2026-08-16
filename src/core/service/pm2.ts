@@ -43,6 +43,10 @@ export function buildEcosystem(spec: ServiceSpec): string {
 		error_file: join(spec.workingDir, "logs", `${serviceName(spec)}.err.log`),
 		out_file: join(spec.workingDir, "logs", `${serviceName(spec)}.out.log`),
 		env: {
+			// Diz ao processo QUE SERVIÇO ele é: sem isso ele não grava o resultado
+			// da execução no registro (~/.pulsar/services) e um one-shot concluído
+			// não desliga o próprio boot.
+			PULSAR_SERVICE_NAME: serviceName(spec),
 			PULSAR_SHUTDOWN_TIMEOUT_MS: "30000",
 			STATUS_INTERVAL_MS: "30000",
 			NO_COLOR: "1",

@@ -72,6 +72,12 @@ export type OverlayBox = {
  *
  * Separada do componente pela mesma razão que `layout()`: é a conta que decide
  * se o formulário respira ou não, e testá-la exige zero React.
+ *
+ * O piso de 6 linhas da altura NUNCA é alcançado na prática: o `App` nem
+ * desenha overlay abaixo de `MIN_ROWS` (= 20, em `hooks/useTerminalSize.ts`),
+ * e 80% de 20 já dá 16. Ele fica como rede — mas o acoplamento entre os dois
+ * arquivos é implícito, então: se `MIN_ROWS` cair para menos de 8, revise este
+ * piso e o que o overlay desenha nessa altura, porque aí ele passa a valer.
  */
 export function overlayBox(columns: number, rows: number): OverlayBox {
 	const full = columns < OVERLAY_MIN_COLUMNS;

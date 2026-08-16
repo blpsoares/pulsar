@@ -102,6 +102,20 @@ export type ServiceDraft = {
 /** Sentinela do item "gravar um yml novo" na lista de configs. */
 const HERE = "\u0000here";
 
+/**
+ * Campos CONGELADOS na edição de um serviço existente, com o motivo que a tela
+ * mostra ao lado do valor (e ao tentar abrir o editor). Criar é diferente de
+ * editar: no formulário de criação os dois são livres.
+ */
+const LOCKED_WHEN_EDITING: Partial<Record<FieldId, string>> = {
+	name: "⚿ fixo depois de criado — renomear deixaria o serviço antigo órfão",
+	backend: "⚿ trocar aqui instalaria em paralelo — use 'b' no detalhe",
+};
+
+function lockedReason(id: FieldId, editing: boolean): string | undefined {
+	return editing ? LOCKED_WHEN_EDITING[id] : undefined;
+}
+
 const MODES: { value: TuiMode; label: string; hint: string }[] = [
 	{
 		value: "sync",
@@ -275,6 +289,17 @@ export function ServiceForm({
 	}
 
 	function openEditor(field: FieldId) {
+		// Editando um serviço EXISTENTE, `nome` e `backend` são a IDENTIDADE dele
+		// — o que o supervisor conhece e o que o registro cruza. Trocá-los aqui
+		// não move nada: cria um serviço novo e deixa o antigo vivo e órfão (nome)
+		// ou instala um segundo em paralelo, dois `sync` disputando o resume token
+		// global em `__sync` (backend). Trocar de supervisor de verdade é a ação
+		// `b` do detalhe, que é transacional: remove o antigo, instala o novo e
+		// faz rollback se falhar.
+		if (lockedReason(field, Boolean(initial))) {
+			setSubmitErrors([lockedReason(field, true) ?? ""]);
+			return;
+		}
 		setSubmitErrors([]);
 		if (field === "collections" && !sourceConnected)
 			setTextBuf(formatCommaList(form.collections));
@@ -711,6 +736,7 @@ export function ServiceForm({
 						<FieldRow
 							key={id}
 							id={id}
+							locked={lockedReason(id, Boolean(initial))}
 							clickable={enabled}
 							active={index === cur}
 							editing={editing === id}
@@ -922,6 +948,8 @@ const TYPE_NEW = "\u0000novo";
 
 function FieldRow(props: {
 	id: FieldId;
+	/** motivo pelo qual este campo não é editável agora (undefined = editável) */
+	locked?: string;
 	/** false quando a ajuda está por cima: o clique também obedece à pilha */
 	clickable: boolean;
 	active: boolean;
@@ -981,6 +1009,7 @@ function FieldRow(props: {
 
 function displayFor(props: {
 	id: FieldId;
+	locked?: string;
 	name: string;
 	mode: TuiMode;
 	configPath: string;
@@ -996,6 +1025,7 @@ function displayFor(props: {
 } {
 	const {
 		id,
+		locked,
 		name,
 		mode,
 		configPath,
@@ -1011,15 +1041,20 @@ function displayFor(props: {
 	// centralizada em `fieldNeedsSource`/`fieldNeedsDestination` para as duas
 	// pontas nunca discordarem sobre qual campo depende de qual conexão.
 	const reason =
-		fieldNeedsSource(id) && !sourceConnected
+		locked ??
+		(fieldNeedsSource(id) && !sourceConnected
 			? "informe a origem para listar"
 			: fieldNeedsDestination(id) && !destConnected
 				? "informe o destino para listar"
-				: undefined;
+				: undefined);
 
 	switch (id) {
 		case "name":
-			return { value: name || "—", tone: name ? undefined : "muted" };
+			return {
+				value: name || "—",
+				tone: locked ? "muted" : name ? undefined : "muted",
+				reason,
+			};
 		case "mode":
 			return { value: mode };
 		case "config":
@@ -1105,7 +1140,7 @@ function displayFor(props: {
 				tone: form.ttlDefaults.expire ? undefined : "muted",
 			};
 		case "backend":
-			return { value: backend };
+			return { value: backend, tone: locked ? "muted" : undefined, reason };
 		case "boot": {
 			const warn =
 				boot && needsSudo(backend) ? " ⚠ vai precisar de sudo (1 comando)" : "";

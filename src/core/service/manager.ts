@@ -15,6 +15,7 @@ import { execStep, type StepResult } from "./execStep";
 import {
 	agentLabel,
 	agentPath,
+	guiTarget,
 	launchdPlan,
 	launchdUninstallSteps,
 } from "./launchd";
@@ -184,10 +185,33 @@ export async function installService(
 	return { plan, files: written, results, skippedPrivileged, ok };
 }
 
+/**
+ * Desinstalar tem que DIZER se deu certo — e "os passos saíram com 0" não
+ * responde isso.
+ *
+ * Todo passo de remoção é `optional` de propósito (parar o que talvez nem
+ * exista não pode abortar nada), então o resultado dos passos nunca reprova
+ * ninguém. Quem responde de verdade é o supervisor, perguntado DEPOIS: se o
+ * serviço continua instalado ou rodando, a remoção falhou. Isso importa porque
+ * quem chama usa a resposta para decidir se pode instalar outro no lugar — e
+ * dois `sync` na mesma config brigam pelo resume token global em `__sync` e
+ * duplicam escrita no destino.
+ */
+export type UninstallResult = {
+	ok: boolean;
+	results: StepResult[];
+	/** o que o supervisor respondeu depois da remoção (null: não checado) */
+	status: ServiceStatus | null;
+};
+
 export async function uninstallService(
 	backend: Backend,
 	spec: ServiceSpec,
-): Promise<StepResult[]> {
+	opts?: {
+		/** injetável para o teste não precisar de supervisor instalado */
+		verify?: (backend: Backend, spec: ServiceSpec) => Promise<ServiceStatus>;
+	},
+): Promise<UninstallResult> {
 	const name = serviceName(spec);
 	const steps =
 		backend === "systemd"
@@ -216,7 +240,8 @@ export async function uninstallService(
 		await run("systemctl", ["--user", "daemon-reload"]).catch(() => {});
 	}
 
-	return results;
+	const status = await (opts?.verify ?? serviceStatus)(backend, spec);
+	return { ok: !status.installed && !status.running, results, status };
 }
 
 function generatedFiles(backend: Backend, spec: ServiceSpec): string[] {
@@ -341,7 +366,7 @@ export async function controlService(
 				return action === "stop"
 					? {
 							cmd: "launchctl",
-							args: ["bootout", `gui/${uid}/${agentLabel(spec)}`],
+							args: ["bootout", guiTarget(agentLabel(spec), uid)],
 							why: "descarrega o agent",
 						}
 					: {

@@ -66,6 +66,10 @@ StartLimitBurst=3`
 # para gravar o resume token antes de sair. Cortar antes força re-dump.
 TimeoutStopSec=45
 KillSignal=SIGTERM
+# Diz ao processo QUE SERVIÇO ele é: com isso ele grava o resultado da execução
+# no registro (~/.pulsar/services) e um one-shot concluído desliga o próprio
+# boot — sem isso, um migrate re-executaria a migração inteira a cada reinício.
+Environment=PULSAR_SERVICE_NAME=${serviceName(spec)}
 Environment=PULSAR_SHUTDOWN_TIMEOUT_MS=30000
 # Sem TTY as barras de progresso são desligadas e entra o bloco STATUS.
 Environment=STATUS_INTERVAL_MS=30000

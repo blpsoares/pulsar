@@ -170,8 +170,26 @@ export function App({ dir }: { dir: string }) {
 	function remove(row: ServiceRow) {
 		const record = row.record;
 		void operate("removendo…", async () => {
-			if (record)
-				await uninstallService(record.backend, specFromRecord(record));
+			// O registro só some depois que o supervisor CONFIRMA que o serviço
+			// caiu. Apagar antes (o que se fazia) deixava um container no ar sem
+			// nenhum registro apontando para ele: a tela dizia "removido", o sync
+			// continuava escrevendo no destino, e criar outro na mesma config
+			// colocaria dois disputando o resume token global em `__sync`.
+			if (record) {
+				const result = await uninstallService(
+					record.backend,
+					specFromRecord(record),
+				);
+				if (!result.ok) {
+					setNotice({
+						text: `${row.name} NÃO foi removido — ${
+							result.status?.detail ?? "ainda aparece no supervisor"
+						}. O registro foi mantido.`,
+						tone: "error",
+					});
+					return null;
+				}
+			}
 			removeRecord(row.name);
 			setStack([]);
 			return `${row.name} removido`;
@@ -583,15 +601,21 @@ function logSourcesFor(
 	const backend = row.record?.backend ?? row.live?.backend;
 	const sources: LogViewerSource[] = [];
 
+	// O seguidor ao vivo fala com o SUPERVISOR, então precisa do nome que ele
+	// conhece (`pulsar-sync-x` no docker, `com.pulsar.x` no launchd) — e não do
+	// nome do registro, que é o de `row.name`. `row.live` é a fonte exata disso;
+	// sem serviço vivo não há o que seguir mesmo.
+	const liveName = row.live?.name ?? row.name;
+
 	if (backend)
 		sources.push({
 			kind: "live",
 			dir: workingDir,
 			backend,
-			name: row.name,
+			name: liveName,
 			// No launchd o nome do serviço JÁ é o label (é assim que o discover o
 			// enxerga), então serve para os dois campos.
-			label: row.name,
+			label: liveName,
 		});
 
 	for (const file of listLogFiles(workingDir))

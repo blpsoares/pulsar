@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { argsFor, pulsarCommand } from "../run/pulsarCommand";
-import { type InstallPlan, type ServiceSpec, serviceName } from "./types";
+import {
+	type InstallPlan,
+	type ServiceSpec,
+	serviceName,
+	supervisorName,
+} from "./types";
 
 /**
  * launchd (macOS), em LaunchAgent de usuário.
@@ -24,12 +29,32 @@ export function agentDir(): string {
 	return join(homedir(), "Library", "LaunchAgents");
 }
 
-export function agentLabel(spec: ServiceSpec): string {
-	return `com.pulsar.${serviceName(spec).replace(/^pulsar-/, "")}`;
+/**
+ * Aceita `Pick<…, "name">` (e não o spec inteiro) porque o label depende SÓ do
+ * nome — quem só tem um registro em mãos não precisa forjar um spec completo,
+ * que era como o `oneshot.ts` acabava passando `record.name` (JÁ prefixado) e
+ * mirando `com.pulsar.pulsar-x`, um agent que não existe.
+ */
+export function agentLabel(spec: Pick<ServiceSpec, "name">): string {
+	return supervisorName("launchd", spec);
 }
 
-export function agentPath(spec: ServiceSpec): string {
+export function agentPath(spec: Pick<ServiceSpec, "name">): string {
 	return join(agentDir(), `${agentLabel(spec)}.plist`);
+}
+
+/**
+ * O alvo de um `launchctl bootout/enable` — `gui/<uid>/<label>`.
+ *
+ * Estava escrito à mão em três arquivos (`launchd.ts`, `manager.ts`,
+ * `oneshot.ts`), com o `uid` default repetido em cada um; um deles montava o
+ * label errado e nada apontou a divergência.
+ */
+export function guiTarget(
+	label: string,
+	uid: number = process.getuid?.() ?? 501,
+): string {
+	return `gui/${uid}/${label}`;
 }
 
 export function buildPlist(spec: ServiceSpec): string {
@@ -77,6 +102,12 @@ ${
 	<string>${xmlEscape(join(logDir, `${label}.err.log`))}</string>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<!-- Quem roda aqui é um SERVIÇO: o processo grava o resultado da execução
+		     no registro (~/.pulsar/services) e um one-shot concluído desliga o
+		     próprio boot. Sem esta variável nada disso acontece. O valor é o nome
+		     DO REGISTRO (pulsar-x), não o label do launchd. -->
+		<key>PULSAR_SERVICE_NAME</key>
+		<string>${xmlEscape(serviceName(spec))}</string>
 		<key>PULSAR_SHUTDOWN_TIMEOUT_MS</key>
 		<string>30000</string>
 		<key>STATUS_INTERVAL_MS</key>
@@ -105,7 +136,7 @@ export function launchdPlan(
 		steps: [
 			{
 				cmd: "launchctl",
-				args: ["bootout", `gui/${uid}/${label}`],
+				args: ["bootout", guiTarget(label, uid)],
 				why: "descarrega uma versão anterior, se existir",
 				optional: true,
 			},
@@ -116,7 +147,7 @@ export function launchdPlan(
 			},
 			{
 				cmd: "launchctl",
-				args: ["enable", `gui/${uid}/${label}`],
+				args: ["enable", guiTarget(label, uid)],
 				why: "garante que o agent não está desabilitado",
 				optional: true,
 			},
@@ -136,7 +167,7 @@ export function launchdUninstallSteps(
 	return [
 		{
 			cmd: "launchctl",
-			args: ["bootout", `gui/${uid}/${label}`],
+			args: ["bootout", guiTarget(label, uid)],
 			why: "para e descarrega o agent",
 			optional: true,
 		},

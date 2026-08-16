@@ -1,5 +1,6 @@
 import type { RunMode } from "../run/pulsarCommand";
 import type { DiscoveredService } from "../service/discover";
+import { supervisorNameOf } from "../service/fromRecord";
 import type { ServiceRecord } from "./registry";
 
 /**
@@ -36,13 +37,29 @@ export function reconcile(
 	records: ServiceRecord[],
 	live: DiscoveredService[],
 ): ServiceRow[] {
+	// O cruzamento é pelo nome QUE O SUPERVISOR usa, não pelo do registro: no
+	// docker o container é `pulsar-sync-<slug>` e no launchd o agent é
+	// `com.pulsar.<slug>`, enquanto o registro guarda `pulsar-<slug>` nos quatro
+	// backends. Cruzando por nome cru, todo serviço docker ou launchd saía em
+	// DUAS linhas — "não instalado" (o registro sem par) e "adotado" (o
+	// supervisor sem par) — e `a` na segunda gravava um registro duplicado.
 	const byName = new Map(live.map((service) => [service.name, service]));
 	const seen = new Set<string>();
 	const rows: ServiceRow[] = [];
 
 	for (const record of records) {
-		const found = byName.get(record.name) ?? null;
-		seen.add(record.name);
+		const liveName = supervisorNameOf(record);
+		// A rede: um serviço criado à mão e adotado pode ter um nome fora do
+		// padrão (um container `pulsar-loja`, sem o `-sync-`). Aí o nome derivado
+		// não acha nada, mas o nome do registro é literalmente o do supervisor —
+		// e é assim que ele foi adotado. A checagem de backend impede confundir
+		// uma unit do systemd com um container homônimo.
+		const fallback = byName.get(record.name);
+		const found =
+			byName.get(liveName) ??
+			(fallback?.backend === record.backend ? fallback : null);
+		seen.add(liveName);
+		if (found) seen.add(found.name);
 		rows.push({
 			name: record.name,
 			state: stateFor(record, found),

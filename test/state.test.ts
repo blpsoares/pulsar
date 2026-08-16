@@ -285,6 +285,10 @@ describe("adopt", () => {
 		expect(record?.mode).toBe("sync");
 		expect(record?.backend).toBe("docker");
 		expect(record?.createdBy).toBe("adotado");
+		// O registro guarda o nome no padrão do pulsar; o `-sync-` é do CONTAINER
+		// e volta sozinho via `supervisorName`. Gravar o nome cru daria
+		// `pulsar-sync-sync-loja` na volta — e a linha duplicaria na lista.
+		expect(record?.name).toBe("pulsar-loja");
 	});
 });
 
@@ -321,6 +325,71 @@ describe("reconcile", () => {
 	test("registro sem supervisor vira não instalado", () => {
 		const rows = reconcile([base], []);
 		expect(stateOf(rows, "pulsar-ads")).toBe("uninstalled");
+	});
+
+	/**
+	 * O registro grava `pulsar-<slug>` nos quatro backends, mas o container é
+	 * `pulsar-sync-<slug>` e o agent do launchd é `com.pulsar.<slug>` — e é
+	 * assim que `discoverServices()` os reporta. Cruzando por nome cru, TODO
+	 * serviço docker ou launchd saía em duas linhas ("não instalado" + "adotado")
+	 * e `a` na órfã gravava um segundo registro. Docker é o backend recomendado
+	 * em produção neste projeto, então isso valia para o caso mais comum.
+	 */
+	test("docker: registro pulsar-x casa com o container pulsar-sync-x", () => {
+		const record = { ...base, name: "pulsar-ads", backend: "docker" as const };
+		const rows = reconcile(
+			[record],
+			[live({ backend: "docker", name: "pulsar-sync-ads" })],
+		);
+		expect(rows).toHaveLength(1);
+		expect(stateOf(rows, "pulsar-ads")).toBe("running");
+		expect(rows[0]?.live?.name).toBe("pulsar-sync-ads");
+	});
+
+	test("launchd: registro pulsar-x casa com o agent com.pulsar.x", () => {
+		const record = { ...base, name: "pulsar-ads", backend: "launchd" as const };
+		const rows = reconcile(
+			[record],
+			[live({ backend: "launchd", name: "com.pulsar.ads" })],
+		);
+		expect(rows).toHaveLength(1);
+		expect(stateOf(rows, "pulsar-ads")).toBe("running");
+	});
+
+	test("container adotado com nome fora do padrão ainda casa (mesmo backend)", () => {
+		const record = {
+			...base,
+			name: "pulsar-legado",
+			backend: "docker" as const,
+		};
+		const rows = reconcile(
+			[record],
+			[live({ backend: "docker", name: "pulsar-legado" })],
+		);
+		expect(rows).toHaveLength(1);
+		expect(stateOf(rows, "pulsar-legado")).toBe("running");
+	});
+
+	test("nome igual em backend DIFERENTE não casa", () => {
+		const record = { ...base, name: "pulsar-ads", backend: "docker" as const };
+		const rows = reconcile([record], [live({ backend: "systemd" })]);
+		expect(rows).toHaveLength(2);
+		expect(stateOf(rows, "pulsar-ads")).toBe("uninstalled");
+	});
+
+	test("container de OUTRO serviço continua aparecendo como adotado", () => {
+		// O casamento por backend não pode engolir órfão de verdade: quem não tem
+		// registro tem que continuar visível (e adotável).
+		const record = { ...base, name: "pulsar-ads", backend: "docker" as const };
+		const rows = reconcile(
+			[record],
+			[
+				live({ backend: "docker", name: "pulsar-sync-ads" }),
+				live({ backend: "docker", name: "pulsar-sync-outro" }),
+			],
+		);
+		expect(rows).toHaveLength(2);
+		expect(stateOf(rows, "pulsar-sync-outro")).toBe("adopted");
 	});
 
 	test("one-shot parado com lastRun ok é 'concluído', não 'parado'", () => {

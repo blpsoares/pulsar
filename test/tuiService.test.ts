@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,13 +12,23 @@ import {
 import { tailCommand } from "../src/core/logs/tailCommand";
 import { LineBuffer, levelOf, stripAnsi } from "../src/core/run/logLines";
 import { argsFor, pulsarCommandLine } from "../src/core/run/pulsarCommand";
+import { BASE_COMPOSE, dockerPlan } from "../src/core/service/dockerService";
 import { enableBootSteps } from "../src/core/service/enableBoot";
 import { specFromRecord } from "../src/core/service/fromRecord";
-import { buildPlist, launchdPlan } from "../src/core/service/launchd";
+import {
+	buildPlist,
+	guiTarget,
+	launchdPlan,
+} from "../src/core/service/launchd";
 import { execStep } from "../src/core/service/manager";
 import { buildEcosystem, pm2Plan } from "../src/core/service/pm2";
 import { buildUnit, systemdPlan } from "../src/core/service/systemd";
-import { type ServiceSpec, serviceName, slug } from "../src/core/service/types";
+import {
+	type ServiceSpec,
+	serviceName,
+	slug,
+	supervisorName,
+} from "../src/core/service/types";
 import type { ServiceRecord } from "../src/core/state/registry";
 
 const spec: ServiceSpec = {
@@ -403,10 +413,11 @@ describe("enableBootSteps", () => {
 
 	test("docker: política de restart + o próprio Docker no boot (esse é o com sudo)", () => {
 		const steps = enableBootSteps(record("docker"));
+		// O alvo é o CONTAINER (`pulsar-sync-loja`), não o nome do registro.
 		expect(steps[0].args).toEqual([
 			"update",
 			"--restart=unless-stopped",
-			"pulsar-loja",
+			"pulsar-sync-loja",
 		]);
 		expect(steps.at(-1)?.privileged).toBe(true);
 	});
@@ -422,5 +433,146 @@ describe("enableBootSteps", () => {
 		// Vazio não é omissão: é o que faz a tela dizer "edite e reinstale" em
 		// vez de fingir que rodou algo.
 		expect(enableBootSteps(record("launchd"))).toEqual([]);
+	});
+});
+
+/**
+ * Revisão final — C1: `PULSAR_SERVICE_NAME` é um contrato ENTRE camadas.
+ *
+ * `runRecord.ts` lê essa variável para saber que serviço está executando: sem
+ * ela o `lastRun` nunca é gravado (a lista jamais mostra "concluído"/"erro") e,
+ * pior, o one-shot nunca desliga o próprio boot — um `migrate` instalado com
+ * boot ligado re-executa a migração inteira a cada reinício da máquina. Nenhum
+ * dos quatro backends a injetava, e nenhuma revisão de task viu: só um teste do
+ * ARTEFATO gerado pega uma promessa que uma camada faz e outra não cumpre.
+ */
+describe("PULSAR_SERVICE_NAME no artefato de cada backend", () => {
+	const esperado = serviceName(spec); // pulsar-ads-staging
+
+	test("systemd: Environment= na unit", () => {
+		expect(buildUnit(spec)).toContain(
+			`Environment=PULSAR_SERVICE_NAME=${esperado}`,
+		);
+	});
+
+	test("pm2: env do ecosystem", () => {
+		const app = JSON.parse(buildEcosystem(spec)).apps[0];
+		expect(app.env.PULSAR_SERVICE_NAME).toBe(esperado);
+	});
+
+	test("launchd: EnvironmentVariables do plist", () => {
+		const plist = buildPlist(spec);
+		expect(plist).toContain("<key>PULSAR_SERVICE_NAME</key>");
+		// o par chave/valor tem que estar junto, não só as duas coisas no arquivo
+		expect(plist).toMatch(
+			new RegExp(
+				`<key>PULSAR_SERVICE_NAME</key>\\s*<string>${esperado}</string>`,
+			),
+		);
+	});
+
+	test("docker: environment do compose, com o nome DO REGISTRO (não o do container)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pulsar-docker-"));
+		writeFileSync(
+			join(dir, BASE_COMPOSE),
+			readFileSync(join(import.meta.dir, "..", BASE_COMPOSE), "utf8"),
+		);
+
+		const plan = dockerPlan(
+			{ ...spec, workingDir: dir, configPath: join(dir, "ads.yml") },
+			{ memLimitMiB: 2048, memReservMiB: 512, cpus: 1.5 },
+		);
+		if ("error" in plan) throw new Error(plan.error);
+
+		const compose = plan.files[0].content;
+		expect(compose).toContain(`- PULSAR_SERVICE_NAME=${esperado}`);
+		// o container se chama pulsar-sync-<slug>; a VARIÁVEL não pode levar esse
+		// nome, senão o processo procura um registro que não existe
+		expect(plan.serviceName).toBe(`pulsar-sync-${slug(spec.name)}`);
+		expect(compose).not.toContain(`PULSAR_SERVICE_NAME=${plan.serviceName}`);
+
+		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
+describe("nome que o SUPERVISOR conhece", () => {
+	test("systemd e pm2 usam o nome do registro; docker e launchd, o deles", () => {
+		expect(supervisorName("systemd", { name: "loja" })).toBe("pulsar-loja");
+		expect(supervisorName("pm2", { name: "loja" })).toBe("pulsar-loja");
+		expect(supervisorName("docker", { name: "loja" })).toBe("pulsar-sync-loja");
+		expect(supervisorName("launchd", { name: "loja" })).toBe("com.pulsar.loja");
+	});
+
+	test("gui/<uid>/<label> sai de um lugar só", () => {
+		expect(guiTarget("com.pulsar.loja", 501)).toBe("gui/501/com.pulsar.loja");
+	});
+
+	test("docker: `o` (ligar boot) mira o container, não o registro", () => {
+		// Antes usava `record.name` (pulsar-loja): container inexistente, o passo
+		// falhava SEMPRE.
+		const steps = enableBootSteps({
+			name: "pulsar-loja",
+			mode: "sync",
+			config: "/proj/loja.yml",
+			workingDir: "/proj",
+			backend: "docker",
+			boot: false,
+			createdBy: "pulsar-tui",
+			lastRun: null,
+		});
+		expect(steps[0].args).toEqual([
+			"update",
+			"--restart=unless-stopped",
+			"pulsar-sync-loja",
+		]);
+	});
+});
+
+describe("uninstallService diz se o serviço CAIU", () => {
+	// Todo passo de remoção é `optional` (parar o que talvez não exista não pode
+	// abortar nada), então "os passos saíram com 0" não responde nada. Quem
+	// responde é o supervisor, perguntado depois — e é dessa resposta que
+	// `switchBackend` e o `x` do painel dependem para não deixar dois syncs no
+	// mesmo destino.
+	const tmpSpec = (dir: string): ServiceSpec => ({
+		name: "zz-inexistente",
+		mode: "sync",
+		configPath: join(dir, "x.yml"),
+		workingDir: dir,
+		autostart: false,
+	});
+
+	test("supervisor não conhece mais o serviço: ok", async () => {
+		const { uninstallService } = await import("../src/core/service/manager");
+		const dir = mkdtempSync(join(tmpdir(), "pulsar-uninstall-"));
+		const result = await uninstallService("pm2", tmpSpec(dir), {
+			verify: async () => ({
+				backend: "pm2",
+				name: "pulsar-zz-inexistente",
+				installed: false,
+				running: false,
+				enabled: false,
+			}),
+		});
+		expect(result.ok).toBe(true);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("serviço ainda de pé: NÃO ok (mesmo com todos os passos 'ok')", async () => {
+		const { uninstallService } = await import("../src/core/service/manager");
+		const dir = mkdtempSync(join(tmpdir(), "pulsar-uninstall-"));
+		const result = await uninstallService("pm2", tmpSpec(dir), {
+			verify: async () => ({
+				backend: "pm2",
+				name: "pulsar-zz-inexistente",
+				installed: true,
+				running: true,
+				enabled: true,
+				detail: "online",
+			}),
+		});
+		expect(result.ok).toBe(false);
+		expect(result.status?.detail).toBe("online");
+		rmSync(dir, { recursive: true, force: true });
 	});
 });

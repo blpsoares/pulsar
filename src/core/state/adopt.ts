@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { RunMode } from "../run/pulsarCommand";
 import type { DiscoveredService } from "../service/discover";
+import { serviceName } from "../service/types";
 import type { ServiceRecord } from "./registry";
 
 const run = promisify(execFile);
@@ -144,6 +145,13 @@ export async function adoptFromLive(
 	}
 }
 
+/**
+ * O registro guarda o nome NO PADRÃO DO PULSAR (`pulsar-<slug>`), do qual cada
+ * backend deriva o seu (`supervisorName`). Um container adotado chega com o
+ * nome DELE (`pulsar-sync-loja`); gravá-lo cru faria a volta dar
+ * `pulsar-sync-sync-loja` — nome de nada — e a linha se duplicaria de novo na
+ * lista, que é justamente o defeito que o casamento por backend corrige.
+ */
 export function adoptFromDocker(
 	name: string,
 	command: string,
@@ -153,7 +161,9 @@ export function adoptFromDocker(
 	if (!parsed) return null;
 
 	return {
-		name,
+		name: serviceName({
+			name: name.replace(/^pulsar-sync-/, "").replace(/^pulsar-/, ""),
+		}),
 		mode: parsed.mode,
 		config: parsed.config,
 		workingDir,

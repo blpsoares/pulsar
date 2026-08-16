@@ -114,6 +114,40 @@ describe("runPrivilegedStep", () => {
 		expect(vistos[0]?.cmd).toBe("true");
 	});
 
+	/**
+	 * O `sudo` só desenha o prompt de senha se receber o TERMINAL. Com o
+	 * `stdio: ["ignore","pipe","pipe"]` do caminho normal ele nasce sem stdin e
+	 * morre com "a terminal is required to read the password" — o `withTerminal`
+	 * largava a tela para ninguém. Como não há como capturar a saída E entregar
+	 * o TTY ao mesmo tempo, o sinal observável de que o filho herdou o terminal
+	 * é justamente `output` VAZIO num comando que imprime.
+	 */
+	test("com senha, o filho HERDA o terminal (sem isso o sudo não consegue perguntar)", async () => {
+		const step: ServiceStep = {
+			cmd: "sh",
+			args: ["-c", "echo pulsar_saida_do_filho"],
+			why: "x",
+			privileged: true,
+		};
+
+		const interativo = await runPrivilegedStep(step, {
+			cwd: process.cwd(),
+			sudo: "needs-password",
+			ask: async () => true,
+		});
+		expect(interativo?.ok).toBe(true);
+		expect(interativo?.output).toBe("");
+
+		// O contraste: sem senha não há prompt, e a saída continua capturada
+		// (é ela que explica a falha de um passo no relatório).
+		const capturado = await runPrivilegedStep(step, {
+			cwd: process.cwd(),
+			sudo: "passwordless",
+			ask: async () => true,
+		});
+		expect(capturado?.output).toContain("pulsar_saida_do_filho");
+	});
+
 	test("recusar devolve null e não roda", async () => {
 		const result = await runPrivilegedStep(
 			{ cmd: "false", args: [], why: "x", privileged: true },
@@ -334,10 +368,19 @@ describe("disableBootSteps", () => {
 		expect(step?.args).toEqual(["--user", "disable", "pulsar-migra.service"]);
 	});
 
-	test("docker", () => {
+	test("docker mira o CONTAINER (pulsar-sync-x), não o nome do registro", () => {
 		const [step] = disableBootSteps({ ...oneShot, backend: "docker" });
 		expect(step?.cmd).toBe("docker");
-		expect(step?.args).toEqual(["update", "--restart=no", "pulsar-migra"]);
+		expect(step?.args).toEqual(["update", "--restart=no", "pulsar-sync-migra"]);
+	});
+
+	test("launchd mira com.pulsar.migra — não com.pulsar.pulsar-migra", () => {
+		// `record.name` já vem prefixado; reaplicar o prefixo dava um label que
+		// não existe. O bootout falhava, e o registro carimbava boot:false
+		// mentindo — o agent continuava subindo no login.
+		const [step] = disableBootSteps({ ...oneShot, backend: "launchd" });
+		expect(step?.cmd).toBe("launchctl");
+		expect(step?.args[1]).toMatch(/^gui\/\d+\/com\.pulsar\.migra$/);
 	});
 
 	test("pm2 remove e salva", () => {
@@ -356,7 +399,10 @@ describe("switchBackend", () => {
 		const ordem: string[] = [];
 		const result = await switchBackend(record, "docker", {
 			home: undefined,
-			uninstall: async (backend) => void ordem.push(`uninstall:${backend}`),
+			uninstall: async (backend) => {
+				ordem.push(`uninstall:${backend}`);
+				return { ok: true };
+			},
 			install: async (backend) => {
 				ordem.push(`install:${backend}`);
 				return { ok: true };
@@ -378,7 +424,10 @@ describe("switchBackend", () => {
 		const ordem: string[] = [];
 		const result = await switchBackend(record, "docker", {
 			home: undefined,
-			uninstall: async (backend) => void ordem.push(`uninstall:${backend}`),
+			uninstall: async (backend) => {
+				ordem.push(`uninstall:${backend}`);
+				return { ok: true };
+			},
 			install: async (backend) => {
 				ordem.push(`install:${backend}`);
 				return backend === "docker"
@@ -403,7 +452,7 @@ describe("switchBackend", () => {
 	test("se nem o rollback funciona, diz isso em vez de mentir", async () => {
 		const result = await switchBackend(record, "docker", {
 			home: undefined,
-			uninstall: async () => {},
+			uninstall: async () => ({ ok: true }),
 			install: async () => ({ ok: false, error: "nada funciona" }),
 			save: () => {},
 		});
@@ -414,11 +463,42 @@ describe("switchBackend", () => {
 		});
 	});
 
+	test("antigo que NÃO caiu aborta a troca — dois no mesmo destino é proibido", async () => {
+		// Dois `sync` na mesma config disputam o resume token global em `__sync`
+		// e duplicam escrita no destino. Antes o resultado do uninstall era
+		// descartado e o novo subia por cima do antigo ainda vivo.
+		const ordem: string[] = [];
+		const result = await switchBackend(record, "docker", {
+			home: undefined,
+			uninstall: async (backend) => {
+				ordem.push(`uninstall:${backend}`);
+				return { ok: false, detail: "active (running)" };
+			},
+			install: async (backend) => {
+				ordem.push(`install:${backend}`);
+				return { ok: true };
+			},
+			save: () => void ordem.push("save"),
+		});
+
+		expect(ordem).toEqual(["uninstall:systemd"]);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain("systemd");
+			expect(result.error).toContain("active (running)");
+			// o antigo nunca saiu: continua havendo exatamente um serviço de pé
+			expect(result.rolledBack).toBe(true);
+		}
+	});
+
 	test("trocar para o mesmo backend não faz nada", async () => {
 		const ordem: string[] = [];
 		const result = await switchBackend(record, "systemd", {
 			home: undefined,
-			uninstall: async () => void ordem.push("uninstall"),
+			uninstall: async () => {
+				ordem.push("uninstall");
+				return { ok: true };
+			},
 			install: async () => {
 				ordem.push("install");
 				return { ok: true };

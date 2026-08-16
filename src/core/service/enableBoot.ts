@@ -3,7 +3,9 @@ import {
 	type ServiceRecord,
 	writeRecord as saveRecord,
 } from "../state/registry";
+import { dockerServiceName } from "./dockerService";
 import { execStep, type StepResult } from "./execStep";
+import { specFromRecord } from "./fromRecord";
 import {
 	type AskCallback,
 	runPrivilegedStep,
@@ -55,7 +57,14 @@ export function enableBootSteps(record: ServiceRecord): ServiceStep[] {
 			return [
 				{
 					cmd: "docker",
-					args: ["update", "--restart=unless-stopped", record.name],
+					// O container NÃO se chama como o registro (`pulsar-<slug>`): ele
+					// nasce `pulsar-sync-<slug>` do compose. Com o nome do registro,
+					// este passo falhava sempre ("no such container").
+					args: [
+						"update",
+						"--restart=unless-stopped",
+						dockerServiceName(specFromRecord(record)),
+					],
 					why: "faz o container voltar sozinho",
 				},
 				{

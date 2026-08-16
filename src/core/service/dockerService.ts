@@ -2,7 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { buildInstanceCompose } from "../compose/buildCompose";
 import type { ResourceRec } from "../compose/recommend";
-import { type InstallPlan, type ServiceSpec, serviceName, slug } from "./types";
+import {
+	type InstallPlan,
+	type ServiceSpec,
+	serviceName,
+	slug,
+	supervisorName,
+} from "./types";
 
 /**
  * Docker — o caminho que já existia no pulsar (`docker-compose-limit.yml` +
@@ -50,6 +56,12 @@ export function dockerPlan(
 		suffix: slug(spec.name),
 		configPath: configRel,
 		res,
+		env: {
+			// O valor é o nome DO REGISTRO (`pulsar-<slug>`), não o do container
+			// (`pulsar-sync-<slug>`): é por ele que o processo acha o próprio
+			// arquivo em ~/.pulsar/services para gravar o resultado da execução.
+			PULSAR_SERVICE_NAME: serviceName(spec),
+		},
 	});
 
 	const notes = [
@@ -69,7 +81,7 @@ export function dockerPlan(
 
 	return {
 		backend: "docker",
-		serviceName: `pulsar-sync-${slug(spec.name)}`,
+		serviceName: dockerServiceName(spec),
 		files: [{ path: file, content }],
 		steps: [
 			{
@@ -101,8 +113,9 @@ export function dockerUninstallSteps(spec: ServiceSpec) {
 	];
 }
 
-export function dockerServiceName(spec: ServiceSpec): string {
-	return `pulsar-sync-${slug(spec.name)}`;
+/** O container tem nome PRÓPRIO (`pulsar-sync-<slug>`), diferente do registro. */
+export function dockerServiceName(spec: Pick<ServiceSpec, "name">): string {
+	return supervisorName("docker", spec);
 }
 
 /** Só para manter a simetria com os outros backends na tela. */

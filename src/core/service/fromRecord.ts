@@ -1,5 +1,5 @@
 import type { ServiceRecord } from "../state/registry";
-import type { ServiceSpec } from "./types";
+import { type ServiceSpec, supervisorName } from "./types";
 
 /**
  * Converte um registro em `ServiceSpec` — a descrição que os quatro backends
@@ -20,4 +20,13 @@ export function specFromRecord(record: ServiceRecord): ServiceSpec {
 		workingDir: record.workingDir,
 		autostart: record.boot,
 	};
+}
+
+/**
+ * Como o SUPERVISOR daquele registro chama o serviço — que é o que
+ * `discoverServices()` reporta e, portanto, a chave certa para cruzar as duas
+ * listas. Só coincide com `record.name` no systemd e no pm2.
+ */
+export function supervisorNameOf(record: ServiceRecord): string {
+	return supervisorName(record.backend, specFromRecord(record));
 }

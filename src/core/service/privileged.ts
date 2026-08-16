@@ -58,9 +58,16 @@ export async function runPrivilegedStep(
 	if (!(await opts.ask(step))) return null;
 
 	// O sudo precisa do terminal de verdade para desenhar o prompt de senha e
-	// ler sem eco. `withTerminal` sai do alternate screen, entrega o TTY e
-	// restaura em finally.
+	// ler sem eco. `withTerminal` sai do alternate screen e restaura em finally;
+	// `interactive` é a outra metade — sem ela o filho nasce com stdin fechado e
+	// o sudo morre com "a terminal is required to read the password" num
+	// terminal que a TUI acabou de largar. Só ESTE ramo é interativo: o
+	// `passwordless` acima não abre prompt nenhum e continua capturando a saída.
 	return withTerminal(() =>
-		execStep(step, { cwd: opts.cwd, onOutput: opts.onOutput }),
+		execStep(step, {
+			cwd: opts.cwd,
+			onOutput: opts.onOutput,
+			interactive: true,
+		}),
 	);
 }
