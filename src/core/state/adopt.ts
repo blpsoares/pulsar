@@ -1,5 +1,10 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { RunMode } from "../run/pulsarCommand";
+import type { DiscoveredService } from "../service/discover";
 import type { ServiceRecord } from "./registry";
+
+const run = promisify(execFile);
 
 /**
  * Reconstrói o registro a partir do que o supervisor já guarda.
@@ -60,6 +65,83 @@ export function adoptFromSystemd(
 		createdBy: "adotado",
 		lastRun: null,
 	};
+}
+
+/**
+ * Pergunta ao supervisor e devolve o registro reconstruído.
+ *
+ * As funções puras acima fazem o trabalho difícil (achar modo e yml numa linha
+ * de comando) e são o que os testes cobrem; esta aqui só sabe QUAL comando
+ * perguntar a cada supervisor. Ela existe para a TUI não ter `execFile` dentro
+ * de um componente.
+ *
+ * pm2 e launchd ficam de fora por enquanto: o `discover` deles não entrega o
+ * comando executado, e adivinhar o yml seria pior que dizer que não dá.
+ */
+export async function adoptFromLive(
+	live: DiscoveredService,
+	fallbackWorkingDir: string,
+): Promise<{ ok: true; record: ServiceRecord } | { ok: false; error: string }> {
+	try {
+		if (live.backend === "systemd") {
+			const { stdout } = await run(
+				"systemctl",
+				[
+					"--user",
+					"show",
+					`${live.name}.service`,
+					"--property=ExecStart",
+					"--property=WorkingDirectory",
+					"--property=UnitFileState",
+				],
+				{ timeout: 5000 },
+			);
+			const record = adoptFromSystemd(live.name, stdout);
+			return record
+				? { ok: true, record }
+				: {
+						ok: false,
+						error: "não achei o modo e o yml no ExecStart desta unit",
+					};
+		}
+
+		if (live.backend === "docker") {
+			// Duas perguntas numa: o comando do container e o diretório do projeto
+			// compose que o criou (quando existe) — o `workingDir` do registro.
+			const { stdout } = await run(
+				"docker",
+				[
+					"inspect",
+					"-f",
+					'{{join .Config.Cmd " "}}\n{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
+					live.name,
+				],
+				{ timeout: 6000 },
+			);
+			const [command = "", workingDir = ""] = stdout.split("\n");
+			const record = adoptFromDocker(
+				live.name,
+				command,
+				workingDir.trim() || fallbackWorkingDir,
+			);
+			return record
+				? { ok: true, record: { ...record, boot: live.enabled } }
+				: {
+						ok: false,
+						error: "não achei o modo e o yml no comando do container",
+					};
+		}
+
+		return {
+			ok: false,
+			error: `adoção automática ainda não existe para ${live.backend} — recrie o serviço pelo formulário`,
+		};
+	} catch (err) {
+		return {
+			ok: false,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
 }
 
 export function adoptFromDocker(

@@ -85,11 +85,18 @@ export function ServiceDetail({
 	onRemove,
 	onAdopt,
 	onEnableBoot,
+	enabled = true,
 }: {
 	row: ServiceRow;
 	columns: number;
 	rows: number;
 	busy: string | null;
+	/**
+	 * false quando outra camada (a ajuda, a confirmação de sudo) está por cima.
+	 * Sem isto, `esc` fecharia o detalhe POR BAIXO da ajuda aberta e `i`
+	 * iniciaria um serviço enquanto a pessoa lê a lista de teclas.
+	 */
+	enabled?: boolean;
 	onClose: () => void;
 	onControl: (action: "start" | "stop" | "restart") => void;
 	onRun: () => void;
@@ -117,35 +124,38 @@ export function ServiceDetail({
 	const adopted = row.state === "adopted";
 	const bootPending = Boolean(record && record.mode === "sync" && !record.boot);
 
-	useInput((input, key) => {
-		if (isMouseInput(input)) return;
-		if (key.escape) {
-			if (showResult) setShowResult(false);
-			else onClose();
-			return;
-		}
-		if (busy) return; // uma operação por vez
+	useInput(
+		(input, key) => {
+			if (isMouseInput(input)) return;
+			if (key.escape) {
+				if (showResult) setShowResult(false);
+				else onClose();
+				return;
+			}
+			if (busy) return; // uma operação por vez
 
-		if (adopted) {
-			// Sem registro só há uma ação de verdade: adotar. O resto (iniciar,
-			// editar, remover…) precisa do modo/config/workingDir que só o
-			// registro guarda.
-			if (input === "a") onAdopt();
+			if (adopted) {
+				// Sem registro só há uma ação de verdade: adotar. O resto (iniciar,
+				// editar, remover…) precisa do modo/config/workingDir que só o
+				// registro guarda.
+				if (input === "a") onAdopt();
+				if (input === "l") onLogs();
+				return;
+			}
+
+			if (input === "i") onControl("start");
+			if (input === "p") onControl("stop");
+			if (input === "t") onControl("restart");
+			if (input === "r") onRun();
+			if (input === "e") onEdit();
+			if (input === "b") onSwitchBackend();
 			if (input === "l") onLogs();
-			return;
-		}
-
-		if (input === "i") onControl("start");
-		if (input === "p") onControl("stop");
-		if (input === "t") onControl("restart");
-		if (input === "r") onRun();
-		if (input === "e") onEdit();
-		if (input === "b") onSwitchBackend();
-		if (input === "l") onLogs();
-		if (input === "x") onRemove();
-		if (input === "v") setShowResult(true);
-		if (input === "o" && bootPending && onEnableBoot) onEnableBoot();
-	});
+			if (input === "x") onRemove();
+			if (input === "v") setShowResult(true);
+			if (input === "o" && bootPending && onEnableBoot) onEnableBoot();
+		},
+		{ isActive: enabled },
+	);
 
 	if (showResult && record) {
 		const timestamp = formatResultTimestamp(record);

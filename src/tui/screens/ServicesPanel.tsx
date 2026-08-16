@@ -144,15 +144,29 @@ export function ServicesPanel({
 	// itens de fora, reserva-se 1 linha por indicador (acima/abaixo) e a janela
 	// é recalculada com a altura reduzida — senão o indicador em si estouraria
 	// a altura disponível.
-	const provisional = listWindow(rows.length, screenRows, cursor);
-	const reserved =
+	//
+	// A reserva é LIMITADA pelo orçamento: com `screenRows` 1 ou 2, reservar uma
+	// linha por indicador deixaria 1 item + 2 indicadores = 3 linhas num
+	// orçamento de 2 — de novo o frame corrompido que o recorte existe para
+	// evitar. Aqui a conta nunca deixa a soma passar de `screenRows`: primeiro o
+	// item (sem ele a lista não é lista), depois os indicadores que couberem.
+	const budget = Math.max(1, screenRows);
+	const provisional = listWindow(rows.length, budget, cursor);
+	const wanted =
 		(provisional.start > 0 ? 1 : 0) + (provisional.end < rows.length ? 1 : 0);
+	const reserved = Math.min(wanted, budget - 1);
 	const win =
 		reserved > 0
-			? listWindow(rows.length, Math.max(1, screenRows - reserved), cursor)
+			? listWindow(rows.length, budget - reserved, cursor)
 			: provisional;
-	const hasMoreAbove = win.start > 0;
-	const hasMoreBelow = win.end < rows.length;
+
+	// Os indicadores DESENHADOS também são limitados a `reserved`: quando só
+	// coube um e há corte dos dois lados, o de baixo é o que fica (rolar para o
+	// fim da lista é o movimento comum).
+	const above = win.start > 0;
+	const below = win.end < rows.length;
+	const hasMoreBelow = below && reserved > 0;
+	const hasMoreAbove = above && reserved > (hasMoreBelow ? 1 : 0);
 	const visible = rows.slice(win.start, win.end);
 
 	const listRef = useClickable({
@@ -174,6 +188,11 @@ export function ServicesPanel({
 
 	if (loading)
 		return <Text color={theme.muted}>procurando serviços na máquina…</Text>;
+
+	// Mesmo orçamento de linhas do caso com itens: o texto de boas-vindas ocupa
+	// 4 linhas e num painel baixo estouraria o frame.
+	if (rows.length === 0 && budget < 4)
+		return <Text color={theme.muted}>nenhum serviço — n cria o primeiro</Text>;
 
 	if (rows.length === 0)
 		return (

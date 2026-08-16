@@ -35,6 +35,20 @@ export function Overlay({
 			height={box.height}
 			flexDirection="column"
 		>
+			{/*
+			 * Fundo OPACO. O ink só pinta as células em que algum `Text` escreve —
+			 * o vão entre a borda e o texto (o `paddingX`) e o resto de uma linha
+			 * curta ficam transparentes, e a lista de baixo aparece dentro do
+			 * overlay, letra sim letra não. Uma camada de espaços da largura da
+			 * caixa apaga isso: é o equivalente a limpar a região antes de desenhar
+			 * a janela.
+			 */}
+			<Box position="absolute" flexDirection="column">
+				{Array.from({ length: box.height }, (_, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: linhas de fundo são posicionais
+					<Text key={i}>{" ".repeat(box.width)}</Text>
+				))}
+			</Box>
 			<Text color={theme.accent}>
 				╭─<Text bold>{` ${title} `}</Text>
 				{"─".repeat(Math.max(0, box.width - title.length - 5))}╮

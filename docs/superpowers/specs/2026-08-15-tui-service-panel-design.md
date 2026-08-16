@@ -1,7 +1,7 @@
 # Painel de serviços — redesenho da TUI
 
 Data: 2026-08-15
-Status: desenhado (não implementado)
+Status: implementado
 Substitui: as telas `Home`, `Services` e `Running` do desenho de 2026-07-28
 
 ## Problema

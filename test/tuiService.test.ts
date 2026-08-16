@@ -12,11 +12,14 @@ import {
 import { tailCommand } from "../src/core/logs/tailCommand";
 import { LineBuffer, levelOf, stripAnsi } from "../src/core/run/logLines";
 import { argsFor, pulsarCommandLine } from "../src/core/run/pulsarCommand";
+import { enableBootSteps } from "../src/core/service/enableBoot";
+import { specFromRecord } from "../src/core/service/fromRecord";
 import { buildPlist, launchdPlan } from "../src/core/service/launchd";
 import { execStep } from "../src/core/service/manager";
 import { buildEcosystem, pm2Plan } from "../src/core/service/pm2";
 import { buildUnit, systemdPlan } from "../src/core/service/systemd";
 import { type ServiceSpec, serviceName, slug } from "../src/core/service/types";
+import type { ServiceRecord } from "../src/core/state/registry";
 
 const spec: ServiceSpec = {
 	name: "ads-staging",
@@ -331,5 +334,93 @@ describe("execução de um passo de serviço", () => {
 			{ cwd: process.cwd() },
 		);
 		expect(r.ok).toBe(false);
+	});
+});
+
+/**
+ * Task 15 — o que a amarração acrescentou ao núcleo de serviço: converter um
+ * REGISTRO em `ServiceSpec` (toda ação do painel parte daí) e religar o boot
+ * que a instalação deixou pendente.
+ */
+describe("specFromRecord", () => {
+	function record(overrides: Partial<ServiceRecord> = {}): ServiceRecord {
+		return {
+			name: "pulsar-loja",
+			mode: "sync",
+			config: "/proj/loja.yml",
+			workingDir: "/proj",
+			backend: "systemd",
+			boot: true,
+			createdBy: "pulsar-tui",
+			lastRun: null,
+			...overrides,
+		};
+	}
+
+	test("tira o prefixo do nome — `serviceName()` o reaplica sozinho", () => {
+		const spec = specFromRecord(record());
+		expect(spec.name).toBe("loja");
+		// A ida e volta tem que fechar: é o nome que o supervisor conhece.
+		expect(serviceName(spec)).toBe("pulsar-loja");
+	});
+
+	test("leva config, workingDir e boot como estão", () => {
+		const spec = specFromRecord(record({ boot: false }));
+		expect(spec.configPath).toBe("/proj/loja.yml");
+		expect(spec.workingDir).toBe("/proj");
+		expect(spec.autostart).toBe(false);
+	});
+
+	test("nome sem prefixo (registro de outra origem) passa intacto", () => {
+		expect(specFromRecord(record({ name: "loja" })).name).toBe("loja");
+	});
+});
+
+describe("enableBootSteps", () => {
+	function record(backend: ServiceRecord["backend"]): ServiceRecord {
+		return {
+			name: "pulsar-loja",
+			mode: "sync",
+			config: "/proj/loja.yml",
+			workingDir: "/proj",
+			backend,
+			boot: false,
+			createdBy: "pulsar-tui",
+			lastRun: null,
+		};
+	}
+
+	test("systemd: habilita a unit e só cai no sudo se o linger automático falhar", () => {
+		const steps = enableBootSteps(record("systemd"));
+		expect(steps[0].args).toEqual(["--user", "enable", "pulsar-loja.service"]);
+		// o automático é opcional (máquina sem polkit) e o manual só roda como
+		// fallback DELE — senão pediria senha à toa
+		expect(steps[1].optional).toBe(true);
+		expect(steps[1].id).toBe("linger");
+		expect(steps[2].privileged).toBe(true);
+		expect(steps[2].fallbackFor).toBe("linger");
+	});
+
+	test("docker: política de restart + o próprio Docker no boot (esse é o com sudo)", () => {
+		const steps = enableBootSteps(record("docker"));
+		expect(steps[0].args).toEqual([
+			"update",
+			"--restart=unless-stopped",
+			"pulsar-loja",
+		]);
+		expect(steps.at(-1)?.privileged).toBe(true);
+	});
+
+	test("pm2: save automático, startup como passo privilegiado", () => {
+		const steps = enableBootSteps(record("pm2"));
+		expect(steps.map((s) => s.args.join(" "))).toEqual(["save", "startup"]);
+		expect(steps[0].privileged).toBeUndefined();
+		expect(steps[1].privileged).toBe(true);
+	});
+
+	test("launchd: lista VAZIA — RunAtLoad mora no plist, ligar é reinstalar", () => {
+		// Vazio não é omissão: é o que faz a tela dizer "edite e reinstale" em
+		// vez de fingir que rodou algo.
+		expect(enableBootSteps(record("launchd"))).toEqual([]);
 	});
 });

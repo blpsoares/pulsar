@@ -1,8 +1,8 @@
 import { Box, Text } from "ink";
 import { useEffect } from "react";
-import { CollectionPicker } from "../../components/CollectionPicker";
 import type { useInspector } from "../../hooks/useInspector";
 import { theme } from "../../theme";
+import { CollectionPicker } from "../CollectionPicker";
 import type { EstimateOptions } from "./EstimatesPanel";
 
 /**

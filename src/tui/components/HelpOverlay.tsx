@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import { helpFor, type Layer } from "../keys";
+import { helpFor, type KeyContext, type Layer } from "../keys";
 import { theme } from "../theme";
 import { Overlay } from "./Overlay";
 
@@ -12,10 +12,16 @@ export function HelpOverlay({
 	layer,
 	columns,
 	rows,
+	context = {},
 }: {
 	layer: Layer;
 	columns: number;
 	rows: number;
+	/**
+	 * Estado do objeto em foco — sem isto a ajuda do detalhe anunciaria `a`
+	 * (adotar) para todo serviço e `o` (ligar boot) para quem já sobe no boot.
+	 */
+	context?: KeyContext;
 }) {
 	const titles: Record<Layer, string> = {
 		list: "serviços",
@@ -27,7 +33,7 @@ export function HelpOverlay({
 
 	return (
 		<Overlay title={`teclas · ${titles[layer]}`} columns={columns} rows={rows}>
-			{helpFor(layer).map((group) => (
+			{helpFor(layer, context).map((group) => (
 				<Box key={group.group} flexDirection="column" marginBottom={1}>
 					<Text color={theme.muted}>{group.group}</Text>
 					{group.keys.map((binding) => (

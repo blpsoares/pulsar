@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { DbEntry } from "../../../core/inspect/inspectDb";
-import { EntryPicker, type PickerItem } from "../../components/EntryPicker";
 import { theme } from "../../theme";
+import { EntryPicker, type PickerItem } from "../EntryPicker";
 
 /**
  * Quais views recriar no destino.

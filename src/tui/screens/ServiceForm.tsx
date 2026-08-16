@@ -32,10 +32,11 @@ import {
 	type StepResult,
 } from "../../core/service/manager";
 import { detectSudo, type SudoMode } from "../../core/service/privileged";
-import type {
-	Backend,
-	ServiceSpec,
-	ServiceStep,
+import {
+	type Backend,
+	type ServiceSpec,
+	type ServiceStep,
+	serviceName,
 } from "../../core/service/types";
 import {
 	CREATED_BY_TUI,
@@ -43,6 +44,10 @@ import {
 	writeRecord,
 } from "../../core/state/registry";
 import { parseDuration } from "../../core/ttl/parseDuration";
+import { CollectionsStep } from "../components/form/CollectionsStep";
+import { DEFAULT_ESTIMATE_OPTIONS } from "../components/form/EstimatesPanel";
+import { IndexesStep } from "../components/form/IndexesStep";
+import { ViewsStep } from "../components/form/ViewsStep";
 import { Overlay } from "../components/Overlay";
 import { Select } from "../components/Select";
 import { Stat } from "../components/Shell";
@@ -67,10 +72,6 @@ import {
 	resolveFinalBoot,
 	visibleFields,
 } from "./serviceFormFields";
-import { CollectionsStep } from "./wizard/CollectionsStep";
-import { DEFAULT_ESTIMATE_OPTIONS } from "./wizard/EstimatesPanel";
-import { IndexesStep } from "./wizard/IndexesStep";
-import { ViewsStep } from "./wizard/ViewsStep";
 
 /**
  * O formulário único de criação/edição de serviço.
@@ -130,6 +131,8 @@ export function ServiceForm({
 	rows,
 	onCancel,
 	onSubmit,
+	onHelp,
+	enabled = true,
 }: {
 	dir: string;
 	initial?: ServiceRecord;
@@ -137,8 +140,22 @@ export function ServiceForm({
 	rows: number;
 	onCancel: () => void;
 	onSubmit: (draft: ServiceDraft, andStart: boolean) => void;
+	/**
+	 * `?` é tratado AQUI, e não no `App`, por um motivo prático: uma URI do
+	 * Atlas tem `?retryWrites=true`. Um handler global de `?` abriria a ajuda no
+	 * meio da digitação da origem. Este handler é o que já ignora tecla quando
+	 * um editor de campo está aberto.
+	 */
+	onHelp?: () => void;
+	/** false quando a ajuda está por cima — só a camada de cima escuta */
+	enabled?: boolean;
 }) {
-	const [name, setName] = useState(initial?.name ?? "");
+	// O registro guarda o nome COM prefixo (`pulsar-x`); o campo edita o SUFIXO,
+	// que é o que `serviceName()` reprefixa na gravação — sem tirar aqui, salvar
+	// de novo criaria `pulsar-pulsar-x`.
+	const [name, setName] = useState(
+		(initial?.name ?? "").replace(/^pulsar-/, ""),
+	);
 	const [mode, setMode] = useState<TuiMode>(initial?.mode ?? "sync");
 	// Exibido/comparado sempre RELATIVO a `dir` (mesmo formato que `detectConfigs`
 	// devolve) — só vira absoluto na hora de ler/gravar o arquivo de verdade
@@ -303,6 +320,10 @@ export function ServiceForm({
 			if (askStep || installing || pending) return;
 			if (editing) return; // o editor do campo é quem escuta
 
+			if (input === "?") {
+				onHelp?.();
+				return;
+			}
 			if (key.escape) {
 				onCancel();
 				return;
@@ -336,7 +357,7 @@ export function ServiceForm({
 				return;
 			}
 		},
-		{ isActive: true },
+		{ isActive: enabled },
 	);
 
 	// `esc` fecha o editor dos campos COMPACTOS (TextInput, Select não tratam
@@ -358,7 +379,7 @@ export function ServiceForm({
 			if (isWideField(editing) && sourceConnected) return;
 			if (key.escape) closeEditor();
 		},
-		{ isActive: Boolean(editing) },
+		{ isActive: enabled && Boolean(editing) },
 	);
 
 	// Confirmação de sudo: "vou rodar: <comando> — enter digita a senha / p pula".
@@ -374,7 +395,7 @@ export function ServiceForm({
 				setAskStep(null);
 			}
 		},
-		{ isActive: Boolean(askStep) },
+		{ isActive: enabled && Boolean(askStep) },
 	);
 
 	// Relatório final (pendências/falha) — enter/esc fecham e entregam ao
@@ -392,7 +413,7 @@ export function ServiceForm({
 				onSubmit(draft, andStart);
 			}
 		},
-		{ isActive: Boolean(pending) },
+		{ isActive: enabled && Boolean(pending) },
 	);
 
 	async function ask(step: ServiceStep): Promise<boolean> {
@@ -803,7 +824,13 @@ function recordFor(
 	initial?: ServiceRecord,
 ): ServiceRecord {
 	return {
-		name: draft.name,
+		// O registro guarda o nome COMO O SUPERVISOR o conhece (`pulsar-<slug>`),
+		// não o que foi digitado. É o que `reconcile` cruza com o
+		// `discoverServices()` e o que `specFromRecord` desfaz para voltar a
+		// `ServiceSpec`. Gravando o nome cru, o mesmo serviço aparecia DUAS vezes
+		// na lista — "adotado" (o que o systemd vê) e "não instalado" (o
+		// registro) — e nenhuma das duas linhas funcionava.
+		name: serviceName({ name: draft.name }),
 		mode: draft.mode,
 		config: draft.configPath,
 		workingDir: dir,

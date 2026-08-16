@@ -33,7 +33,12 @@ export function RunnerScreen({
 }: {
 	file: string;
 	onExit: () => void;
-	onInstallService: () => void;
+	/**
+	 * Opcional: a tela de "instalar serviço" deixou de existir como destino
+	 * separado — no painel novo, criar/instalar é o formulário, e o Runner é
+	 * apenas "rodar isto agora aqui, em primeiro plano".
+	 */
+	onInstallService?: () => void;
 }) {
 	const { columns, rows } = useTerminalSize();
 	const l = layout(columns, rows);
@@ -65,7 +70,7 @@ export function RunnerScreen({
 		}
 		if (input === "v" && mode === "sync") setVerbose((v) => !v);
 		if (input === "f" && mode === "sync") setFull((f) => !f);
-		if (input === "b") onInstallService();
+		if (input === "b") onInstallService?.();
 	});
 
 	if (!loaded)
@@ -107,7 +112,9 @@ export function RunnerScreen({
 					? [{ keys: "s", label: "parar (SIGTERM — salva o progresso)" }]
 					: [
 							{ keys: "enter", label: "rodar" },
-							{ keys: "b", label: "background" },
+							// Só anuncia o que existe: sem `onInstallService` a tecla
+							// não faz nada (o painel novo instala pelo formulário).
+							...(onInstallService ? [{ keys: "b", label: "background" }] : []),
 							...(mode === "sync"
 								? [
 										{ keys: "v", label: "verbose" },

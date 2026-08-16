@@ -53,11 +53,24 @@ export function LogViewer({
 	columns,
 	rows,
 	onClose,
+	onCycleSource,
+	onHelp,
+	enabled = true,
 }: {
 	source: LogViewerSource;
 	columns: number;
 	rows: number;
 	onClose: () => void;
+	/**
+	 * `s` troca a fonte (ao vivo ↔ cada arquivo de ./logs). Quem guarda a lista
+	 * é o `App`, que remonta este componente por `key` — trocar de fonte zera
+	 * rolagem e busca de propósito: são de outro texto.
+	 */
+	onCycleSource?: () => void;
+	/** `?` é tratado aqui porque durante a busca (`/`) as teclas são texto */
+	onHelp?: () => void;
+	/** false quando a ajuda está por cima */
+	enabled?: boolean;
 }) {
 	const { lines, title, live } = useLogSource(source);
 
@@ -128,93 +141,104 @@ export function LogViewer({
 		);
 	}
 
-	useInput((input, key) => {
-		if (isMouseInput(input)) return;
+	useInput(
+		(input, key) => {
+			if (isMouseInput(input)) return;
 
-		if (searching) {
-			if (key.return) {
-				submitSearch();
+			if (searching) {
+				if (key.return) {
+					submitSearch();
+					return;
+				}
+				if (key.escape) {
+					setSearching(false);
+					return;
+				}
+				if (key.backspace || key.delete) {
+					setQuery((q) => q.slice(0, -1));
+					return;
+				}
+				if (input && !key.ctrl && !key.meta && !key.tab)
+					setQuery((q) => q + input);
 				return;
 			}
+
 			if (key.escape) {
-				setSearching(false);
+				onClose();
 				return;
 			}
-			if (key.backspace || key.delete) {
-				setQuery((q) => q.slice(0, -1));
+			if (key.upArrow) {
+				setFollow(false);
+				setOffset((o) => o + 1);
 				return;
 			}
-			if (input && !key.ctrl && !key.meta && !key.tab)
-				setQuery((q) => q + input);
-			return;
-		}
-
-		if (key.escape) {
-			onClose();
-			return;
-		}
-		if (key.upArrow) {
-			setFollow(false);
-			setOffset((o) => o + 1);
-			return;
-		}
-		if (key.downArrow) {
-			setOffset((o) => Math.max(0, o - 1));
-			return;
-		}
-		if (key.pageUp) {
-			setFollow(false);
-			setOffset((o) => o + bodyHeight);
-			return;
-		}
-		if (key.pageDown) {
-			setOffset((o) => Math.max(0, o - bodyHeight));
-			return;
-		}
-		if (input === "g") {
-			// topo: mostra o começo do log, para de seguir.
-			setFollow(false);
-			setOffset(lines.length);
-			return;
-		}
-		if (input === "G") {
-			// fim: "volta a acompanhar" — o único gesto que RELIGA o follow.
-			setOffset(0);
-			setFollow(true);
-			return;
-		}
-		if (input === "f") {
-			setFollow((f) => !f);
-			return;
-		}
-		if (input === "/") {
-			setSearching(true);
-			return;
-		}
-		if (input === "n") {
-			jumpToMatch(1);
-			return;
-		}
-		if (input === "N") {
-			jumpToMatch(-1);
-			return;
-		}
-		if (key.ctrl && input === "c") {
-			const result = copyToClipboard(focusedLine);
-			flashCopy(focusedLine, result.via);
-			return;
-		}
-		if (input === "Y") {
-			const text = visibleLines.join("\n");
-			const result = copyToClipboard(text);
-			flashCopy(text, result.via);
-			return;
-		}
-		if (input === "m") {
-			mouse.toggle();
-			return;
-		}
-	});
+			if (key.downArrow) {
+				setOffset((o) => Math.max(0, o - 1));
+				return;
+			}
+			if (key.pageUp) {
+				setFollow(false);
+				setOffset((o) => o + bodyHeight);
+				return;
+			}
+			if (key.pageDown) {
+				setOffset((o) => Math.max(0, o - bodyHeight));
+				return;
+			}
+			if (input === "g") {
+				// topo: mostra o começo do log, para de seguir.
+				setFollow(false);
+				setOffset(lines.length);
+				return;
+			}
+			if (input === "G") {
+				// fim: "volta a acompanhar" — o único gesto que RELIGA o follow.
+				setOffset(0);
+				setFollow(true);
+				return;
+			}
+			if (input === "f") {
+				setFollow((f) => !f);
+				return;
+			}
+			if (input === "/") {
+				setSearching(true);
+				return;
+			}
+			if (input === "n") {
+				jumpToMatch(1);
+				return;
+			}
+			if (input === "N") {
+				jumpToMatch(-1);
+				return;
+			}
+			if (key.ctrl && input === "c") {
+				const result = copyToClipboard(focusedLine);
+				flashCopy(focusedLine, result.via);
+				return;
+			}
+			if (input === "Y") {
+				const text = visibleLines.join("\n");
+				const result = copyToClipboard(text);
+				flashCopy(text, result.via);
+				return;
+			}
+			if (input === "m") {
+				mouse.toggle();
+				return;
+			}
+			if (input === "s") {
+				onCycleSource?.();
+				return;
+			}
+			if (input === "?") {
+				onHelp?.();
+				return;
+			}
+		},
+		{ isActive: enabled },
+	);
 
 	// A mensagem de cópia é feedback passageiro — sem isso ela ficaria colada
 	// na tela cobrindo o rodapé de teclas depois de qualquer ctrl+c.

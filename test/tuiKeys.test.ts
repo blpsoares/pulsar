@@ -13,6 +13,7 @@ import {
 	helpFor,
 	hintsFor,
 	KEYS,
+	keysFor,
 	type Layer,
 } from "../src/tui/keys";
 import { listWindow, overlayBox } from "../src/tui/layout";
@@ -212,6 +213,49 @@ describe("keys", () => {
 			expect(grupos.at(-1)?.group).toBe("sempre");
 			expect(grupos.at(-1)?.keys).toEqual(GLOBAL_KEYS);
 		}
+	});
+});
+
+describe("keysFor (Task 15 — ajuda que não mente sobre o estado)", () => {
+	test("detalhe comum: `a` (adotar) NÃO aparece — o serviço já tem registro", () => {
+		const keys = keysFor("detail").map((k) => k.keys);
+		expect(keys).not.toContain("a");
+		expect(keys).toContain("i");
+		expect(keys).toContain("x");
+	});
+
+	test("detalhe com boot já ligado: `o` não aparece (não há o que ligar)", () => {
+		expect(keysFor("detail").map((k) => k.keys)).not.toContain("o");
+	});
+
+	test("boot pendente: `o` aparece", () => {
+		expect(
+			keysFor("detail", { bootPending: true }).map((k) => k.keys),
+		).toContain("o");
+	});
+
+	test("adotado: SÓ adotar e logs — é o que o teclado do detalhe trata sem registro", () => {
+		expect(keysFor("detail", { adopted: true }).map((k) => k.keys)).toEqual([
+			"l",
+			"a",
+		]);
+	});
+
+	test("as outras camadas não filtram nada", () => {
+		for (const layer of ["list", "form", "logs"] as Layer[])
+			expect(keysFor(layer, { adopted: true, bootPending: true })).toEqual(
+				KEYS[layer],
+			);
+	});
+
+	test("a barra e a ajuda seguem o MESMO filtro — nunca divergem", () => {
+		const ctx = { adopted: true };
+		const naAjuda = helpFor("detail", ctx)
+			.filter((g) => g.group !== "sempre")
+			.flatMap((g) => g.keys.map((k) => k.keys));
+		const naBarra = hintsFor("detail", ctx).map((h) => h.keys);
+		for (const key of naBarra) expect(naAjuda).toContain(key);
+		expect(naAjuda).not.toContain("x");
 	});
 });
 

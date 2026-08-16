@@ -78,6 +78,10 @@ export const KEYS: Record<Layer, KeyBinding[]> = {
 		{ keys: "g", label: "topo", group: "rolar" },
 		{ keys: "G", label: "fim", group: "rolar" },
 		{ keys: "f", label: "seguir", group: "rolar", primary: true },
+		// Cobre o que a tela `Logs` antiga fazia com uma lista de fontes à
+		// esquerda: alternar entre o seguidor ao vivo do supervisor e cada
+		// arquivo de ./logs.
+		{ keys: "s", label: "trocar a fonte (ao vivo/arquivo)", group: "rolar" },
 		{ keys: "/", label: "buscar", group: "buscar", primary: true },
 		{ keys: "n", label: "próxima ocorrência", group: "buscar" },
 		{ keys: "N", label: "ocorrência anterior", group: "buscar" },
@@ -93,16 +97,51 @@ export const KEYS: Record<Layer, KeyBinding[]> = {
 	help: [],
 };
 
-export function hintsFor(layer: Layer): Hint[] {
-	return KEYS[layer]
+/**
+ * O que a camada sabe sobre o objeto em foco, quando isso muda quais teclas
+ * EXISTEM de verdade.
+ *
+ * `KEYS.detail` é uma lista plana e não pode ser mostrada inteira: `a` (adotar)
+ * só funciona em serviço sem registro, e `o` (ligar boot) só em serviço
+ * contínuo com o boot desligado. Anunciar as duas sempre é exatamente a mentira
+ * que o `?` existe para evitar — e pior que não ter ajuda, porque a pessoa
+ * aperta a tecla e nada acontece.
+ */
+export type KeyContext = {
+	/** serviço sem registro do pulsar: só adotar e ver log funcionam */
+	adopted?: boolean;
+	/** modo contínuo com o boot desligado: `o` tem o que ligar */
+	bootPending?: boolean;
+};
+
+/** As teclas que REALMENTE funcionam nesta camada, neste estado. */
+export function keysFor(layer: Layer, ctx: KeyContext = {}): KeyBinding[] {
+	const all = KEYS[layer];
+	if (layer !== "detail") return all;
+
+	// Espelha `ServiceDetail`: sem registro, o teclado dele trata só `a` e `l`
+	// (iniciar/editar/remover precisam do modo/config/workingDir que só o
+	// registro guarda).
+	if (ctx.adopted) return all.filter((b) => b.keys === "a" || b.keys === "l");
+
+	return all.filter(
+		(b) => b.keys !== "a" && (b.keys !== "o" || ctx.bootPending === true),
+	);
+}
+
+export function hintsFor(layer: Layer, ctx: KeyContext = {}): Hint[] {
+	return keysFor(layer, ctx)
 		.filter((binding) => binding.primary)
 		.map(({ keys, label }) => ({ keys, label }));
 }
 
-export function helpFor(layer: Layer): { group: string; keys: KeyBinding[] }[] {
+export function helpFor(
+	layer: Layer,
+	ctx: KeyContext = {},
+): { group: string; keys: KeyBinding[] }[] {
 	const groups: { group: string; keys: KeyBinding[] }[] = [];
 
-	for (const binding of KEYS[layer]) {
+	for (const binding of keysFor(layer, ctx)) {
 		const existing = groups.find((g) => g.group === binding.group);
 		if (existing) existing.keys.push(binding);
 		else groups.push({ group: binding.group, keys: [binding] });

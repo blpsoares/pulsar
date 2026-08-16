@@ -2,9 +2,9 @@ import { Box, Text } from "ink";
 import { useEffect } from "react";
 import type { CollIndexes } from "../../../core/inspect/indexSummary";
 import type { CopyIndexesOption } from "../../../types/parseYml";
-import { EntryPicker, type PickerItem } from "../../components/EntryPicker";
 import type { useInspector } from "../../hooks/useInspector";
 import { theme } from "../../theme";
+import { EntryPicker, type PickerItem } from "../EntryPicker";
 
 /**
  * Quais índices recriar no destino.

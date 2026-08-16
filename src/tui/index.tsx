@@ -1,4 +1,5 @@
 import { render } from "ink";
+import { ENTER_ALT, LEAVE_ALT } from "../core/tty/ansi";
 import { App } from "./App";
 import { MouseProvider } from "./mouse/MouseProvider";
 
@@ -10,9 +11,10 @@ import { MouseProvider } from "./mouse/MouseProvider";
  * mensagem manda usar os subcomandos, que funcionam sem TTY por design.
  */
 
-/** Tela alternativa: o mesmo buffer que vim/htop/k9s usam. */
-const ENTER_ALT_SCREEN = "\x1b[?1049h";
-const LEAVE_ALT_SCREEN = "\x1b[?1049l";
+// A tela alternativa (o mesmo buffer que vim/htop/k9s usam) vem de
+// `core/tty/ansi.ts`: é a MESMA sequência que o `withTerminal` do sudo escreve
+// ao soltar e retomar o terminal. Duas cópias literais da mesma string são duas
+// verdades que só divergem no dia em que uma for corrigida.
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 
@@ -29,7 +31,7 @@ export async function startTui(dir = process.cwd()): Promise<void> {
 	// Sem a tela alternativa, um app de tela cheia deixa dezenas de frames
 	// desenhados no scrollback — sair da TUI entregaria o terminal cheio de
 	// lixo. Com ela, o conteúdo anterior volta intacto ao sair.
-	process.stdout.write(ENTER_ALT_SCREEN + HIDE_CURSOR);
+	process.stdout.write(ENTER_ALT + HIDE_CURSOR);
 
 	// Restaura mesmo em morte anormal: sem isto, um crash deixaria o terminal
 	// sem cursor e preso na tela alternativa, exigindo `reset`.
@@ -37,7 +39,7 @@ export async function startTui(dir = process.cwd()): Promise<void> {
 	const restore = () => {
 		if (restored) return;
 		restored = true;
-		process.stdout.write(SHOW_CURSOR + LEAVE_ALT_SCREEN);
+		process.stdout.write(SHOW_CURSOR + LEAVE_ALT);
 	};
 	process.once("exit", restore);
 	process.once("SIGTERM", restore);

@@ -75,15 +75,23 @@ src/
     inspect/                # [TUI] introspecção: collections+views, $collStats, índices, probe de conexão, maskUri
     config/                 # [TUI] form <-> yml: formState, buildConfig, loadConfig, writeConfig (valida com Zod)
     run/                    # [TUI] pulsarCommand (binário vs bun src/cli.ts), logLines (ANSI/ring buffer)
-    service/                # [TUI] background: systemd, launchd, pm2, docker + detect/manager
+    service/                # [TUI] background: systemd, launchd, pm2, docker + detect/discover/manager
+                            #   privileged (sudo na hora), oneshot (desliga boot), enableBoot (religa),
+                            #   switchBackend (troca com rollback), fromRecord (registro -> ServiceSpec)
+    state/                  # [TUI] registry (~/.pulsar/services/*.json), runRecord (lastRun gravado pelo
+                            #   próprio processo), reconcile (registro × supervisor), adopt (reconstrói registro)
+    tty/                    # ansi (sequências) + handoff (empresta o terminal ao sudo e retoma em finally)
     logs/                   # [TUI] readLog (tail pela cauda), tailCommand (journalctl/pm2/docker/tail)
   tui/
     index.tsx             # render da TUI; exige TTY (sem TTY manda usar os subcomandos)
-    App.tsx               # roteador de telas
+    App.tsx               # tela raiz + PILHA de camadas (detail/form/logs/switch/runner/help)
+    keys.ts               # fonte única das teclas por camada (barra = filtro; `?` = tudo, agrupado)
+    layout.ts             # geometria pura: layout(), overlayBox(), listWindow()
     theme.ts              # paleta/glifos
-    components/           # Frame, Select, TextInput, CollectionPicker, EntryPicker, SearchField
-    hooks/                # useInspector (Mongo), useProcess (filho), useSpinner
-    screens/              # Home, Wizard, Runner, Services, Logs (+ wizard/*)
+    components/           # Shell, Overlay, HelpOverlay, Select, TextInput, CollectionPicker,
+                          #   EntryPicker, SearchField + form/ (pickers de collections/views/índices)
+    hooks/                # useInspector (Mongo), useProcess (filho), useSpinner, useTerminalSize
+    screens/              # ServicesPanel (raiz), ServiceDetail, ServiceForm, LogViewer, Runner
   stubs/
     react-devtools-core.ts  # stub p/ o ink sobreviver ao bun build --compile
   functions/
@@ -314,120 +322,140 @@ container não carrega react/ink.
 
 Paleta ancorada no roxo da marca (`#9b00ff`, o mesmo do banner em
 `utils/showCliTitle.ts`); estados (ok/aviso/erro) seguem em ANSI-16 nomeado,
-que respeita o tema do terminal.
+que respeita o tema do terminal. Tela cheia em *alternate screen* (sai sem
+sujar o scrollback; a sequência vem de `core/tty/ansi.ts`, a MESMA que o
+handoff do sudo usa).
 
-**Layout de cockpit** (estilo k9s/lazygit): tela cheia em *alternate screen*
-(sai sem sujar o scrollback), com sidebar + painel central + painel de contexto
-visíveis ao mesmo tempo. `tab` alterna **apenas o foco**, nunca o conteúdo de um
-painel — trocar o que está na tela ao mudar de foco desorienta. As larguras vêm de
-`src/tui/layout.ts` (matemática pura, testada): abaixo de 96 colunas o painel da
-direita sai de cena antes de espremer a lista. **Ctrl+C e Ctrl+D encerram de
-qualquer tela** — o `render()` roda com `exitOnCtrlC: false` (para o filho
-receber SIGTERM e gravar o resume token), então a saída é tratada no `App`.
+### Uma tela raiz e uma pilha de camadas
 
-- **Descoberta recursiva:** a TUI varre da pasta atual **para baixo** procurando
-  ymls do pulsar — não é preciso `cd` até onde a config mora; o caminho relativo
-  aparece na lista. A varredura tem tetos de profundidade, de pastas ignoradas
-  (`node_modules`, ocultas, `logs`…), de arquivos e **de tempo** (400ms): medido,
-  varrer uma HOME real levava 1,3s e a partir de `/` não terminava, porque o
-  custo está em percorrer pastas, não em ler os poucos ymls. Quando algum teto
-  corta a varredura, a tela **avisa** em vez de deixar concluir que a config não
-  existe. `detectConfigs` segue não-recursivo por padrão — o `compose up` depende
-  disso.
-- **Mouse e cópia:** a TUI é clicável — item de lista, cabeçalho de seção,
-  passo do wizard e painel (clicar dá foco); roda do mouse rola as listas. Os
-  eventos chegam pelo `useInput` do ink, **não** por um listener em
-  `process.stdin`: o ink 7 lê o stdin em modo `readable` (pull), e registrar um
-  `on("data")` disputa os bytes com ele — o listener não recebe nada e ainda
-  arrisca engolir teclas. Rastrear cliques **rouba a seleção de texto nativa**
-  do terminal; por isso `ctrl+c` COPIA o item em foco (via OSC 52, que funciona
-  através de SSH, com pbcopy/wl-copy/xclip como reforço) e `m` na tela inicial
-  desliga o mouse quando você quiser selecionar com o mouse mesmo. **Sair é `q` (na
-  tela inicial) ou `ctrl+d` (de qualquer lugar).** O `ctrl+d` é acrescentado à
-  barra de teclas pelo próprio `Shell`, não por cada tela: uma tela que
-  esquecesse de anunciá-lo deixaria o usuário preso sem saber como sair — foi
-  o que aconteceu no passo "modo", que ainda por cima não tratava `esc`.
-- **Ações no ITEM, não numa barra de verbos:** enter (ou clique) sobre uma
-  config abre o menu DELA — editar, rodar aqui, iniciar em background, gerenciar
-  background, ver logs. Antes os verbos ficavam na sidebar e era preciso deixar
-  o arquivo certo selecionado na lista para então escolher o verbo do outro lado
-  da tela; duas metades sem nada ligando uma à outra. A sidebar ficou só com o
-  que é global (nova config, background, logs, sair).
-- **`b` sobe em background num passo** (`hooks/useBackgroundStart.ts`): instala
-  com o backend nativo da máquina, liga no boot e sobe — dizendo no rodapé se
-  ficou faltando um comando com sudo. A tela de background segue existindo para
-  escolher backend, ver o plano completo ou remover.
-- **Tela "background" (`screens/Running.tsx`)** lista o que está no ar em
-  QUALQUER supervisor (`core/service/discover.ts` varre systemd, pm2, docker e
-  launchd), com estado, boot e i/p/t para iniciar/parar/reiniciar. Responde "isso
-  aqui está rodando?" sem partir de uma config.
-- **Navegação:** `tab` alterna o painel em foco. No wizard, o trilho de
-  **passos** é focável e clicável — é o que torna um yml existente realmente
-  editável: dá para pular direto para "origem" ou "avançado" em vez de apertar
-  `esc` até voltar.
-- **Lista agrupada:** as configs achadas na varredura recursiva aparecem
-  agrupadas por pasta, com seções que abrem e fecham (`←/→`, enter ou clique).
-  A navegação percorre LINHAS ACHATADAS (cabeçalhos + itens visíveis), então
-  seta para baixo atravessa seções sem estado de "em que nível estou".
-- **Criar/editar config:** form guiado (modo → origem → destino → collections →
-  **views → índices** → avançado → revisar; views/índices só no `sync`, onde há
-  o que escolher — no `migrate` o mongorestore leva índice sempre e view não
-  passa). Conecta na origem de verdade, lista os bancos **com
-  tamanho**, e mostra collections e views com **busca incremental** (`/`) e
-  multi-seleção. Abrir um yml existente **reconecta sozinho** pela URI do
-  arquivo (sem isso, o passo de collections viria vazio e o yml seria
-  não-editável na prática) e **preserva os `filter`/`filterFile`** escritos à
-  mão. Valida com os mesmos schemas Zod do `parseYml` **antes** de gravar, e
-  grava atomicamente (tmp + rename).
-- **Retrato do banco (`core/inspect/dbStats.ts`):** ao mover o cursor pela lista
-  de bancos, o painel da direita mostra collections, views, índices, docs (~) e
-  tamanho em disco — UMA chamada `dbStats`, que lê catálogo e responde em
-  milissegundos. As contagens de collections/views exibidas vêm da LISTA, não do
-  `dbStats`: ele conta `system.views` como collection e o número na tela tem que
-  bater com o que dá para selecionar.
-- **Views e índices são PASSOS, não um toggle:** escolher *quais* views recriar
-  e *quais* índices construir no destino tem peso — uma view cuja base ficou
-  fora da seleção responde vazio, e um índice em collection de 215M docs custa
-  horas de build. Antes as views se escolhiam num sub-painel escondido atrás da
-  tecla `v` dentro de "avançado" (sem busca, sem mouse) e os índices eram
-  tudo-ou-nada. Agora cada um é um passo com a mesma lista marcável, e o
-  "avançado" só liga/desliga o recurso. O passo de índices lista os índices das
-  collections **selecionadas** (com os campos e as marcas único/TTL) — índice de
-  collection que não vai ser sincronizada não teria onde ser criado.
-- **Campo de busca visível (`components/SearchField.tsx`):** a busca das listas
-  existia e funcionava (`/`), mas era uma linha de texto discreta que passava
-  despercebida — em lista de 200 collections a pessoa rolava tudo na seta
-  achando que não dava para buscar. Agora tem moldura, cursor quando ativa e é
-  **clicável**, nas três listas (collections, views, índices). A tecla continua
-  sendo `/`, porque as letras precisam servir de atalho (`a`/`n`/`c`/`e`) quando
-  a busca está desligada.
-- **Estimativas (opt-in):** o painel `e` liga "show estimatives" e escolhe quais
-  métricas puxar. Por padrão a tela não conta nada — `countDocuments` numa
-  collection de 215M docs levaria minutos. Os números vêm de `$collStats`
-  (metadata, instantâneo) e aparecem com `~`; `c` faz a contagem exata da
-  collection sob o cursor. O resumo "vai ser enviado" muda por modo (sync conta
-  índices só com `copyIndexes`; migrate leva índices sempre; ttl não copia dado)
-  e avisa quando uma view aponta para collection fora da seleção.
-- **Rodar:** dispara `sync`/`migrate`/`ttl` como processo filho com a saída ao
-  vivo. Para com **SIGTERM** (o pulsar grava o resume token antes de sair);
-  SIGKILL só depois de 35s. A TUI nunca deixa filho órfão.
-- **Background e boot:** systemd (unit de *usuário*, sem sudo), launchd
-  (LaunchAgent), pm2 (ecosystem file) e docker (herda o
-  `docker-compose-limit.yml`). A tela detecta o que existe na máquina, mostra o
-  **plano completo** (arquivos + comandos) antes de executar, e **nunca roda
-  sudo** — passos privilegiados (`enable-linger` de fallback, `pm2 startup`,
-  `systemctl enable docker`) são listados para você rodar. Instalar/iniciar/
-  parar/remover e status vivem na mesma tela.
-- **Logs:** duas visões — *gravados* (`./logs/*.log`, lidos pela cauda, com
-  busca e follow) e *ao vivo* (seguidor nativo: `journalctl -f`, `pm2 logs`,
-  `docker logs -f`, `tail -F`). O filho roda sem TTY, então o pulsar já troca as
-  barras pelo bloco STATUS — formato que cabe no painel.
+A TUI tem **uma tela**: a **lista de serviços da máquina** (`ServicesPanel`),
+em largura cheia. Todo o resto é **camada por cima dela**:
+
+| Camada | Abre com | O que é |
+|---|---|---|
+| detalhe | `enter` num item | identidade + ações DAQUELE serviço |
+| formulário | `n`, ou `e` no detalhe | criar/editar serviço e config, todos os campos visíveis |
+| logs | `l` | tela cheia: rolagem, busca, cópia, troca de fonte |
+| ajuda | `?` | as teclas da camada atual + as globais |
+
+Há sempre **exatamente um dono do teclado**: a camada do topo da pilha (prop
+`enabled`). Isso substituiu o `tab` que trocava foco entre painéis vivos — o
+arranjo que produzia `enter` agindo sobre o painel que não estava sendo
+olhado. `esc` fecha uma camada e **devolve o cursor ao mesmo item** (a lista
+não desmonta, e o cursor mora no `App`); `q` sai só na raiz; **`ctrl+d` sai de
+qualquer lugar**; `ctrl+c` copia (o caminho do yml do item em foco); `m`
+liga/desliga o mouse na raiz. As telas `Home`, `Services`, `Running`, `Logs` e
+o wizard passo-a-passo **não existem mais** — respondiam pedaços da mesma
+pergunta ("que serviços existem e como mexo neles?") e nenhuma respondia
+inteira.
+
+`?` é o único caso em que `esc` não volta uma camada: fecha a ajuda e devolve
+o usuário onde estava. A ajuda é **contextual e honesta** — a fonte é
+`tui/keys.ts` (lista única: a barra do rodapé mostra as `primary`, o `?`
+mostra todas, agrupadas), e ela é **filtrada pelo estado do item**: `a`
+(adotar) só aparece em serviço sem registro, `o` (ligar boot) só em serviço
+contínuo com o boot desligado. Nas camadas com campo de texto (formulário e
+busca do log) o `?` é tratado DENTRO delas — uma URI do Atlas tem
+`?retryWrites=true`, e um atalho global roubaria a tecla no meio da digitação.
+
+### O registro em `~/.pulsar`
+
+A lista é o cruzamento de duas fontes: o **registro** (`~/.pulsar/services/
+<nome>.json`, um arquivo por serviço, gravado com tmp+rename) diz o
+SIGNIFICADO — modo, yml, backend, boot, e o `lastRun` com os números da última
+execução; `discoverServices()` diz a VERDADE VIVA — está no ar, sobe no boot.
+Quatro estados aparecem na tela: `● no ar` / `○ parado`, `◍ adotado`
+(supervisor sem registro), `⊘ não instalado` (registro sem supervisor) e
+`✓ concluído` / `✗ erro` (one-shot que terminou). Registro corrompido nunca
+derruba a lista: aquele serviço aparece como adotado e a leitura segue.
+
+O `lastRun` é gravado **pelo próprio processo do pulsar** (`core/state/
+runRecord.ts`, chamado no fim de `sync`/`migrate`/`ttl`) — o serviço roda no
+boot às 3h da manhã com a TUI fechada, e o resultado precisa estar lá quando
+ela abrir. No detalhe, `v` mostra os números (traduzidos por modo) ou o erro.
+
+**Adotar** (`a`) reconstrói o registro lendo o supervisor: o `ExecStart` da
+unit systemd e o `command` do container contêm o modo e o caminho do yml.
+Serviço criado à mão, ou por uma versão anterior da TUI, não vira órfão.
+
+### Sudo resolvido na criação
+
+Só três passos em todo o código pedem root, e os três são sobre boot
+(`loginctl enable-linger` como fallback, `systemctl enable docker`,
+`pm2 startup`). Eles são resolvidos **na hora**, nunca relatados como
+pendência no fim: o formulário avisa ao marcar `boot` (`⚠ vai precisar de sudo
+(1 comando)`), a TUI roda `sudo -n true` na abertura (o chip do cabeçalho diz
+`sudo liberado` / `pede senha`) e, se houver senha, a instalação **para no
+ponto exato**, mostra o comando literal e espera: `enter` **larga o terminal**
+para o sudo (`core/tty/handoff.ts`: sai do alternate screen, desliga mouse e
+raw mode, restaura em `finally` — falhar ali deixaria o terminal sem eco) e
+`p` pula. Pular **não faz a instalação falhar**: o serviço sobe, o registro
+grava `boot: false` porque é a realidade, e o detalhe oferece `o` para ligar
+depois (`core/service/enableBoot.ts`, a mesma máquina de passos privilegiados).
+
+### One-shot desliga o próprio boot
+
+`migrate` e `ttl` terminam. Ao concluir **com sucesso**, o processo desabilita
+o próprio autostart antes de sair e carimba `boot: false`
+(`core/service/oneshot.ts`). Duas travas: só em serviço com
+`createdBy: "pulsar-tui"` e só no sucesso — desligar no erro tiraria a
+retentativa sem ninguém perceber.
+
+### Trocar o modo de inicialização
+
+`b` no detalhe escolhe outro backend: o pulsar remove do antigo, instala no
+novo e sobe, preservando nome, yml e boot. **Se o novo falhar no meio,
+reinstala no antigo** em vez de deixar a máquina sem serviço nenhum
+(`core/service/switchBackend.ts`); quando nem o rollback funciona, a mensagem
+diz isso em letras claras.
+
+### O formulário (criar/editar)
+
+Um componente só, o mesmo para criar e editar: **todos os campos visíveis ao
+mesmo tempo**, `↑↓` (ou clique) anda livre entre eles, `enter` abre o editor
+daquele campo, `ctrl+s` cria e sobe, `ctrl+o` só grava. Não há "próximo" —
+trocar o destino de um yml existente é UM campo de distância. Campo que
+depende de conexão (origem.db, collections, views, índices) **nunca some**:
+fica esmaecido com o motivo ao lado e, sem Mongo, aceita os nomes digitados à
+mão. Conectando, viram os pickers de sempre, com busca `/` visível. O modo
+(`sync`/`migrate`/`ttl`) decide quais campos existem — o `ttl` traz
+campo/derivar-do-_id/duração e não tem destino. **Serviço sempre aponta para
+um arquivo yml**: escolhendo `— definir aqui —`, o pulsar grava um yml novo e
+vincula, o que preserva `pulsar sync arquivo.yml` fora da TUI. Backend
+indisponível aparece desabilitado, **com motivo e conserto** (vindos do
+`detect.ts`). O registro guarda o nome COMO O SUPERVISOR o conhece
+(`pulsar-<slug>`) — é o que `reconcile` cruza com o `discover`.
+
+> ⚠ Editar uma config existente pelo formulário **regrava o yml** e, como a
+> gravação é um `yaml.dump` do objeto, **comentários e ordem das chaves se
+> perdem**. Vale para o wizard antigo também; não edite pela TUI um yml cujos
+> comentários sejam documentação.
+
+### Logs em tela cheia
+
+`l` abre o log ocupando 100% da tela — sem sidebar, sem painel de contexto, só
+conteúdo e uma linha de teclas. `↑↓`/`PgUp`/`PgDn`/`g`/`G` rolam (rolar para
+cima desliga o "seguir"; `G` religa), `f` alterna seguir, `/` `n` `N` buscam,
+`ctrl+c` copia a linha em foco e `Y` a tela inteira (OSC 52, funciona por
+SSH), `m` devolve a seleção nativa do terminal, e **`s` troca a fonte**: o
+seguidor ao vivo do supervisor (`journalctl -f`, `docker logs -f`,
+`pm2 logs`, `tail -F`) e cada arquivo de `./logs` do diretório de trabalho
+daquele serviço.
+
+### Rodar em primeiro plano
+
+`r` no detalhe roda o yml daquele serviço como processo filho, com saída ao
+vivo (`Runner`). Para com **SIGTERM** (o pulsar grava o resume token antes de
+sair); SIGKILL só depois de 35s. A TUI nunca deixa filho órfão — por isso o
+`render()` roda com `exitOnCtrlC: false` e a saída é tratada no `App`.
 
 **Detalhe de build:** o ink referencia `react-devtools-core` e quebraria o
 `bun build --compile`; `src/stubs/react-devtools-core.ts` é mapeado via `paths`
 no tsconfig para resolver isso. Desenho completo em
-`docs/superpowers/specs/2026-07-28-tui-design.md`. Testes em
-`test/tuiConfig.test.ts`, `test/tuiService.test.ts` e `test/tuiInspect.test.ts`.
+`docs/superpowers/specs/2026-08-15-tui-service-panel-design.md` (o de
+`2026-07-28-tui-design.md` descreve a camada de tela ANTERIOR). Testes em
+`test/tuiKeys.test.ts`, `test/tuiService.test.ts`, `test/tuiConfig.test.ts`,
+`test/tuiInspect.test.ts`, `test/state.test.ts` e `test/privileged.test.ts`.
 
 ## Pontos de atenção
 
